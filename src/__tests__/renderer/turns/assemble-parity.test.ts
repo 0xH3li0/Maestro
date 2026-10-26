@@ -540,8 +540,8 @@ describe('the system prompt: library reads against prepareMaestroSystemPrompt', 
 				journey: {
 					...win.maestro?.journey,
 					getPath: vi.fn(async () => journeyFilePath(tmp, session.id)),
-					read: vi.fn(async () => []),
 				},
+				timeline: { read: vi.fn(async () => []) },
 				maestroRun: {
 					...win.maestro?.maestroRun,
 					readyPath: vi.fn(async () => (fixture.maestroRunReady ? RUN_BINARY : null)),
@@ -580,6 +580,8 @@ describe('the system prompt: library reads against prepareMaestroSystemPrompt', 
 				bundledPromptsDir: REPO_PROMPTS,
 				probeBinary: async () => ({ exists: true, path: '/usr/local/bin/claude' }),
 				readGitBranch: async () => 'feature/parity',
+				// The desktop side's timeline is mocked empty; keep this side's off the real git.
+				runGit: async () => null,
 				isWindowsHost: false,
 				now: () => NOW,
 			});

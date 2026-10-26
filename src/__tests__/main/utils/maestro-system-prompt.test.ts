@@ -6,6 +6,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { TimelineEvent } from '../../../shared/timeline';
 
 vi.mock('electron', () => ({
 	app: { getPath: vi.fn(() => '/data') },
@@ -32,10 +33,14 @@ vi.mock('../../../main/history-manager', () => ({
 	})),
 }));
 
-let journeyEntries: Array<Record<string, any>> = [];
 vi.mock('../../../main/user-journey-manager', () => ({
 	getJourneyFilePath: vi.fn((id: string) => `/data/journey/${id}.jsonl`),
-	readJourney: vi.fn(async () => journeyEntries),
+}));
+
+let timelineEvents: TimelineEvent[] = [];
+vi.mock('../../../main/agent-timeline', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../main/agent-timeline')>()),
+	readAgentTimeline: vi.fn(async () => timelineEvents),
 }));
 
 vi.mock('../../../main/utils/execFile', () => ({
@@ -72,8 +77,8 @@ import {
 	buildPluginSystemPromptSections,
 } from '../../../main/utils/maestro-system-prompt';
 import { execFileNoThrow } from '../../../main/utils/execFile';
-import { readJourney } from '../../../main/user-journey-manager';
-import { JOURNEY_RECENT_MAX_ENTRIES } from '../../../shared/userJourney';
+import { readAgentTimeline } from '../../../main/agent-timeline';
+import { RECENT_TIMELINE_MAX_EVENTS, RECENT_TIMELINE_SOURCES } from '../../../shared/timeline';
 import { logger } from '../../../main/utils/logger';
 
 const agent = (overrides: Record<string, any> = {}) => ({
@@ -96,7 +101,7 @@ describe('buildMaestroSystemPromptForSession', () => {
 		prompts['computer-history-system'] = 'HISTORY {{COMPUTER_HISTORY_DIR}}';
 		storedSessions = [agent()];
 		settings = { conductorProfile: 'me' };
-		journeyEntries = [];
+		timelineEvents = [];
 	});
 
 	it('builds the base prompt for a stored agent by id', async () => {
@@ -129,31 +134,42 @@ describe('buildMaestroSystemPromptForSession', () => {
 		expect(execFileNoThrow).not.toHaveBeenCalled();
 	});
 
-	it('fills the journey path and the recent journey', async () => {
-		prompts['maestro-system-prompt'] = '{{AGENT_JOURNEY_PATH}}|{{USER_JOURNEY_RECENT}}';
-		journeyEntries = [
-			{ ts: Date.now(), agentId: 'agent-1', kind: 'file.open', target: '/proj/src/a.ts' },
+	it('fills the journey path and the recent timeline, reading git in a local repository', async () => {
+		prompts['maestro-system-prompt'] = '{{AGENT_JOURNEY_PATH}}|{{RECENT_TIMELINE}}';
+		timelineEvents = [
+			{ ts: Date.now(), source: 'journey', agentId: 'agent-1', text: 'user opened src/a.ts' },
 		];
 		const result = await buildMaestroSystemPromptForSession('agent-1');
-		expect(result).toMatch(/^\/data\/journey\/agent-1\.jsonl\|- .+ opened src\/a\.ts$/);
-		expect(readJourney).toHaveBeenCalledWith(
-			'agent-1',
-			expect.objectContaining({ tail: JOURNEY_RECENT_MAX_ENTRIES, since: expect.any(Number) })
+		expect(result).toMatch(
+			/^\/data\/journey\/agent-1\.jsonl\|- .+ journey user opened src\/a\.ts$/
+		);
+		expect(readAgentTimeline).toHaveBeenCalledWith(
+			{ id: 'agent-1', cwd: '/proj', gitCwd: '/proj' },
+			expect.objectContaining({
+				sources: RECENT_TIMELINE_SOURCES,
+				tail: RECENT_TIMELINE_MAX_EVENTS,
+				sinceMs: expect.any(Number),
+			})
 		);
 	});
 
-	it('reads "No recent activity." with no journey, and keeps the entries but not the path over SSH', async () => {
-		prompts['maestro-system-prompt'] = '{{AGENT_JOURNEY_PATH}}|{{USER_JOURNEY_RECENT}}';
+	it('reads the empty text with no events, and keeps the timeline but not git or the path over SSH', async () => {
+		prompts['maestro-system-prompt'] = '{{AGENT_JOURNEY_PATH}}|{{RECENT_TIMELINE}}';
 		expect(await buildMaestroSystemPromptForSession('agent-1')).toBe(
-			'/data/journey/agent-1.jsonl|No recent activity.'
+			'/data/journey/agent-1.jsonl|Nothing in the last 2 hours.'
 		);
 		storedSessions = [agent({ sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' } })];
-		journeyEntries = [
-			{ ts: Date.now(), agentId: 'agent-1', kind: 'file.save', target: '/proj/src/a.ts' },
+		timelineEvents = [
+			{ ts: Date.now(), source: 'history', agentId: 'agent-1', text: 'USER: did it', ref: 'abc' },
 		];
 		expect(await buildMaestroSystemPromptForSession('agent-1')).toMatch(
-			/^\|- .+ saved src\/a\.ts$/
+			/^\|- .+ history USER: did it \[entry abc\]$/
 		);
+		expect(vi.mocked(readAgentTimeline).mock.calls.at(-1)?.[0]).toEqual({
+			id: 'agent-1',
+			cwd: '/proj',
+			gitCwd: undefined,
+		});
 	});
 
 	it('appends the Pianola role section for the Pianola agent', async () => {

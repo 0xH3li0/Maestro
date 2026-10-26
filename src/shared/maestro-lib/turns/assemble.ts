@@ -21,7 +21,7 @@ import { resolveTabPermissionMode } from '../../agentMetadata';
 import { prependNewSessionMessageOnFirstTurn } from '../../newSessionMessage';
 import { substituteTemplateVariables } from '../../templateVariables';
 import type { AdditionalDirectory, AgentSshRemoteConfig } from '../../types';
-import type { UserJourneyEntry } from '../../userJourney';
+import type { TimelineEvent } from '../../timeline';
 import { filterYoloArgs, getContextWindowValue } from '../launch/agent-args';
 import type { AgentLaunchInput } from '../launch/launch-plan';
 import type { SystemPromptDelivery } from '../launch/prompt-delivery';
@@ -119,8 +119,8 @@ export interface TurnContext {
 	historyFilePath?: string;
 	/** The agent's User Journey file. Ignored for SSH. */
 	journeyFilePath?: string;
-	/** The agent's recent User Journey entries, for `{{USER_JOURNEY_RECENT}}`. */
-	journeyEntries?: readonly UserJourneyEntry[];
+	/** The agent's recent timeline, for `{{RECENT_TIMELINE}}`. */
+	timelineEvents?: readonly TimelineEvent[];
 	/** The `maestro-cli.js` script agents should call (PA6). */
 	maestroCliPath?: string;
 	/**

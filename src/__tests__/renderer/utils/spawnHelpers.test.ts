@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
-	loadJourneyPromptContext,
+	loadTimelinePromptContext,
 	prepareMaestroSystemPrompt,
 } from '../../../renderer/utils/spawnHelpers';
-import { JOURNEY_RECENT_MAX_ENTRIES } from '../../../shared/userJourney';
+import { RECENT_TIMELINE_MAX_EVENTS, type TimelineEvent } from '../../../shared/timeline';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 
 vi.mock('../../../renderer/utils/templateVariables', () => ({
@@ -47,6 +47,8 @@ describe('prepareMaestroSystemPrompt', () => {
 			},
 			journey: {
 				getPath: vi.fn().mockResolvedValue('/mock/journey/session-1.jsonl'),
+			},
+			timeline: {
 				read: vi.fn().mockResolvedValue([]),
 			},
 		};
@@ -125,12 +127,12 @@ describe('prepareMaestroSystemPrompt', () => {
 		expect((window as any).maestro.history.getFilePath).not.toHaveBeenCalled();
 	});
 
-	it('reads the journey path and the recent entries for non-SSH sessions', async () => {
+	it('reads the journey path and the recent timeline for non-SSH sessions', async () => {
 		await prepareMaestroSystemPrompt({ session: baseSession });
 		expect((window as any).maestro.journey.getPath).toHaveBeenCalledWith('session-1');
-		expect((window as any).maestro.journey.read).toHaveBeenCalledWith(
+		expect((window as any).maestro.timeline.read).toHaveBeenCalledWith(
 			'session-1',
-			expect.objectContaining({ tail: JOURNEY_RECENT_MAX_ENTRIES, since: expect.any(Number) })
+			expect.objectContaining({ tail: RECENT_TIMELINE_MAX_EVENTS, sinceMs: expect.any(Number) })
 		);
 	});
 
@@ -298,48 +300,59 @@ describe('prepareMaestroSystemPrompt', () => {
 	});
 });
 
-describe('loadJourneyPromptContext', () => {
-	const entry = { ts: 1, agentId: 'a1', kind: 'file.open', target: '/p/a.ts' };
+describe('loadTimelinePromptContext', () => {
+	const event: TimelineEvent = {
+		ts: 1,
+		source: 'journey',
+		agentId: 'a1',
+		text: 'user opened a.ts',
+	};
 
 	beforeEach(() => {
 		(window as any).maestro = {
 			...(window as any).maestro,
 			journey: {
 				getPath: vi.fn().mockResolvedValue('/mock/journey/a1.jsonl'),
-				read: vi.fn().mockResolvedValue([entry]),
+			},
+			timeline: {
+				read: vi.fn().mockResolvedValue([event]),
 			},
 		};
 	});
 
-	it('returns the path and the entries for a local agent', async () => {
-		await expect(loadJourneyPromptContext('a1', false)).resolves.toEqual({
+	it('returns the journey path and the timeline for a local agent', async () => {
+		await expect(loadTimelinePromptContext('a1', false)).resolves.toEqual({
 			journeyFilePath: '/mock/journey/a1.jsonl',
-			journeyEntries: [entry],
+			timelineEvents: [event],
 		});
 	});
 
-	it('skips the local-only path for an SSH agent but keeps its entries', async () => {
-		await expect(loadJourneyPromptContext('a1', true)).resolves.toEqual({
+	it('skips the local-only path for an SSH agent but keeps its timeline', async () => {
+		await expect(loadTimelinePromptContext('a1', true)).resolves.toEqual({
 			journeyFilePath: undefined,
-			journeyEntries: [entry],
+			timelineEvents: [event],
 		});
 		expect((window as any).maestro.journey.getPath).not.toHaveBeenCalled();
 	});
 
 	it('leaves a value unset when its lookup fails', async () => {
 		(window as any).maestro.journey.getPath.mockRejectedValueOnce(new Error('no path'));
-		(window as any).maestro.journey.read.mockRejectedValueOnce(new Error('no read'));
-		await expect(loadJourneyPromptContext('a1', false)).resolves.toEqual({
+		(window as any).maestro.timeline.read.mockRejectedValueOnce(new Error('no read'));
+		await expect(loadTimelinePromptContext('a1', false)).resolves.toEqual({
 			journeyFilePath: undefined,
-			journeyEntries: undefined,
+			timelineEvents: undefined,
 		});
 	});
 
-	it('tolerates a missing journey bridge', async () => {
-		(window as any).maestro = { ...(window as any).maestro, journey: undefined };
-		await expect(loadJourneyPromptContext('a1', false)).resolves.toEqual({
+	it('tolerates missing journey and timeline bridges', async () => {
+		(window as any).maestro = {
+			...(window as any).maestro,
+			journey: undefined,
+			timeline: undefined,
+		};
+		await expect(loadTimelinePromptContext('a1', false)).resolves.toEqual({
 			journeyFilePath: undefined,
-			journeyEntries: undefined,
+			timelineEvents: undefined,
 		});
 	});
 });

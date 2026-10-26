@@ -249,6 +249,7 @@ import type { WebUserPublic } from '../shared/webLogin';
 import type { ComputerHistoryApi } from '../main/preload/computerHistory';
 import type { MaestroRunApi } from '../main/preload/maestroRun';
 import type { JourneyApi } from '../main/preload/journey';
+import type { TimelineApi } from '../main/preload/timeline';
 import type { DataviewApi } from '../main/preload/dataview';
 
 interface MaestroAPI {
@@ -4609,6 +4610,10 @@ interface MaestroAPI {
 	// User Journey API (per-agent log of user actions inside Maestro). Record
 	// through recordJourney() in src/renderer/services/userJourney.ts.
 	journey: JourneyApi;
+
+	// Timeline API (an agent's turns, user actions, and commits in time order).
+	// The system prompt builders read {{RECENT_TIMELINE}} through it.
+	timeline: TimelineApi;
 
 	// AI Command API (plain-English request -> one shell command line)
 	aiCommand: {

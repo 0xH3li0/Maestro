@@ -87,6 +87,7 @@ import { registerPromptsHandlers } from './prompts';
 import { registerMemoryHandlers } from './memory';
 import { registerTabsHandlers } from './tabs';
 import { registerJourneyHandlers } from './journey';
+import { registerTimelineHandlers } from './timeline';
 import { registerContextTimelineHandlers } from './context-timeline';
 import { registerAgentRunHandlers } from './agent-run';
 import {
@@ -180,6 +181,7 @@ export { registerPromptsHandlers };
 export { registerMemoryHandlers };
 export { registerTabsHandlers };
 export { registerJourneyHandlers };
+export { registerTimelineHandlers };
 export { registerContextTimelineHandlers };
 export { registerAgentRunHandlers };
 export { registerWindowsHandlers };

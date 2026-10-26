@@ -2,7 +2,7 @@
 //
 // Mirrors `src/renderer/utils/spawnHelpers.ts:prepareMaestroSystemPrompt` so a
 // bot driving Maestro through `maestro-cli send` or Auto Run sees the same
-// Maestro context - agent identity, git branch, history-file pointer,
+// Maestro context - agent identity, git branch, history-file pointer, timeline,
 // conductor profile, prompt customizations - that a desktop-spawned agent
 // receives. Without this, CLI-spawned agents are missing the entire "what is
 // Maestro and what can I do with it" preamble.
@@ -16,11 +16,12 @@ import {
 	systemPromptSectionsFor,
 } from '../../shared/maestroSystemPrompt';
 import { getCliPrompt } from './prompt-loader';
-import { recentJourneyReadOptions } from '../../shared/userJourney';
+import { RECENT_TIMELINE_SOURCES, recentTimelineOptions } from '../../shared/timeline';
+import { readTimeline } from '../../shared/maestro-lib/store/read-timeline';
 import {
 	getConfigDirectory,
 	getJourneyFilePath,
-	readJourney,
+	getTimelinePaths,
 	readSettingValue,
 	resolveSessionHistoryFilePath,
 } from './storage';
@@ -92,10 +93,23 @@ export async function prepareMaestroSystemPromptCli(
 	// The Computer History store is local for the same reason.
 	const isSsh = !!session.sessionSshRemoteConfig?.enabled;
 	const historyFilePath = isSsh ? undefined : resolveSessionHistoryFilePath(session.id);
-	// The journey is recorded on this machine wherever the agent runs, so an SSH
-	// agent still gets its recent entries; only the file path is local-only.
 	const journeyFilePath = isSsh ? undefined : getJourneyFilePath(session.id);
-	const journeyEntries = readJourney(session.id, recentJourneyReadOptions(Date.now()));
+	// History and the journey are recorded on this machine wherever the agent
+	// runs, so an SSH agent still gets them; its commits are on the remote.
+	const timelineNow = Date.now();
+	const { events: timelineEvents } = await readTimeline({
+		paths: getTimelinePaths(),
+		agents: [
+			{
+				id: session.id,
+				cwd: session.cwd,
+				gitCwd: !isSsh && sessionIsGitRepo ? session.cwd : undefined,
+			},
+		],
+		sources: RECENT_TIMELINE_SOURCES,
+		...recentTimelineOptions(timelineNow),
+		now: timelineNow,
+	});
 
 	const conductorProfileSetting = readSettingValue('conductorProfile');
 	const conductorProfile =
@@ -136,7 +150,7 @@ export async function prepareMaestroSystemPromptCli(
 			groupId: session.groupId,
 			historyFilePath,
 			journeyFilePath,
-			journeyEntries,
+			timelineEvents,
 			conductorProfile,
 			computerHistoryDir: isSsh ? undefined : computerHistoryDir(getConfigDirectory()),
 			maestroRunPath,

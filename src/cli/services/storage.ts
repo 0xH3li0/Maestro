@@ -344,6 +344,19 @@ export function readJourney(agentId: string, options: ReadJourneyOptions = {}): 
 	return readJourneyFile(getJourneyFilePath(agentId), options);
 }
 
+// ============================================================================
+// Timeline
+// ============================================================================
+
+/**
+ * The data directories `readTimeline()` reads: history and journey files and
+ * the Computer History store all live in the config directory, never the sync
+ * directory.
+ */
+export function getTimelinePaths(): { userDataDir: string; historyDir: string } {
+	return { userDataDir: getConfigDir(), historyDir: getHistoryDir() };
+}
+
 /**
  * Read settings from storage
  */

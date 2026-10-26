@@ -239,18 +239,22 @@ function titleSuffix(title: string | undefined): string {
 }
 
 /**
- * One compact line per entry, for an agent-facing digest:
- * `2:02 PM opened src/foo.ts`, `2:05 PM saved src/foo.ts (+12/-3)`,
- * `2:06 PM browsed docs.runmaestro.ai/cue`. The clock is the user's locale; an
- * entry from another day than `now` also carries its date.
+ * The clock of a digest line, in the user's locale: the time alone when `ts`
+ * falls on the same local day as `now`, else the date and time. Shared by the
+ * journey and the timeline digests so the two read alike.
  */
-export function formatJourneyLine(
+export function formatDigestTime(ts: number, now: number): string {
+	return formatTimestamp(ts, toLocalYmd(ts) === toLocalYmd(now) ? 'time' : 'datetime');
+}
+
+/**
+ * What the user did, without the clock: `opened src/foo.ts`,
+ * `saved src/foo.ts (+12/-3)`, `browsed docs.runmaestro.ai/cue`.
+ */
+export function describeJourneyEntry(
 	entry: UserJourneyEntry,
-	now: number,
 	options: FormatJourneyLineOptions = {}
 ): string {
-	const sameDay = toLocalYmd(entry.ts) === toLocalYmd(now);
-	const time = formatTimestamp(entry.ts, sameDay ? 'time' : 'datetime');
 	const path = () => displayJourneyPath(entry.target, options.cwd);
 	const url = () => displayJourneyUrl(entry.target);
 
@@ -293,39 +297,19 @@ export function formatJourneyLine(
 		default:
 			action = `${(entry as UserJourneyEntry).kind} ${entry.target}`;
 	}
-	return `${time} ${action}`;
-}
-
-/** How far back the `{{USER_JOURNEY_RECENT}}` snapshot reaches. */
-export const JOURNEY_RECENT_WINDOW_MS = 2 * 60 * 60 * 1000;
-
-/** Most entries the `{{USER_JOURNEY_RECENT}}` snapshot shows. */
-export const JOURNEY_RECENT_MAX_ENTRIES = 15;
-
-/** What `{{USER_JOURNEY_RECENT}}` reads when the window is empty. */
-export const JOURNEY_RECENT_EMPTY_TEXT = 'No recent activity.';
-
-/**
- * The read that feeds `{{USER_JOURNEY_RECENT}}`: the newest
- * `JOURNEY_RECENT_MAX_ENTRIES` from the last `JOURNEY_RECENT_WINDOW_MS`.
- * Prompt builders pass it to their journey reader so only those entries cross
- * IPC or leave the file.
- */
-export function recentJourneyReadOptions(now: number): ReadJourneyOptions {
-	return { since: now - JOURNEY_RECENT_WINDOW_MS, tail: JOURNEY_RECENT_MAX_ENTRIES };
+	return action;
 }
 
 /**
- * The `{{USER_JOURNEY_RECENT}}` text: one `formatJourneyLine` bullet per recent
- * entry, oldest first, or `JOURNEY_RECENT_EMPTY_TEXT`. Applies the window and
- * the cap itself, so a caller may pass a wider read.
+ * One compact line per entry, for an agent-facing digest:
+ * `2:02 PM opened src/foo.ts`, `2:05 PM saved src/foo.ts (+12/-3)`,
+ * `2:06 PM browsed docs.runmaestro.ai/cue`. The clock is the user's locale; an
+ * entry from another day than `now` also carries its date.
  */
-export function formatRecentJourney(
-	entries: readonly UserJourneyEntry[],
+export function formatJourneyLine(
+	entry: UserJourneyEntry,
 	now: number,
 	options: FormatJourneyLineOptions = {}
 ): string {
-	const recent = filterJourneyEntries([...entries], recentJourneyReadOptions(now));
-	if (recent.length === 0) return JOURNEY_RECENT_EMPTY_TEXT;
-	return recent.map((entry) => `- ${formatJourneyLine(entry, now, options)}`).join('\n');
+	return `${formatDigestTime(entry.ts, now)} ${describeJourneyEntry(entry, options)}`;
 }

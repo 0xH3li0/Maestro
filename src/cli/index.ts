@@ -42,6 +42,7 @@ import {
 } from './commands/throughput-gauge';
 import { sessionList, sessionShow } from './commands/session';
 import { journey } from './commands/journey';
+import { timeline } from './commands/timeline';
 import { listSessions } from './commands/list-sessions';
 import { openFile } from './commands/open-file';
 import { imageList, imageSave } from './commands/image';
@@ -868,6 +869,21 @@ session
 	.option('--tail <n>', 'Only return the last N messages (applied after --since)')
 	.option('--json', 'Output as JSON (for scripting); default is a formatted transcript')
 	.action(sessionShow);
+
+// Timeline - one time-ordered list of what happened around an agent, merged
+// from its history, the User Journey, git, and (when on) Computer History. The
+// first stop for "where did we leave off"; each line names where to read more.
+program
+	.command('timeline')
+	.description('Show what happened, oldest first: agent turns, user actions in Maestro, commits')
+	.option('-a, --agent <id>', 'Agent ID or name (default: every agent)')
+	.option('--since <time>', 'Start: 30m, 2h, 1d, 1w, ISO-8601, or epoch (default 1d)')
+	.option('--until <time>', 'End (default now)')
+	.option('--sources <list>', 'Comma list of sources (default history,journey,git)')
+	.option('--tail <n>', 'Only the newest N events (default 50)')
+	.option('--grep <text>', 'Only events whose line matches (regex, case-insensitive)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(timeline);
 
 // User Journey - what the USER did inside Maestro (files opened, saved, renamed,
 // pages browsed), per agent. Read-only, straight off disk; the desktop records it.
