@@ -34,6 +34,7 @@ import {
 	sketchBookSettingPathProblem,
 	sketchBookSettingProblem,
 } from './sketch/cloud-consent';
+import { SKETCH_SERVER_URL_FIELD } from './sketch/server';
 // ============================================================================
 // Types
 // ============================================================================
@@ -180,8 +181,9 @@ const NESTED_SETTING_SCHEMAS: Readonly<Record<string, NestedSettingSchema>> = {
 	[SKETCH_BOOK_SETTINGS_KEY]: {
 		problem: sketchBookSettingProblem,
 		defaultFor: () => undefined,
-		isField: (path) => path === SKETCH_CLOUD_SCREEN_CONSENT_FIELD,
-		isText: () => false,
+		isField: (path) =>
+			path === SKETCH_CLOUD_SCREEN_CONSENT_FIELD || path === SKETCH_SERVER_URL_FIELD,
+		isText: (path) => path === SKETCH_SERVER_URL_FIELD,
 		redact: (_path, value) => value,
 		pathProblem: sketchBookSettingPathProblem,
 	},

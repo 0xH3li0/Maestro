@@ -21,9 +21,12 @@ interface SketchBookSectionProps {
 
 /** Mirror a consent main reported, without writing it back. */
 function mirrorConsent(consent: SketchCloudScreenConsent): void {
-	useSettingsStore.setState({
-		sketchBookSettings: normalizeSketchBookSettings({ cloudScreenConsent: consent }),
-	});
+	useSettingsStore.setState((state) => ({
+		sketchBookSettings: normalizeSketchBookSettings({
+			...state.sketchBookSettings,
+			cloudScreenConsent: consent,
+		}),
+	}));
 }
 
 /**

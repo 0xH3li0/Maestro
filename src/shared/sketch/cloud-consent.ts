@@ -15,6 +15,11 @@
 
 import type { InjectionSourceInfo } from '../local-models/injection-screen';
 import type { Screening } from './protocol';
+import {
+	normalizeSketchServerUrl,
+	SKETCH_SERVER_URL_FIELD,
+	sketchServerUrlProblem,
+} from './server';
 
 /** The Sketch Book settings object. */
 export const SKETCH_BOOK_SETTINGS_KEY = 'sketchBook';
@@ -49,6 +54,8 @@ export interface SketchCloudScreenConsent {
 /** The whole `sketchBook` setting. */
 export interface SketchBookSettings {
 	cloudScreenConsent?: SketchCloudScreenConsent;
+	/** A dev override of the Sketch Book server, for a local `wrangler dev` (`./server`). */
+	serverUrl?: string;
 }
 
 export function isSketchCloudEngine(value: unknown): value is SketchCloudEngine {
@@ -92,7 +99,13 @@ export function normalizeSketchBookSettings(raw: unknown): SketchBookSettings {
 	const consent = normalizeSketchCloudScreenConsent(
 		isRecord(raw) ? raw[SKETCH_CLOUD_SCREEN_CONSENT_FIELD] : undefined
 	);
-	return Object.keys(consent).length > 0 ? { cloudScreenConsent: consent } : {};
+	const serverUrl = normalizeSketchServerUrl(
+		isRecord(raw) ? raw[SKETCH_SERVER_URL_FIELD] : undefined
+	);
+	return {
+		...(Object.keys(consent).length > 0 ? { cloudScreenConsent: consent } : {}),
+		...(serverUrl ? { serverUrl } : {}),
+	};
 }
 
 /** The cloud engine a screen source runs on, or null for a local source. */
@@ -242,6 +255,14 @@ export function sketchBookSettingProblem(path: string, value: unknown): string |
 		path.startsWith(`${SKETCH_CLOUD_SCREEN_CONSENT_FIELD}.`) ||
 		(path === '' && isRecord(value) && SKETCH_CLOUD_SCREEN_CONSENT_FIELD in value);
 	if (touchesConsent) return SKETCH_CONSENT_SETTINGS_WRITE_MESSAGE;
+	if (path === SKETCH_SERVER_URL_FIELD) return sketchServerUrlProblem(value);
+	if (path === '' && isRecord(value)) {
+		const unknownField = Object.keys(value).find(
+			(field) => sketchBookSettingPathProblem(field) !== null
+		);
+		if (unknownField) return sketchBookSettingPathProblem(unknownField);
+		return sketchServerUrlProblem(value[SKETCH_SERVER_URL_FIELD]);
+	}
 	return sketchBookSettingPathProblem(path);
 }
 
@@ -250,9 +271,10 @@ export function sketchBookSettingPathProblem(path: string): string | null {
 	if (
 		path === '' ||
 		path === SKETCH_CLOUD_SCREEN_CONSENT_FIELD ||
-		path.startsWith(`${SKETCH_CLOUD_SCREEN_CONSENT_FIELD}.`)
+		path.startsWith(`${SKETCH_CLOUD_SCREEN_CONSENT_FIELD}.`) ||
+		path === SKETCH_SERVER_URL_FIELD
 	) {
 		return null;
 	}
-	return `${SKETCH_BOOK_SETTINGS_KEY}.${path} is not a Sketch Book setting. The only field is ${SKETCH_CLOUD_SCREEN_CONSENT_FIELD}.`;
+	return `${SKETCH_BOOK_SETTINGS_KEY}.${path} is not a Sketch Book setting. The fields are ${SKETCH_CLOUD_SCREEN_CONSENT_FIELD} and ${SKETCH_SERVER_URL_FIELD}.`;
 }

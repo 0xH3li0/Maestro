@@ -64,6 +64,21 @@ describe('settings set on the Sketch Book setting', () => {
 		expect(errors()).toContain('is not a Sketch Book setting');
 	});
 
+	it('stores a dev server URL as typed', async () => {
+		await settingsSet('sketchBook.serverUrl', 'http://localhost:8787', {});
+
+		expect(writeSettingValue).toHaveBeenCalledWith('sketchBook.serverUrl', 'http://localhost:8787');
+	});
+
+	it('refuses a server URL that is not https or loopback http', async () => {
+		await expect(settingsSet('sketchBook.serverUrl', 'http://evil.example', {})).rejects.toThrow(
+			'exit:1'
+		);
+
+		expect(writeSettingValue).not.toHaveBeenCalled();
+		expect(errors()).toContain('sketchBook.serverUrl');
+	});
+
 	it('allows clearing the object, which grants nothing', async () => {
 		await settingsSet('sketchBook', '{}', {});
 
