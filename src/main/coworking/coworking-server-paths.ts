@@ -1,5 +1,6 @@
 /**
- * Resolves stable absolute paths for the bundled coworking MCP server.
+ * Resolves stable absolute paths for the bundled coworking MCP server, and the
+ * same file and runtime rules for Sketch Book's `maestro-sketch` server.
  *
  * The script lives at `<userData>/coworking-mcp-server.js`. We refresh its
  * contents on every Maestro `app.ready` so a Maestro upgrade automatically
@@ -19,15 +20,28 @@ import { getCoworkingServerScript } from './coworking-server-script';
 const SCRIPT_FILENAME = 'coworking-mcp-server.js';
 const execFileAsync = promisify(execFile);
 
-/** Absolute path of the bundled server script. */
-export function getCoworkingServerScriptPath(): string {
-	return path.join(app.getPath('userData'), SCRIPT_FILENAME);
+/** Absolute path of a bundled MCP server script under userData. */
+export function getBundledServerScriptPath(filename: string): string {
+	return path.join(app.getPath('userData'), filename);
 }
 
-/** Write/refresh the bundled server script at app boot. Idempotent. */
-export async function ensureCoworkingServerScript(): Promise<string> {
-	const scriptPath = getCoworkingServerScriptPath();
-	const contents = getCoworkingServerScript();
+/** Absolute path of the bundled server script. */
+export function getCoworkingServerScriptPath(): string {
+	return getBundledServerScriptPath(SCRIPT_FILENAME);
+}
+
+/**
+ * Write or refresh a bundled MCP server script under userData when its contents
+ * changed. Idempotent. Shared by Coworking and Sketch Book. Returns the path.
+ */
+export async function ensureBundledServerScript(options: {
+	filename: string;
+	contents: string;
+	/** Logger category, e.g. `Coworking`. */
+	logCategory: string;
+}): Promise<string> {
+	const scriptPath = getBundledServerScriptPath(options.filename);
+	const { contents, logCategory } = options;
 	try {
 		// Only treat ENOENT as "no existing file"; any other I/O failure is a real
 		// problem that should bubble up and be reported.
@@ -40,15 +54,24 @@ export async function ensureCoworkingServerScript(): Promise<string> {
 		if (existing === contents) return scriptPath;
 		await fs.promises.mkdir(path.dirname(scriptPath), { recursive: true });
 		await fs.promises.writeFile(scriptPath, contents, { mode: 0o644 });
-		logger.info(`[Coworking] Refreshed MCP server script at ${scriptPath}`, 'Coworking');
+		logger.info(`[${logCategory}] Refreshed MCP server script at ${scriptPath}`, logCategory);
 	} catch (err) {
 		logger.error(
-			`[Coworking] Failed to write MCP server script: ${err instanceof Error ? err.message : String(err)}`,
-			'Coworking'
+			`[${logCategory}] Failed to write MCP server script: ${err instanceof Error ? err.message : String(err)}`,
+			logCategory
 		);
 		throw err;
 	}
 	return scriptPath;
+}
+
+/** Write/refresh the bundled server script at app boot. Idempotent. */
+export async function ensureCoworkingServerScript(): Promise<string> {
+	return ensureBundledServerScript({
+		filename: SCRIPT_FILENAME,
+		contents: getCoworkingServerScript(),
+		logCategory: 'Coworking',
+	});
 }
 
 /**
@@ -91,10 +114,14 @@ export async function resolveNodeCommand(): Promise<ResolvedNodeRuntime> {
 	return resolvedNode;
 }
 
-/** Build the spawn command + args + env for the bundled MCP server. When the
- *  runtime is this Electron binary, ELECTRON_RUN_AS_NODE=1 makes it behave as a
- *  plain Node interpreter for the (built-ins-only) server script. */
-export async function buildMcpServerSpec(env: Record<string, string>): Promise<{
+/** Build the spawn command + args + env for a bundled MCP server (Coworking's
+ *  unless `scriptPath` names another). When the runtime is this Electron binary,
+ *  ELECTRON_RUN_AS_NODE=1 makes it behave as a plain Node interpreter for the
+ *  (built-ins-only) server script. */
+export async function buildMcpServerSpec(
+	env: Record<string, string>,
+	scriptPath: string = getCoworkingServerScriptPath()
+): Promise<{
 	command: string;
 	args: string[];
 	env: Record<string, string>;
@@ -102,7 +129,7 @@ export async function buildMcpServerSpec(env: Record<string, string>): Promise<{
 	const { command, runAsElectronNode } = await resolveNodeCommand();
 	return {
 		command,
-		args: [getCoworkingServerScriptPath()],
+		args: [scriptPath],
 		env: runAsElectronNode ? { ...env, ELECTRON_RUN_AS_NODE: '1' } : env,
 	};
 }

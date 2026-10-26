@@ -1,5 +1,5 @@
 /**
- * Factory Droid installer - writes the `maestro-coworking` MCP entry into
+ * Factory Droid installer - writes a Maestro MCP server entry (default `maestro-coworking`) into
  * `~/.factory/mcp.json`. Droid's stdio MCP shape uses `type: "stdio"` plus
  * the standard `command / args / env` triple.
  */
@@ -40,19 +40,19 @@ export const factoryDroidInstaller: AgentMcpInstaller = {
 	agentId: 'factory-droid',
 	configPath,
 
-	async isInstalled() {
+	async isInstalled(serverName = COWORKING_MCP_SERVER_NAME) {
 		const cfg = (await readConfig()) as Record<string, unknown>;
 		const servers = cfg?.mcpServers as Record<string, unknown> | undefined;
-		return !!servers && Object.prototype.hasOwnProperty.call(servers, COWORKING_MCP_SERVER_NAME);
+		return !!servers && Object.prototype.hasOwnProperty.call(servers, serverName);
 	},
 
-	async install(spec: CoworkingMcpServerSpec) {
+	async install(spec: CoworkingMcpServerSpec, serverName = COWORKING_MCP_SERVER_NAME) {
 		const cfg = (await readConfig()) as Record<string, unknown>;
 		if (!cfg.mcpServers || typeof cfg.mcpServers !== 'object') {
 			cfg.mcpServers = commentJson.parse('{}');
 		}
 		const servers = cfg.mcpServers as Record<string, unknown>;
-		servers[COWORKING_MCP_SERVER_NAME] = {
+		servers[serverName] = {
 			type: 'stdio',
 			command: spec.command,
 			args: spec.args,
@@ -61,12 +61,12 @@ export const factoryDroidInstaller: AgentMcpInstaller = {
 		await writeConfig(cfg);
 	},
 
-	async uninstall() {
+	async uninstall(serverName = COWORKING_MCP_SERVER_NAME) {
 		const cfg = (await readConfig()) as Record<string, unknown>;
 		const servers = cfg?.mcpServers as Record<string, unknown> | undefined;
 		if (!servers) return;
-		if (!Object.prototype.hasOwnProperty.call(servers, COWORKING_MCP_SERVER_NAME)) return;
-		delete servers[COWORKING_MCP_SERVER_NAME];
+		if (!Object.prototype.hasOwnProperty.call(servers, serverName)) return;
+		delete servers[serverName];
 		if (Object.keys(servers).length === 0) {
 			delete cfg.mcpServers;
 		}

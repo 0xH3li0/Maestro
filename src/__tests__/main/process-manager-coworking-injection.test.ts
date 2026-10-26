@@ -11,6 +11,9 @@
  *    (caller spread is last).
  *  - The generated MCP server script resolves its socket preferring the override
  *    env over the shared config socket env.
+ *  - Sketch Book's pair (MAESTRO_SKETCH_AGENT_ID, MAESTRO_SKETCH_SOCKET_OVERRIDE)
+ *    is injected only while its flag is on, never for terminals, and names the
+ *    bare agent for AI-tab and Auto Run spawns alike.
  *
  * The spawner modules are mocked so we capture the exact ProcessConfig that
  * ProcessManager.spawn() forwards, without launching a real PTY/child process.
@@ -46,6 +49,7 @@ const { mockGetBridgeSocketPath } = vi.hoisted(() => ({
 }));
 vi.mock('../../main/coworking/coworking-socket-path', () => ({
 	getBridgeSocketPath: () => mockGetBridgeSocketPath(),
+	getAppSocketPath: (name: string) => `/tmp/test-${name}.sock`,
 }));
 
 // Replace the spawners with capture-only stubs so spawn() launches nothing.
@@ -221,6 +225,70 @@ describe('ProcessManager per-spawn coworking socket override', () => {
 		// Caller's customEnvVars are spread last, so the caller value wins.
 		expect(forwarded.customEnvVars?.[OVERRIDE_ENV]).toBe(callerSocket);
 		expect(forwarded.customEnvVars?.[OVERRIDE_ENV]).not.toBe(SENTINEL_SOCKET);
+	});
+});
+
+describe('ProcessManager per-spawn Sketch Book env', () => {
+	const SKETCH_AGENT_ENV = 'MAESTRO_SKETCH_AGENT_ID';
+	const SKETCH_OVERRIDE_ENV = 'MAESTRO_SKETCH_SOCKET_OVERRIDE';
+
+	beforeEach(() => {
+		captured.child.length = 0;
+		captured.pty.length = 0;
+		captured.server.length = 0;
+		mockGetBridgeSocketPath.mockReset();
+		mockGetBridgeSocketPath.mockReturnValue(SENTINEL_SOCKET);
+	});
+
+	const spawnAgent = (pm: ProcessManager, sessionId: string) =>
+		pm.spawn({ sessionId, toolType: 'claude-code', cwd: '/tmp', command: 'claude', args: [] });
+
+	it('injects nothing for Sketch Book when the flag is omitted (off)', () => {
+		spawnAgent(new ProcessManager(), 'agent-1-ai-tab-1');
+		expect(captured.child[0].customEnvVars?.[SKETCH_AGENT_ENV]).toBeUndefined();
+		expect(captured.child[0].customEnvVars?.[SKETCH_OVERRIDE_ENV]).toBeUndefined();
+	});
+
+	it('injects the bare agent id and the sketch socket while the flag is on, read live', () => {
+		let sketchOn = false;
+		const pm = new ProcessManager(undefined, { isSketchBookEnabled: () => sketchOn });
+
+		spawnAgent(pm, 'agent-1-ai-tab-1');
+		expect(captured.child[0].customEnvVars?.[SKETCH_AGENT_ENV]).toBeUndefined();
+
+		sketchOn = true;
+		spawnAgent(pm, 'agent-1-ai-tab-1');
+		spawnAgent(pm, 'agent-1-batch-1700000000000');
+		expect(captured.child[1].customEnvVars?.[SKETCH_AGENT_ENV]).toBe('agent-1');
+		expect(captured.child[1].customEnvVars?.[SKETCH_OVERRIDE_ENV]).toBe('/tmp/test-sketch.sock');
+		// An Auto Run task binds to the same agent as its AI tabs.
+		expect(captured.child[2].customEnvVars?.[SKETCH_AGENT_ENV]).toBe('agent-1');
+	});
+
+	it('injects the sketch pair without the coworking pair when only Sketch Book is on', () => {
+		const pm = new ProcessManager(undefined, {
+			isCoworkingEnabled: () => false,
+			isSketchBookEnabled: () => true,
+		});
+		spawnAgent(pm, 'agent-2-ai-tab-1');
+		const env = captured.child[0].customEnvVars ?? {};
+		expect(env[SKETCH_AGENT_ENV]).toBe('agent-2');
+		expect(env[SESSION_ID_ENV]).toBeUndefined();
+		expect(env[OVERRIDE_ENV]).toBeUndefined();
+	});
+
+	it('does not inject the sketch pair into terminals', () => {
+		const pm = new ProcessManager(undefined, { isSketchBookEnabled: () => true });
+		pm.spawn({
+			sessionId: 'term-1',
+			toolType: 'terminal',
+			cwd: '/tmp',
+			command: 'zsh',
+			args: [],
+			shell: 'zsh',
+		});
+		expect(captured.pty[0].customEnvVars?.[SKETCH_AGENT_ENV]).toBeUndefined();
+		expect(captured.pty[0].customEnvVars?.[SKETCH_OVERRIDE_ENV]).toBeUndefined();
 	});
 });
 

@@ -38,6 +38,12 @@ import {
 import { resolveOwningMaestroSessionId } from '../coworking/coworking-session-id';
 import { getBridgeSocketPath } from '../coworking/coworking-socket-path';
 import {
+	SKETCH_AGENT_ID_ENV_VAR,
+	SKETCH_SOCKET_OVERRIDE_ENV_VAR,
+	getSketchBridgeSocketPath,
+} from '../sketch/sketch-mcp-types';
+import { agentIdFromProcessId } from '../utils/process-ids';
+import {
 	stopProcess,
 	INTERACTIVE_STOP_GRACE_MS,
 } from '../../shared/maestro-lib/control/termination';
@@ -53,6 +59,12 @@ export interface ProcessManagerOptions {
 	 * is what a bare `new ProcessManager()` in a test expects.
 	 */
 	isCoworkingEnabled?: () => boolean;
+	/**
+	 * Live read of the `encoreFeatures.sketchBook` gate. While it is off, no spawn
+	 * carries the `maestro-sketch` agent/socket env vars. Omitted means off, so a
+	 * bare `new ProcessManager()` injects nothing for Sketch Book.
+	 */
+	isSketchBookEnabled?: () => boolean;
 }
 
 /**
@@ -74,6 +86,7 @@ export class ProcessManager extends EventEmitter {
 	private localCommandRunner: LocalCommandRunner;
 	private sshCommandRunner: SshCommandRunner;
 	private readonly isCoworkingEnabled: () => boolean;
+	private readonly isSketchBookEnabled: () => boolean;
 
 	constructor(
 		/**
@@ -87,6 +100,7 @@ export class ProcessManager extends EventEmitter {
 	) {
 		super();
 		this.isCoworkingEnabled = options.isCoworkingEnabled ?? (() => true);
+		this.isSketchBookEnabled = options.isSketchBookEnabled ?? (() => false);
 		this.bufferManager = new DataBufferManager(this.processes, this);
 		this.ptySpawner = new PtySpawner(this.processes, this, this.bufferManager);
 		this.childProcessSpawner = new ChildProcessSpawner(this.processes, this, this.bufferManager);
@@ -290,14 +304,29 @@ export class ProcessManager extends EventEmitter {
 		// OpenCode) bind to the window that spawned them and self-heal when the
 		// config socket is stale. Codex does not propagate env and falls back to the
 		// config socket (single-window).
+		//
+		// Sketch Book's `maestro-sketch` server binds the same way, from its own
+		// pair: the owning agent's bare id (agentIdFromProcessId, which also maps
+		// Auto Run, synopsis and Cue spawns to their agent) and this window's
+		// sketch socket. Injected only while the sketchBook flag is on.
+		const injectedEnv: Record<string, string> = {};
+		if (config.toolType !== 'terminal') {
+			if (this.isCoworkingEnabled()) {
+				injectedEnv[COWORKING_SESSION_ID_ENV_VAR] = resolveOwningMaestroSessionId(config.sessionId);
+				injectedEnv[COWORKING_SOCKET_OVERRIDE_ENV_VAR] = getBridgeSocketPath();
+			}
+			if (this.isSketchBookEnabled()) {
+				injectedEnv[SKETCH_AGENT_ID_ENV_VAR] = agentIdFromProcessId(config.sessionId);
+				injectedEnv[SKETCH_SOCKET_OVERRIDE_ENV_VAR] = getSketchBridgeSocketPath();
+			}
+		}
 		const configWithCoworkingSession =
-			config.toolType === 'terminal' || !this.isCoworkingEnabled()
+			Object.keys(injectedEnv).length === 0
 				? config
 				: {
 						...config,
 						customEnvVars: {
-							[COWORKING_SESSION_ID_ENV_VAR]: resolveOwningMaestroSessionId(config.sessionId),
-							[COWORKING_SOCKET_OVERRIDE_ENV_VAR]: getBridgeSocketPath(),
+							...injectedEnv,
 							...(config.customEnvVars ?? {}),
 						},
 					};

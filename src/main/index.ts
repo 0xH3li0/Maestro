@@ -210,6 +210,7 @@ import {
 import { setupIpcHandlers } from './ipc/bootstrap';
 import { stopCoworkingBridge } from './coworking/coworking-bridge';
 import { startSketchMcpBridge, stopSketchMcpBridge } from './sketch/sketch-mcp-bridge';
+import { syncSketchMcpServerOff, syncSketchMcpServerOn } from './sketch/sketch-mcp-install';
 import { initializeStatsDB, closeStatsDB } from './stats';
 import { evaluateCueGate } from './local-models/cue-gate';
 import { scoreCueInjectionText } from './local-models/cue-injection-screen';
@@ -1272,12 +1273,14 @@ app
 		// Initialize core services
 		logger.info('Initializing core services', 'Startup');
 		// Gate the OpenCode SDK-serve path behind the default-off
-		// `encoreFeatures.opencodeServer` plugin, and the coworking env vars behind
-		// `encoreFeatures.coworking`. Read live on every spawn so a toggle (UI or
+		// `encoreFeatures.opencodeServer` plugin, the coworking env vars behind
+		// `encoreFeatures.coworking`, and the sketch env vars behind
+		// `encoreFeatures.sketchBook`. Read live on every spawn so a toggle (UI or
 		// `maestro-cli encore`) takes effect without an app restart.
 		processManager = new ProcessManager(() => isEncoreFeatureEnabled(store, 'opencodeServer'), {
 			appVersion: app.getVersion(),
 			isCoworkingEnabled: () => isEncoreFeatureEnabled(store, 'coworking'),
+			isSketchBookEnabled: () => isEncoreFeatureEnabled(store, 'sketchBook'),
 		});
 		// Note: webServer is created on-demand when user enables web interface (see setupWebServerCallbacks)
 		agentDetector = new AgentDetector();
@@ -2040,10 +2043,17 @@ app
 				stopAll: () => void stopCoworkingService(),
 			},
 			// Sketch Book: the `maestro-sketch` bridge socket the agents' MCP
-			// subprocesses dial for the sketch tools. Off also drops live connections.
+			// subprocesses dial for the sketch tools, and the server's entry in each
+			// provider's MCP config. Off drops live connections and removes the entry.
 			sketchBook: {
-				reconcile: () => void startSketchMcpBridge({ getProcessManager: () => processManager }),
-				stopAll: () => void stopSketchMcpBridge(),
+				reconcile: () => {
+					void startSketchMcpBridge({ getProcessManager: () => processManager });
+					void syncSketchMcpServerOn();
+				},
+				stopAll: () => {
+					void stopSketchMcpBridge();
+					void syncSketchMcpServerOff();
+				},
 			},
 			// OpenCode serve: the shared server spawns lazily on the first OpenCode
 			// turn, so there is nothing to start. Off tears down every server.

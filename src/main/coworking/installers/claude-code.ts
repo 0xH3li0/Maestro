@@ -1,5 +1,5 @@
 /**
- * Claude Code installer - writes the `maestro-coworking` MCP entry into the
+ * Claude Code installer - writes a Maestro MCP server entry (default `maestro-coworking`) into the
  * user-level `~/.claude.json`. Uses `comment-json` so existing user comments
  * round-trip unchanged.
  */
@@ -40,19 +40,19 @@ export const claudeCodeInstaller: AgentMcpInstaller = {
 	agentId: 'claude-code',
 	configPath,
 
-	async isInstalled() {
+	async isInstalled(serverName = COWORKING_MCP_SERVER_NAME) {
 		const cfg = (await readConfig()) as Record<string, unknown>;
 		const servers = cfg?.mcpServers as Record<string, unknown> | undefined;
-		return !!servers && Object.prototype.hasOwnProperty.call(servers, COWORKING_MCP_SERVER_NAME);
+		return !!servers && Object.prototype.hasOwnProperty.call(servers, serverName);
 	},
 
-	async install(spec: CoworkingMcpServerSpec) {
+	async install(spec: CoworkingMcpServerSpec, serverName = COWORKING_MCP_SERVER_NAME) {
 		const cfg = (await readConfig()) as Record<string, unknown>;
 		if (!cfg.mcpServers || typeof cfg.mcpServers !== 'object') {
 			cfg.mcpServers = commentJson.parse('{}');
 		}
 		const servers = cfg.mcpServers as Record<string, unknown>;
-		servers[COWORKING_MCP_SERVER_NAME] = {
+		servers[serverName] = {
 			command: spec.command,
 			args: spec.args,
 			env: spec.env,
@@ -60,12 +60,12 @@ export const claudeCodeInstaller: AgentMcpInstaller = {
 		await writeConfig(cfg);
 	},
 
-	async uninstall() {
+	async uninstall(serverName = COWORKING_MCP_SERVER_NAME) {
 		const cfg = (await readConfig()) as Record<string, unknown>;
 		const servers = cfg?.mcpServers as Record<string, unknown> | undefined;
 		if (!servers) return;
-		if (!Object.prototype.hasOwnProperty.call(servers, COWORKING_MCP_SERVER_NAME)) return;
-		delete servers[COWORKING_MCP_SERVER_NAME];
+		if (!Object.prototype.hasOwnProperty.call(servers, serverName)) return;
+		delete servers[serverName];
 		if (Object.keys(servers).length === 0) {
 			delete cfg.mcpServers;
 		}

@@ -86,6 +86,21 @@ auto_save = true
 		expect(content).toMatch(/MAESTRO_COWORKING_SOCKET/);
 	});
 
+	it('keeps a second named server in its own block beside maestro-coworking', async () => {
+		await codexInstaller.install(SPEC);
+		await codexInstaller.install(SPEC, 'maestro-sketch');
+		expect(await codexInstaller.isInstalled('maestro-sketch')).toBe(true);
+		const both = fs.readFileSync(cfgPath(), 'utf8');
+		expect(both).toContain('# >>> maestro-sketch BEGIN');
+		expect(both).toContain('[mcp_servers.maestro-sketch]');
+		expect(both).toContain('# <<< maestro-sketch END');
+
+		await codexInstaller.uninstall('maestro-sketch');
+		expect(await codexInstaller.isInstalled('maestro-sketch')).toBe(false);
+		expect(await codexInstaller.isInstalled()).toBe(true);
+		expect(fs.readFileSync(cfgPath(), 'utf8')).not.toContain('maestro-sketch');
+	});
+
 	it('uninstall on a non-installed config is a no-op', async () => {
 		await codexInstaller.uninstall();
 		expect(fs.existsSync(cfgPath())).toBe(false);

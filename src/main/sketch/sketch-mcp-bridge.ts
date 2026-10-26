@@ -22,8 +22,9 @@
  *    No match fails closed. There is NO active-session fallback anywhere (the
  *    PR #948 privacy bug): which tab the user is looking at never decides
  *    which sketches a call can reach. The bound id is the bare agent id
- *    (`resolveOwningMaestroSessionId` strips `-ai-<tab>`), the same id a
- *    sketch's `ownerAgentId` holds.
+ *    (`agentIdFromProcessId` strips `-ai-<tab>`, `-batch-`, `-synopsis-` and
+ *    `-cue-`, on both the env and the PID path), the same id a sketch's
+ *    `ownerAgentId` holds.
  *
  * 2. Socket path. `getAppSocketPath('sketch')` (coworking-socket-path.ts): the
  *    same rule as Coworking's socket with its own name, so the two features
@@ -37,16 +38,21 @@
  *
  * 3. MCP config injection, per provider. Coworking's two layers, with the
  *    server name `maestro-sketch` and the script `<userData>/sketch-mcp-server.js`
- *    (sketch-mcp-server-script.ts):
- *    - Config entry: the Coworking installer strategies (coworking/installers/)
- *      write the server entry, with `MAESTRO_SKETCH_SOCKET`, into each
- *      provider's user-level MCP config: Claude Code `~/.claude.json`, Codex
- *      `~/.codex/config.toml` (sentinel block), OpenCode
- *      `~/.config/opencode/opencode.json`, Factory Droid `~/.factory/mcp.json`.
+ *    (sketch-mcp-server-script.ts, built by the same `buildMcpStdioServerScript()`
+ *    as Coworking's, so both carry one bridge client):
+ *    - Config entry: the Coworking installer strategies (coworking/installers/),
+ *      called with the server name `maestro-sketch`, write the entry, with
+ *      `MAESTRO_SKETCH_SOCKET`, into each provider's user-level MCP config:
+ *      Claude Code `~/.claude.json`, Codex `~/.codex/config.toml` (sentinel
+ *      block), OpenCode `~/.config/opencode/opencode.json`, Factory Droid
+ *      `~/.factory/mcp.json`. sketch-mcp-install.ts writes it when `sketchBook`
+ *      turns on (only for providers set up on this machine) and removes it when
+ *      the flag turns off.
  *    - Spawn env: ProcessManager.spawn injects, beside Coworking's pair,
  *      `MAESTRO_SKETCH_AGENT_ID` and `MAESTRO_SKETCH_SOCKET_OVERRIDE` (this
  *      window's socket, which the script prefers over the config value), only
- *      while `sketchBook` is on and never for terminals.
+ *      while `sketchBook` is on and never for terminals. The names live in
+ *      sketch-mcp-types.ts.
  *    Claude Code and OpenCode pass that env on, so they bind by id to the
  *    window that spawned them. Codex passes only its config's env, so it binds
  *    by `ppid` and is single-window, exactly as with Coworking. OpenCode's
@@ -55,7 +61,8 @@
  *
  * What Sketch adds on top:
  * - Lifecycle follows the `sketchBook` Encore flag (the Encore lifecycle in
- *   main/index.ts): on starts the socket, off stops it and drops connections.
+ *   main/index.ts): on starts the socket and writes the config entries, off
+ *   stops it, drops connections and removes the entries.
  * - Ownership. Every tool that names a sketch has its `sketchId` checked before
  *   the tool runs: the sketch's `ownerAgentId` must be the connection's agent.
  *   A foreign sketch and a missing one get the same refusal, so a call cannot
@@ -70,57 +77,26 @@
 
 import type * as net from 'net';
 import type { SketchRecord } from '../../shared/sketch/types';
-import { getAppSocketPath } from '../coworking/coworking-socket-path';
 import {
 	bindHandshakeOwner,
 	resolveSessionFromPidWalk,
 	type HandshakeBindFailure,
 } from '../coworking/pid-resolution';
 import { createNdjsonSocketServer } from '../utils/ndjson-socket-server';
+import { agentIdFromProcessId } from '../utils/process-ids';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { findSketchOwnerAgent, getSketchService, type SketchOwnerAgent } from './sketch-service';
+import {
+	getSketchBridgeSocketPath,
+	isSketchToolName,
+	type SketchToolName,
+} from './sketch-mcp-types';
 
 const LOG_CTX = '[SketchBook][Bridge]';
 
-/** Name of the MCP server entry in each provider's config. */
-export const SKETCH_MCP_SERVER_NAME = 'maestro-sketch';
-/** The socket path written into the provider's MCP config entry. */
-export const SKETCH_SOCKET_ENV_VAR = 'MAESTRO_SKETCH_SOCKET';
-/** The spawning window's socket, injected per spawn; preferred over the config value. */
-export const SKETCH_SOCKET_OVERRIDE_ENV_VAR = 'MAESTRO_SKETCH_SOCKET_OVERRIDE';
-/** The owning agent's bare id, injected per spawn; sent in `hello`. */
-export const SKETCH_AGENT_ID_ENV_VAR = 'MAESTRO_SKETCH_AGENT_ID';
-
-/** The bridge socket path for this userData directory. */
-export function getSketchBridgeSocketPath(): string {
-	return getAppSocketPath('sketch');
-}
-
-/** Tools T1-T12, in spec order. The MCP server forwards a call as `{method: <tool name>}`. */
-export const SKETCH_TOOL_NAMES = [
-	'sketch_list',
-	'sketch_create',
-	'sketch_read_scene',
-	'sketch_changes',
-	'sketch_add_elements',
-	'sketch_update_elements',
-	'sketch_delete_elements',
-	'sketch_from_mermaid',
-	'sketch_screenshot',
-	'sketch_export',
-	'sketch_focus',
-	'sketch_chat_post',
-] as const;
-
-export type SketchToolName = (typeof SKETCH_TOOL_NAMES)[number];
-
 /** Tools that act on the agent rather than on one sketch. Every other tool names one by `sketchId`. */
 const AGENT_SCOPED_TOOLS: ReadonlySet<SketchToolName> = new Set(['sketch_list', 'sketch_create']);
-
-export function isSketchToolName(value: unknown): value is SketchToolName {
-	return typeof value === 'string' && (SKETCH_TOOL_NAMES as readonly string[]).includes(value);
-}
 
 /** One tool call, after the bridge has checked who is calling and what it may touch. */
 export interface SketchToolCall {
@@ -350,10 +326,13 @@ export interface SketchMcpBridgeOptions {
 export async function startSketchMcpBridge(options: SketchMcpBridgeOptions): Promise<void> {
 	dispatch = createSketchBridgeDispatcher({
 		resolveAgentFromPid: (pid) =>
-			resolveSessionFromPidWalk(
-				pid,
-				(candidate) => options.getProcessManager()?.getSessionIdByPid(candidate) ?? null
-			),
+			resolveSessionFromPidWalk(pid, (candidate) => {
+				// An Auto Run, synopsis or Cue process belongs to its agent too, and the
+				// spawn env names that agent the same way (agentIdFromProcessId), so
+				// the two halves of the handshake agree.
+				const processId = options.getProcessManager()?.getSessionIdByPid(candidate);
+				return processId ? agentIdFromProcessId(processId) : null;
+			}),
 		tools: options.tools,
 	});
 	try {

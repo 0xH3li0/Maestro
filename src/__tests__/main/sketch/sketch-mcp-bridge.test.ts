@@ -30,13 +30,13 @@ vi.mock('../../../main/sketch/sketch-service', () => ({
 
 import {
 	SKETCH_BRIDGE_ERRORS,
-	SKETCH_TOOL_NAMES,
 	createSketchBridgeDispatcher,
 	type SketchBridgeConnection,
 	type SketchBridgeDispatcherDeps,
 	type SketchToolCall,
 	type SketchToolService,
 } from '../../../main/sketch/sketch-mcp-bridge';
+import { SKETCH_TOOL_NAMES } from '../../../main/sketch/sketch-mcp-types';
 import type { SketchOwnerAgent } from '../../../main/sketch/sketch-service';
 import type { SketchRecord } from '../../../shared/sketch/types';
 

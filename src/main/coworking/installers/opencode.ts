@@ -1,5 +1,5 @@
 /**
- * OpenCode installer - writes the `maestro-coworking` MCP entry into
+ * OpenCode installer - writes a Maestro MCP server entry (default `maestro-coworking`) into
  * `~/.config/opencode/opencode.json` (XDG-style location). OpenCode's stdio
  * MCP shape uses `type: "local"` and a single combined `command` array.
  */
@@ -46,19 +46,19 @@ export const opencodeInstaller: AgentMcpInstaller = {
 	agentId: 'opencode',
 	configPath,
 
-	async isInstalled() {
+	async isInstalled(serverName = COWORKING_MCP_SERVER_NAME) {
 		const cfg = (await readConfig()) as Record<string, unknown>;
 		const mcp = cfg?.mcp as Record<string, unknown> | undefined;
-		return !!mcp && Object.prototype.hasOwnProperty.call(mcp, COWORKING_MCP_SERVER_NAME);
+		return !!mcp && Object.prototype.hasOwnProperty.call(mcp, serverName);
 	},
 
-	async install(spec: CoworkingMcpServerSpec) {
+	async install(spec: CoworkingMcpServerSpec, serverName = COWORKING_MCP_SERVER_NAME) {
 		const cfg = (await readConfig()) as Record<string, unknown>;
 		if (!cfg.mcp || typeof cfg.mcp !== 'object') {
 			cfg.mcp = commentJson.parse('{}');
 		}
 		const mcp = cfg.mcp as Record<string, unknown>;
-		mcp[COWORKING_MCP_SERVER_NAME] = {
+		mcp[serverName] = {
 			type: 'local',
 			command: [spec.command, ...spec.args],
 			environment: spec.env,
@@ -67,12 +67,12 @@ export const opencodeInstaller: AgentMcpInstaller = {
 		await writeConfig(cfg);
 	},
 
-	async uninstall() {
+	async uninstall(serverName = COWORKING_MCP_SERVER_NAME) {
 		const cfg = (await readConfig()) as Record<string, unknown>;
 		const mcp = cfg?.mcp as Record<string, unknown> | undefined;
 		if (!mcp) return;
-		if (!Object.prototype.hasOwnProperty.call(mcp, COWORKING_MCP_SERVER_NAME)) return;
-		delete mcp[COWORKING_MCP_SERVER_NAME];
+		if (!Object.prototype.hasOwnProperty.call(mcp, serverName)) return;
+		delete mcp[serverName];
 		if (Object.keys(mcp).length === 0) {
 			delete cfg.mcp;
 		}

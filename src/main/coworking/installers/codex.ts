@@ -1,5 +1,5 @@
 /**
- * Codex installer - writes the `maestro-coworking` MCP entry into
+ * Codex installer - writes a Maestro MCP server entry (default `maestro-coworking`) into
  * `~/.codex/config.toml` using a sentinel-delimited block so we can
  * locate it on uninstall without parsing TOML (which would lose
  * user comments and key ordering).
@@ -13,8 +13,13 @@ import { COWORKING_MCP_SERVER_NAME } from '../coworking-types';
 import type { CoworkingMcpServerSpec } from '../coworking-types';
 import type { AgentMcpInstaller } from './types';
 
-const SENTINEL_BEGIN = '# >>> maestro-coworking BEGIN - managed by Maestro, do not edit';
-const SENTINEL_END = '# <<< maestro-coworking END';
+/** The markers around one server's block. Named per server so two blocks coexist. */
+function sentinels(serverName: string): { begin: string; end: string } {
+	return {
+		begin: `# >>> ${serverName} BEGIN - managed by Maestro, do not edit`,
+		end: `# <<< ${serverName} END`,
+	};
+}
 
 function configPath(): string {
 	return path.join(os.homedir(), '.codex', 'config.toml');
@@ -49,46 +54,48 @@ function tomlInlineEnv(env: Record<string, string>): string {
 	return '{ ' + entries.join(', ') + ' }';
 }
 
-function buildBlock(spec: CoworkingMcpServerSpec): string {
+function buildBlock(spec: CoworkingMcpServerSpec, serverName: string): string {
+	const { begin, end } = sentinels(serverName);
 	const lines: string[] = [
-		SENTINEL_BEGIN,
-		`[mcp_servers.${COWORKING_MCP_SERVER_NAME}]`,
+		begin,
+		`[mcp_servers.${serverName}]`,
 		`command = ${tomlString(spec.command)}`,
 		`args = ${tomlStringArray(spec.args)}`,
 	];
 	if (Object.keys(spec.env).length > 0) {
 		lines.push(`env = ${tomlInlineEnv(spec.env)}`);
 	}
-	lines.push(SENTINEL_END);
+	lines.push(end);
 	return lines.join('\n');
 }
 
-function findBlock(content: string): { start: number; end: number } | null {
-	const start = content.indexOf(SENTINEL_BEGIN);
+function findBlock(content: string, serverName: string): { start: number; end: number } | null {
+	const { begin, end } = sentinels(serverName);
+	const start = content.indexOf(begin);
 	if (start === -1) return null;
-	const endMarker = content.indexOf(SENTINEL_END, start);
+	const endMarker = content.indexOf(end, start);
 	if (endMarker === -1) return null;
-	return { start, end: endMarker + SENTINEL_END.length };
+	return { start, end: endMarker + end.length };
 }
 
 export const codexInstaller: AgentMcpInstaller = {
 	agentId: 'codex',
 	configPath,
 
-	async isInstalled() {
+	async isInstalled(serverName = COWORKING_MCP_SERVER_NAME) {
 		const content = await readConfig();
 		if (!content) return false;
-		return findBlock(content) !== null;
+		return findBlock(content, serverName) !== null;
 	},
 
-	async install(spec: CoworkingMcpServerSpec) {
-		const block = buildBlock(spec);
+	async install(spec: CoworkingMcpServerSpec, serverName = COWORKING_MCP_SERVER_NAME) {
+		const block = buildBlock(spec, serverName);
 		const existing = await readConfig();
 		if (existing == null) {
 			await writeConfig(block + '\n');
 			return;
 		}
-		const found = findBlock(existing);
+		const found = findBlock(existing, serverName);
 		if (found) {
 			const replaced = existing.slice(0, found.start) + block + existing.slice(found.end);
 			await writeConfig(replaced);
@@ -99,10 +106,10 @@ export const codexInstaller: AgentMcpInstaller = {
 		await writeConfig(existing + sep + block + '\n');
 	},
 
-	async uninstall() {
+	async uninstall(serverName = COWORKING_MCP_SERVER_NAME) {
 		const existing = await readConfig();
 		if (!existing) return;
-		const found = findBlock(existing);
+		const found = findBlock(existing, serverName);
 		if (!found) return;
 		// Trim a single trailing newline (and at most one blank-line separator we may have added).
 		let endTrim = found.end;

@@ -53,6 +53,18 @@ describe('claudeCodeInstaller', () => {
 		expect(after.mcpServers).toBeUndefined();
 	});
 
+	it('installs and removes a named server without touching maestro-coworking', async () => {
+		await claudeCodeInstaller.install(SPEC);
+		await claudeCodeInstaller.install(SPEC, 'maestro-sketch');
+		expect(await claudeCodeInstaller.isInstalled('maestro-sketch')).toBe(true);
+		const cfg = JSON.parse(fs.readFileSync(cfgPath(), 'utf8'));
+		expect(Object.keys(cfg.mcpServers).sort()).toEqual(['maestro-coworking', 'maestro-sketch']);
+
+		await claudeCodeInstaller.uninstall('maestro-sketch');
+		expect(await claudeCodeInstaller.isInstalled('maestro-sketch')).toBe(false);
+		expect(await claudeCodeInstaller.isInstalled()).toBe(true);
+	});
+
 	it('install preserves unrelated user content', async () => {
 		const seed = {
 			theme: 'dark',
