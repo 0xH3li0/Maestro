@@ -179,6 +179,8 @@ export interface SandboxIndexSnapshot {
 	/** Starred pages (`file.starred`). */
 	stars: string[];
 	pages: SandboxSnapshotPage[];
+	/** Pages whose tasks and lists were left out to bound the snapshot's size; absent when none were. */
+	omittedListPages?: number;
 }
 
 /** Run one block's script against a snapshot. */
@@ -383,8 +385,18 @@ function readArray<T>(
 }
 
 function readSnapshot(value: unknown, what: string): SandboxIndexSnapshot {
-	const fields = readFields(value, what, ['revision', 'files', 'folders', 'stars', 'pages']);
+	const fields = readFields(
+		value,
+		what,
+		['revision', 'files', 'folders', 'stars', 'pages'],
+		['omittedListPages']
+	);
 	return {
+		...(fields.omittedListPages === undefined
+			? {}
+			: {
+					omittedListPages: readInteger(fields.omittedListPages, `${what}.omittedListPages`, 0),
+				}),
 		revision: readInteger(fields.revision, `${what}.revision`, 0),
 		files: readArray(fields.files, `${what}.files`, readString),
 		folders: readArray(fields.folders, `${what}.folders`, readString),
