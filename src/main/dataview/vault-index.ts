@@ -58,6 +58,10 @@ import {
 	type VaultFileStat,
 	type VaultFs,
 } from './vault-fs';
+import {
+	DATAVIEW_JS_LIST_ITEM_BYTES,
+	DATAVIEW_JS_SNAPSHOT_LIST_BUDGET_BYTES,
+} from '../../shared/dataview/sandboxHost';
 import { VAULT_MARKER_DIR } from './vault-root';
 import { createVaultWatcher, type VaultWatcher } from './vault-watcher';
 
@@ -141,6 +145,8 @@ export class VaultIndex extends PageIndex {
 
 	/** Path to its cached raw parse, the source of truth the pages are finished from. */
 	private readonly entries = new Map<string, CachedPage>();
+	/** The last {@link jsSnapshot}: every `dataviewjs` block of a note asks for one, at the same revision. */
+	private snapshotMemo: SandboxIndexSnapshot | null = null;
 	private readonly listeners = new Set<VaultIndexListener>();
 	private readonly onWarning: (warning: PageParseWarning) => void;
 	private readonly watchEnabled: boolean;
@@ -280,16 +286,45 @@ export class VaultIndex extends PageIndex {
 	 * so it is one revision, never half of an update.
 	 */
 	jsSnapshot(): SandboxIndexSnapshot {
-		return {
+		if (this.snapshotMemo) return this.snapshotMemo;
+		// Admit pages smallest first, so one huge page cannot crowd out a thousand ordinary ones.
+		const itemCount = (entry: CachedPage): number => {
+			const lists = (entry.data as { lists?: unknown } | null)?.lists;
+			return Array.isArray(lists) ? lists.length : 0;
+		};
+		const bySize = [...this.entries].sort((a, b) => itemCount(a[1]) - itemCount(b[1]));
+		const kept = new Set<string>();
+		let spent = 0;
+		let omittedPages = 0;
+		for (const [path, entry] of bySize) {
+			const cost = itemCount(entry) * DATAVIEW_JS_LIST_ITEM_BYTES;
+			if (cost > 0 && spent + cost > DATAVIEW_JS_SNAPSHOT_LIST_BUDGET_BYTES) {
+				omittedPages++;
+				continue;
+			}
+			spent += cost;
+			kept.add(path);
+		}
+		if (omittedPages > 0) {
+			logger.warn(
+				`DataviewJS snapshot of ${this.root} omitted the tasks and lists of ${omittedPages} of ${this.entries.size} pages (budget ${DATAVIEW_JS_SNAPSHOT_LIST_BUDGET_BYTES} bytes)`,
+				LOG_CONTEXT
+			);
+		}
+		const snapshot: SandboxIndexSnapshot = {
 			revision: this.revision,
 			files: this.prefix.allFiles(),
 			folders: this.prefix.allFolders(),
 			stars: [...this.stars],
 			pages: Array.from(this.entries, ([path, entry]) => ({
 				path,
-				data: entry.data as Record<string, unknown>,
+				data: (kept.has(path)
+					? entry.data
+					: { ...(entry.data as Record<string, unknown>), lists: [] }) as Record<string, unknown>,
 			})),
 		};
+		this.snapshotMemo = snapshot;
+		return snapshot;
 	}
 
 	/** Write the cache now if anything changed since the last write. */
@@ -540,6 +575,7 @@ export class VaultIndex extends PageIndex {
 	 * or removed, every page whose inlinks moved with them, and every page whose star flipped.
 	 */
 	private commit(update: IndexUpdate, filesChanged = true): void {
+		this.snapshotMemo = null;
 		const changed = new Set<string>();
 		const noteLinkTargets = (path: string) => {
 			for (const target of this.links.get(path)) changed.add(target);
