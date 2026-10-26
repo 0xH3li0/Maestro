@@ -489,6 +489,30 @@ describe('remarkFileLinks', () => {
 			);
 			expect(result).toContain('[/other/place/archive.tar.gz](file:///other/place/archive.tar.gz)');
 		});
+
+		it('keeps prose that runs into a later absolute path out of the link', async () => {
+			const result = await processMarkdown(
+				'Read /handoff notes in /other/place/report.md first.',
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project'
+			);
+			expect(result).toContain('[/other/place/report.md](file:///other/place/report.md)');
+			expect(result).not.toContain('file:///handoff');
+		});
+
+		// Deliberate: a folder whose name holds a file name and a space reads the
+		// same as prose after a path (`/a/SKILL.md and refs/b.md`), and the match
+		// stops at the first file name rather than risk swallowing a sentence.
+		it('stops at the first file name even when a folder name contains one', async () => {
+			const result = await processMarkdown(
+				'Open /other/node.js backup/report.md now.',
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project'
+			);
+			expect(result).toContain('[/other/node.js](file:///other/node.js)');
+		});
 	});
 
 	describe('markdown links with absolute path hrefs', () => {
