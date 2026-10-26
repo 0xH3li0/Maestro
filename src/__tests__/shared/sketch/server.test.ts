@@ -17,6 +17,7 @@ import {
 	normalizeSketchServerUrl,
 	resolveSketchServerUrl,
 	SKETCH_DEFAULT_SERVER_URL,
+	sketchRoomSocketUrl,
 	sketchServerUrlProblem,
 } from '../../../shared/sketch/server';
 
@@ -52,6 +53,24 @@ describe('resolveSketchServerUrl', () => {
 		expect(resolveSketchServerUrl('http://localhost:8787')).toBe('http://localhost:8787');
 		expect(resolveSketchServerUrl(undefined)).toBe(SKETCH_DEFAULT_SERVER_URL);
 		expect(resolveSketchServerUrl('http://evil.example')).toBe(SKETCH_DEFAULT_SERVER_URL);
+	});
+});
+
+describe('sketchRoomSocketUrl', () => {
+	it('is wss on the hosted server and ws only on a loopback dev server', () => {
+		expect(sketchRoomSocketUrl(undefined, 'room1')).toBe('wss://sketch.runmaestro.ai/ws/room1');
+		expect(sketchRoomSocketUrl('https://staging.example:8443', 'room1')).toBe(
+			'wss://staging.example:8443/ws/room1'
+		);
+		expect(sketchRoomSocketUrl('http://localhost:8787', 'room1')).toBe(
+			'ws://localhost:8787/ws/room1'
+		);
+	});
+
+	it('falls back to the hosted server for an unusable override and escapes the room id', () => {
+		expect(sketchRoomSocketUrl('http://evil.example', 'a/b')).toBe(
+			'wss://sketch.runmaestro.ai/ws/a%2Fb'
+		);
 	});
 });
 

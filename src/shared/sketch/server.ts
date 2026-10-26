@@ -66,6 +66,18 @@ export function resolveSketchServerUrl(override: unknown): string {
 	return normalizeSketchServerUrl(override) ?? SKETCH_DEFAULT_SERVER_URL;
 }
 
+/**
+ * Wire contract section 1: the room's WebSocket, `wss://<host>/ws/<roomId>`
+ * (plain `ws` only for a loopback `http` dev server). `serverUrl` goes through
+ * `resolveSketchServerUrl()`, so an unusable override falls back to the hosted
+ * server, as every other route does.
+ */
+export function sketchRoomSocketUrl(serverUrl: unknown, roomId: string): string {
+	const origin = resolveSketchServerUrl(serverUrl);
+	const scheme = origin.startsWith('https:') ? 'wss:' : 'ws:';
+	return `${scheme}${origin.slice(origin.indexOf('//'))}/ws/${encodeURIComponent(roomId)}`;
+}
+
 /** Where this device's Sketch Book owner registration stands. */
 export type SketchOwnerState = 'signed-out' | 'pending' | 'confirmed';
 

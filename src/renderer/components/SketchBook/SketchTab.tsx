@@ -15,7 +15,8 @@
  * session's `externalRevision` and are merged into Excalidraw by version, as
  * a remote update (not undoable here). An agent's `sketch_focus` (T11) waits
  * in the session until a mounted view scrolls to it; its chat posts (T12)
- * show in the chat pane.
+ * show in the chat pane. A shared sketch's room notice (a close code, a
+ * reconnect; `sketchRoomClient.ts`) shows above the canvas.
  */
 
 import React from 'react';
@@ -73,6 +74,7 @@ export function SketchTabView({ sketchId, theme }: SketchTabViewProps) {
 	);
 	const focusRequest = useSketchSessionStore((s) => s.sessions[sketchId]?.focusRequest ?? null);
 	const chat = useSketchSessionStore((s) => s.sessions[sketchId]?.chat);
+	const roomNotice = useSketchSessionStore((s) => s.sessions[sketchId]?.room?.notice ?? null);
 	const [api, setApi] = React.useState<ExcalidrawImperativeAPI | null>(null);
 
 	React.useEffect(() => {
@@ -208,6 +210,24 @@ export function SketchTabView({ sketchId, theme }: SketchTabViewProps) {
 					style={{ color: theme.colors.error, borderBottom: `1px solid ${theme.colors.border}` }}
 				>
 					Not saved: {saveError}
+				</div>
+			)}
+			{roomNotice && (
+				<div
+					className="px-3 py-1 text-xs select-text"
+					role={roomNotice.tone === 'info' ? 'status' : 'alert'}
+					data-sketch-room-notice={roomNotice.closeCode ?? ''}
+					style={{
+						color:
+							roomNotice.tone === 'error'
+								? theme.colors.error
+								: roomNotice.tone === 'warning'
+									? theme.colors.warning
+									: theme.colors.textDim,
+						borderBottom: `1px solid ${theme.colors.border}`,
+					}}
+				>
+					{roomNotice.text}
 				</div>
 			)}
 			<div className="flex-1 min-h-0 flex">

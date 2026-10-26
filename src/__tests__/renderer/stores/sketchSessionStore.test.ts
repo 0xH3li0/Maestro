@@ -2,9 +2,11 @@ import { webcrypto } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
 	SKETCH_CHAT_HISTORY_LIMIT,
+	isRoomScreeningConfirmed,
 	openReadySketchSession,
 	pickPersistedAppState,
 	useSketchSessionStore,
+	type SketchRoomState,
 } from '../../../renderer/stores/sketchSessionStore';
 import { localConductorActor, sketchTextHash } from '../../../shared/sketch/attribution';
 import type { SketchWireElement } from '../../../shared/sketch/payloads';
@@ -421,6 +423,67 @@ describe('openReadySketchSession', () => {
 	it('throws the load error', async () => {
 		sketchApi.readScene.mockRejectedValueOnce(new Error('unreadable'));
 		await expect(openReadySketchSession(SKETCH_ID)).rejects.toThrow('unreadable');
+	});
+});
+
+describe('applyRemoteElements', () => {
+	it('takes the merged elements unstamped, saves, and pushes them to views', async () => {
+		await openWith(scene([el('a', 1)]));
+		const remote = el('b', 3, {
+			customData: { lastEditedBy: { id: 'x', name: 'X', kind: 'bot' } },
+		});
+		expect(
+			useSketchSessionStore.getState().applyRemoteElements(SKETCH_ID, [el('a', 1), remote])
+		).toBe(true);
+		expect(session().scene?.elements).toEqual([el('a', 1), remote]);
+		expect(session().externalRevision).toBe(1);
+		expect(session().authors).toEqual({});
+		await vi.waitFor(() => expect(sketchApi.writeScene).toHaveBeenCalledTimes(1));
+	});
+
+	it('does nothing for a sketch with no scene', () => {
+		expect(useSketchSessionStore.getState().applyRemoteElements('missing', [el('a', 1)])).toBe(
+			false
+		);
+	});
+});
+
+describe('room state', () => {
+	function room(
+		reported: 'local' | 'cloud' | null,
+		server: 'local' | 'cloud' | null
+	): SketchRoomState {
+		return {
+			roomId: 'r1',
+			connection: 'live',
+			notice: null,
+			actor: null,
+			role: 'conductor',
+			botPolicy: 'conductor',
+			botOnline: false,
+			guestEdited: false,
+			headSeq: 0,
+			keyEpoch: 1,
+			syncedSeq: 0,
+			screening: { reported, server, since: server ? 100 : null },
+		};
+	}
+
+	it('starts empty and follows updateSketchRoom', async () => {
+		await openWith(scene());
+		expect(session().room).toBeNull();
+		useSketchSessionStore.getState().updateSketchRoom(SKETCH_ID, () => room('local', null));
+		expect(session().room?.roomId).toBe('r1');
+		useSketchSessionStore.getState().updateSketchRoom(SKETCH_ID, () => null);
+		expect(session().room).toBeNull();
+	});
+
+	it('confirms a screening value only when sent and echoed alike', () => {
+		expect(isRoomScreeningConfirmed(room('cloud', 'cloud'), 'cloud')).toBe(true);
+		expect(isRoomScreeningConfirmed(room('cloud', 'local'), 'cloud')).toBe(false);
+		expect(isRoomScreeningConfirmed(room('local', 'cloud'), 'cloud')).toBe(false);
+		expect(isRoomScreeningConfirmed(room(null, 'cloud'), 'cloud')).toBe(false);
+		expect(isRoomScreeningConfirmed(null, 'local')).toBe(false);
 	});
 });
 

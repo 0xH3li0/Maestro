@@ -26,6 +26,14 @@
  *   (spec section 8.2, I3), each bound to the `fileId` approved. Every other
  *   guest image is withheld from the agent's reads and renders. Kept for the
  *   session only, never saved.
+ * - `room` is the shared sketch's live room as `sketchRoomClient.ts` sees it
+ *   (wire contract sections 4 and 5): the connection, the `welcome` state, the
+ *   screening value the server confirmed and its `since` (spec section 8.10),
+ *   and a notice for the Sketch tab. Null for a sketch with no room client.
+ *   Remote elements arrive through `applyRemoteElements()`, which saves and
+ *   bumps `externalRevision` like an agent write, but stamps nothing: the
+ *   author of a remote version is the op's envelope actor, recorded by the
+ *   room client, never `customData`.
  */
 
 import { create } from 'zustand';
@@ -44,7 +52,8 @@ import {
 import { createKeyedWriteQueue } from '../../shared/keyedWriteQueue';
 import type { SketchImageApprovals } from '../../shared/sketch/commands';
 import type { SketchWireElement } from '../../shared/sketch/payloads';
-import type { SketchActor, SketchScene } from '../../shared/sketch/types';
+import type { Screening } from '../../shared/sketch/protocol';
+import type { BotPolicy, SketchActor, SketchRole, SketchScene } from '../../shared/sketch/types';
 import { ipcErrorMessage } from '../utils/ipcErrorMessage';
 
 /** How long a view waits after the last change before it autosaves. */
@@ -97,6 +106,66 @@ export interface SketchAgentIdentity {
 	name: string;
 }
 
+/** Where the room socket stands. */
+export type SketchRoomConnection =
+	| 'connecting'
+	| 'catching-up'
+	| 'live'
+	| 'reconnecting'
+	| 'stopped';
+
+/** A message for the Sketch tab about the room (a close code, a reconnect). */
+export interface SketchRoomNotice {
+	tone: 'info' | 'warning' | 'error';
+	text: string;
+	/** The close code that raised it, when one did. */
+	closeCode?: number;
+}
+
+/** The room's screening flag (wire contract X10, spec section 8.10 G4 and H1). */
+export interface SketchRoomScreening {
+	/** What this desktop last sent as `screening.set` on the current socket, or null. */
+	reported: Screening | null;
+	/** The server's value: `welcome.screening` or the latest `screening` frame. */
+	server: Screening | null;
+	/** Server ms the server's value took effect (`welcome.screeningSince` / `since`). */
+	since: number | null;
+}
+
+/** A shared sketch's live room. */
+export interface SketchRoomState {
+	roomId: string;
+	connection: SketchRoomConnection;
+	notice: SketchRoomNotice | null;
+	/** This desktop's envelope actor, from `welcome`. */
+	actor: SketchActor | null;
+	role: SketchRole | null;
+	botPolicy: BotPolicy | null;
+	botOnline: boolean;
+	/** Mirror of the server flag (M5): a guest has edited the canvas. */
+	guestEdited: boolean;
+	/** The newest op seq the server reported. */
+	headSeq: number;
+	/** The key epoch from `welcome`, the AAD epoch of every frame. Null before one. */
+	keyEpoch: number | null;
+	/** Every op up to this seq is merged into the scene. */
+	syncedSeq: number;
+	screening: SketchRoomScreening;
+}
+
+/**
+ * The server has confirmed `value` for this room: it is what the desktop
+ * reports and what the server echoed (`welcome` counts, since an identical
+ * `screening.set` is not rebroadcast). The gate sends no guest text to a
+ * cloud engine until this is true for `cloud` (spec section 8.10 G4).
+ */
+export function isRoomScreeningConfirmed(
+	room: SketchRoomState | null | undefined,
+	value: Screening
+): boolean {
+	return room?.screening.reported === value && room.screening.server === value;
+}
+
 export interface SketchSession {
 	sketchId: string;
 	status: SketchSessionStatus;
@@ -120,6 +189,8 @@ export interface SketchSession {
 	chat: SketchChatMessage[];
 	/** Guest images the conductor approved for the agent: element id -> `fileId` (I3). */
 	approvedImages: SketchImageApprovals;
+	/** The live room, or null when no room client runs for this sketch. */
+	room: SketchRoomState | null;
 }
 
 /** One Excalidraw `onChange`, as the session takes it. */
@@ -186,6 +257,17 @@ interface SketchSessionState {
 	revokeSketchImageApproval: (sketchId: string, elementId: string) => void;
 	/** Record a delivered version in the author map. A stale version is ignored. */
 	recordAuthorship: (sketchId: string, elementId: string, update: AuthorshipUpdate) => void;
+	/**
+	 * Replace the scene's elements with a merge of remote ops (the room
+	 * client's `reconcileElements` result). Nothing is stamped; the scene is
+	 * saved and pushed to mounted views. False when the sketch has no scene.
+	 */
+	applyRemoteElements: (sketchId: string, elements: readonly SketchWireElement[]) => boolean;
+	/** Set, update or clear the session's room state. */
+	updateSketchRoom: (
+		sketchId: string,
+		update: (room: SketchRoomState | null) => SketchRoomState | null
+	) => void;
 	/** Write the scene to disk now. Saves of one sketch never overlap. */
 	saveSketchSession: (sketchId: string) => Promise<void>;
 	/** Forget a session (the sketch was deleted). Unsaved changes are dropped. */
@@ -211,6 +293,7 @@ function newSession(sketchId: string): SketchSession {
 		focusRequest: null,
 		chat: [],
 		approvedImages: {},
+		room: null,
 	};
 }
 
@@ -402,6 +485,31 @@ export const useSketchSessionStore = create<SketchSessionState>((set, get) => {
 						[elementId]: nextElementAuthorship(previous, update),
 					},
 				};
+			});
+		},
+
+		applyRemoteElements: (sketchId, elements) => {
+			if (!get().sessions[sketchId]?.scene) return false;
+			patchSession(sketchId, (current) =>
+				current.scene
+					? {
+							...current,
+							scene: { ...current.scene, elements: [...elements] },
+							dirty: true,
+							revision: current.revision + 1,
+							externalRevision: current.externalRevision + 1,
+						}
+					: current
+			);
+			// No view may be mounted to autosave it, so the merge saves itself.
+			void get().saveSketchSession(sketchId);
+			return true;
+		},
+
+		updateSketchRoom: (sketchId, update) => {
+			patchSession(sketchId, (session) => {
+				const room = update(session.room);
+				return room === session.room ? session : { ...session, room };
 			});
 		},
 
