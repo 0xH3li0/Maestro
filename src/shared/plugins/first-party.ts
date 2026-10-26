@@ -46,7 +46,8 @@ export type FirstPartyEncoreFlag =
 	| 'quickChat'
 	| 'maestroRun'
 	| 'throughputGauge'
-	| 'dataview';
+	| 'dataview'
+	| 'sketchBook';
 
 /** A supervised background service a first-party plugin runs. */
 export interface FirstPartyBackgroundService {
@@ -1552,6 +1553,62 @@ export const DATAVIEW_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 };
 
 /**
+ * Sketch Book is a collaborative Excalidraw whiteboard an agent spawns in a
+ * native `sketch` tab. The conductor can share it through RunMaestro.ai, and
+ * the spawning agent reads and writes the canvas through the `maestro-sketch`
+ * MCP server. Everything a guest writes passes the guardrail gate before the
+ * agent sees it.
+ */
+export const SKETCH_BOOK_FIRST_PARTY_PLUGIN_ID = 'com.maestro.sketch-book';
+
+export const SKETCH_BOOK_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
+	id: SKETCH_BOOK_FIRST_PARTY_PLUGIN_ID,
+	name: 'Sketch Book',
+	description:
+		'A collaborative Excalidraw whiteboard an agent can draw on, shareable with guests through RunMaestro.ai.',
+	firstParty: true,
+	category: 'agents',
+	permissions: [
+		{
+			capability: 'settings:read',
+			reason:
+				'Re-read the Sketch Book Encore flag and its guardrail screening setting before serving any bridge request or room frame.',
+		},
+		{
+			capability: 'agents:read',
+			reason:
+				'Resolve the owning Maestro agent at the MCP bridge handshake, so an agent sees only the sketches it spawned.',
+		},
+		// NOTE: canvas reads and writes happen over the HOST-OWNED socket bridge
+		// to the agent's own `maestro-sketch` MCP subprocess, and sharing runs
+		// over a host-owned room socket to RunMaestro.ai. No broker verb models
+		// "expose a whiteboard to an agent's MCP tool" or "relay an end-to-end
+		// encrypted room", so that authority stays host-owned - the same
+		// precedent as Coworking's terminal/browser bridge. Sketch files live in
+		// the host userData (`sketches/<agentId>/`), not plugin storage.
+	],
+	settingsNamespace: 'sketchBook',
+	encoreFlag: 'sketchBook',
+	releaseDate: '2026-10-26',
+	// No supervised background service yet: the MCP bridge and room sockets
+	// are host-owned, and a sketch's room lives with its open session.
+	backgroundServices: [],
+	usage: {
+		overview: [
+			'Sketch Book gives an agent a whiteboard. The agent can open a sketch in a background tab, then read and draw on the canvas with its own tools, including Mermaid diagrams converted to shapes.',
+			'You can share a sketch through RunMaestro.ai so guests read and edit it live from a web link, and ask the agent for help with @bot in the room chat. The room is end-to-end encrypted.',
+		],
+		notes: [
+			'Only you can share a sketch. An agent can create one, but sharing is always a human action.',
+			'Everything a guest writes passes a guardrail screen on this computer before the agent sees it, and it fails closed. Flagged content is withheld, not deleted.',
+			'Once a guest has edited a sketch, your own @bot requests run restricted unless you choose to run one with full access.',
+			'Local agents only: an SSH-remote agent cannot open a Sketch Book.',
+		],
+		docsSlug: 'sketch-book',
+	},
+};
+
+/**
  * Every first-party plugin definition, in marketplace display order (matches
  * the pre-lift BUILTIN_FEATURES tile order).
  */
@@ -1572,6 +1629,7 @@ export const FIRST_PARTY_PLUGIN_DEFINITIONS: readonly FirstPartyPluginDefinition
 	MAESTRO_RUN_FIRST_PARTY_PLUGIN,
 	THROUGHPUT_GAUGE_FIRST_PARTY_PLUGIN,
 	DATAVIEW_FIRST_PARTY_PLUGIN,
+	SKETCH_BOOK_FIRST_PARTY_PLUGIN,
 ];
 
 /**
@@ -1599,4 +1657,5 @@ export const FIRST_PARTY_PLUGINS: Readonly<
 	maestroRun: MAESTRO_RUN_FIRST_PARTY_PLUGIN,
 	throughputGauge: THROUGHPUT_GAUGE_FIRST_PARTY_PLUGIN,
 	dataview: DATAVIEW_FIRST_PARTY_PLUGIN,
+	sketchBook: SKETCH_BOOK_FIRST_PARTY_PLUGIN,
 };

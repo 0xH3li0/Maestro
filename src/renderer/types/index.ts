@@ -2038,6 +2038,10 @@ export interface EncoreFeatureFlags {
 	// Run preview. Off by default. Optional so older fixtures and persisted
 	// settings remain valid.
 	dataview?: boolean;
+	// Sketch Book - a collaborative Excalidraw whiteboard an agent spawns in a
+	// sketch tab, shareable through RunMaestro.ai. Off by default. Optional so
+	// older fixtures and persisted settings remain valid.
+	sketchBook?: boolean;
 }
 
 // Director's Notes settings for synopsis generation

@@ -37,6 +37,11 @@ describe('ENCORE_FEATURE_DEFAULTS', () => {
 	it('ships Dataview off', () => {
 		expect(ENCORE_FEATURE_DEFAULTS.dataview).toBe(false);
 	});
+
+	it('ships Sketch Book off', () => {
+		expect(ENCORE_FEATURE_DEFAULTS.sketchBook).toBe(false);
+		expect(resolveEncoreFeatures(undefined).sketchBook).toBe(false);
+	});
 });
 
 describe('resolveEncoreFeatures', () => {

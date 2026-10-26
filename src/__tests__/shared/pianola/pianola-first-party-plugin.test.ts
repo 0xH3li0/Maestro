@@ -10,6 +10,8 @@ import {
 	PIANOLA_FIRST_PARTY_PLUGIN,
 	PIANOLA_FIRST_PARTY_PLUGIN_ID,
 	PIANOLA_FIRST_PARTY_PLUGIN_PERMISSIONS,
+	SKETCH_BOOK_FIRST_PARTY_PLUGIN,
+	SKETCH_BOOK_FIRST_PARTY_PLUGIN_ID,
 } from '../../../shared/plugins/first-party';
 
 describe('Pianola first-party plugin definition', () => {
@@ -135,6 +137,49 @@ describe('Groups+ first-party plugin definition', () => {
 	});
 });
 
+describe('Sketch Book first-party plugin definition', () => {
+	it('declares Sketch Book as an opt-in first-party agents extension', () => {
+		expect(SKETCH_BOOK_FIRST_PARTY_PLUGIN_ID).toBe('com.maestro.sketch-book');
+		expect(SKETCH_BOOK_FIRST_PARTY_PLUGIN).toMatchObject({
+			id: SKETCH_BOOK_FIRST_PARTY_PLUGIN_ID,
+			name: 'Sketch Book',
+			firstParty: true,
+			category: 'agents',
+			settingsNamespace: 'sketchBook',
+			encoreFlag: 'sketchBook',
+			backgroundServices: [],
+		});
+		expect(FIRST_PARTY_PLUGINS.sketchBook).toBe(SKETCH_BOOK_FIRST_PARTY_PLUGIN);
+	});
+
+	it('requests only settings:read and agents:read, each with a reason', () => {
+		const parsed = parsePermissions(SKETCH_BOOK_FIRST_PARTY_PLUGIN.permissions);
+		expect(parsed.errors).toEqual([]);
+		expect(parsed.requests.map((permission) => permission.capability)).toEqual([
+			'settings:read',
+			'agents:read',
+		]);
+		for (const permission of SKETCH_BOOK_FIRST_PARTY_PLUGIN.permissions) {
+			expect(permission.reason?.trim().length).toBeGreaterThan(0);
+		}
+	});
+
+	it('defaults its Encore flag to off', () => {
+		expect(SETTINGS_METADATA.encoreFeatures.default).toMatchObject({ sketchBook: false });
+	});
+
+	it('has no em-dashes or en-dashes in user-facing copy', () => {
+		const usage = SKETCH_BOOK_FIRST_PARTY_PLUGIN.usage;
+		const all = [
+			SKETCH_BOOK_FIRST_PARTY_PLUGIN.description,
+			...usage.overview,
+			...(usage.notes ?? []),
+			...SKETCH_BOOK_FIRST_PARTY_PLUGIN.permissions.map((p) => p.reason ?? ''),
+		].join(' ');
+		expect(all).not.toMatch(/[\u2013\u2014]/);
+	});
+});
+
 describe('first-party plugin registry', () => {
 	it('registers every Encore feature under its plan-stable plugin id', () => {
 		expect(FIRST_PARTY_PLUGIN_DEFINITIONS.map((def) => [def.encoreFlag, def.id])).toEqual([
@@ -154,6 +199,7 @@ describe('first-party plugin registry', () => {
 			['maestroRun', 'com.maestro.maestro-run'],
 			['throughputGauge', 'com.maestro.throughput-gauge'],
 			['dataview', 'com.maestro.dataview'],
+			['sketchBook', 'com.maestro.sketch-book'],
 		]);
 	});
 
