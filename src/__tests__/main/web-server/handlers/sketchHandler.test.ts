@@ -82,6 +82,7 @@ describe('sketch_command handler', () => {
 			success: true,
 			response: { record: { sketchId: SKETCH_ID }, tabId: 'tab-1' },
 			requestId: 'r1',
+			timestamp: expect.any(Number),
 		});
 	});
 
@@ -119,6 +120,7 @@ describe('sketch_command handler', () => {
 			success: false,
 			error: 'Sketch Book is turned off.',
 			requestId: 'r1',
+			timestamp: expect.any(Number),
 		});
 	});
 
