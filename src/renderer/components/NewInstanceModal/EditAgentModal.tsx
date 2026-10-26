@@ -37,7 +37,7 @@ import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { validateEditSession } from '../../utils/sessionValidation';
 import { FormInput } from '../ui/FormInput';
 import { Modal, ModalFooter } from '../ui/Modal';
-import { ModalTabStrip, useModalTabs } from '../ui/ModalTabStrip';
+import { ModalTabStrip, useModalTabCycling, useModalTabs } from '../ui/ModalTabStrip';
 import { AgentConfigPanel } from '../shared/AgentConfigPanel';
 import { agentEnvVarHandlers } from '../shared/agentEnvVarHandlers';
 import { useHomeDir } from '../../hooks/utils/useHomeDir';
@@ -205,6 +205,13 @@ export function EditAgentModal({
 		requestedTab,
 		enabled: isOpen,
 	});
+	useModalTabCycling({
+		tabs: tabIds,
+		activeTab,
+		onSelect: setActiveTab,
+		enabled: isOpen && !!session,
+		shift: false,
+	});
 
 	// Clear copy timeout and reset copied state on unmount, close, or session change
 	useEffect(() => {
@@ -279,11 +286,11 @@ export function EditAgentModal({
 		currentMigration?.operationId === migrationPlan?.id
 			? currentMigration?.state
 			: migrationPlan?.status;
-	const migrationNotices = useMemo(
+	const migrationBlockers = useMemo(
 		() => [
 			...new Map(
 				(migrationLoading ? [] : (migrationPlan?.limitations ?? []))
-					.filter((limit) => limit.severity !== 'info')
+					.filter((limit) => limit.severity === 'block')
 					.map((limit) => [`${limit.severity}:${limit.code}:${limit.message}`, limit])
 			).values(),
 		],
@@ -1215,7 +1222,7 @@ export function EditAgentModal({
 										checked={acceptTranslationLimitations}
 										onChange={(e) => setAcceptTranslationLimitations(e.target.checked)}
 									/>
-									Accept the listed conversion limitations
+									Allow experimental carry-over
 								</label>
 							) : migrationLoading ? (
 								'Checking carry-over…'
@@ -1427,15 +1434,10 @@ export function EditAgentModal({
 																			: 'Ready to switch providers.')}
 														</span>
 													</div>
-													{migrationNotices.map((limit) => (
+													{migrationBlockers.map((limit) => (
 														<div
 															key={`${limit.severity}-${limit.code}-${limit.message}`}
-															style={{
-																color:
-																	limit.severity === 'block'
-																		? theme.colors.error
-																		: theme.colors.textDim,
-															}}
+															style={{ color: theme.colors.error }}
 														>
 															{limit.message}
 														</div>

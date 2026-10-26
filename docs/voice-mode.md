@@ -65,6 +65,10 @@ Each slot is configured and validated on its own. A missing speech model does no
 
 Hosted providers need an API key, entered in **Voice Providers**. Keys are stored per service and validated when you add them.
 
+### Choosing a voice
+
+**Voice Output** lists the voices offered by the selected speech engine. When metadata is available, filter by gender, language, or region. Missing metadata appears as **Unknown**. Filtering leaves your current voice selected, even when it is hidden from the list. **Clear filters** restores the full list.
+
 ### VoiceStudio voices
 
 Configure VoiceStudio under **Settings > Models > Sources**. Set the local service URL, speech engine, and sampling seed, then use **Check connection** and **Save source**. The default URL is `http://127.0.0.1:3900`; only loopback addresses are accepted. Maestro connects to an existing VoiceStudio service and does not start it.
@@ -147,11 +151,11 @@ Both live in **Voice Controls**.
 
 ### Wake word
 
-- Default phrase: **"hey jarvis"**, the phrase a trained detector ships for. Say it and a Conductor session opens without stealing focus from whatever you are working in.
+- Default phrase: **"Hey Jarvis"**, the phrase a trained detector ships for. **Reset** restores it after an edit. Say it and a Conductor session opens without stealing focus from whatever you are working in.
 - **Detection** picks how the phrase is heard. **Trained model** (the default) is tiny and nearly free on the CPU, but it only knows phrases it has a model for: "hey jarvis" out of the box, plus any phrase you [train from your own voice](#training-your-own-wake-phrase). **Transcription** works for any phrase you type with no training: the local speech model transcribes each burst of speech and matches the phrase in the text, at the cost of keeping that model loaded (about 1 GB) while hands-free is on.
 - **Sensitivity** is a single slider. Higher fires more easily.
 - **Test** runs the detector with no session behind it, so you can tune the sensitivity by saying the phrase instead of guessing, restarting, and guessing again. A test run closes the microphone on its own after 15 seconds.
-- **Per-agent wake phrases.** Any agent can be given its own phrase, and saying it opens a session bound directly to that agent, skipping routing entirely.
+- **Per-agent wake phrases.** Use **Add agent** to choose an agent and give it a phrase. Saying it opens a session bound directly to that agent, skipping routing entirely. The remove button clears that agent's phrase.
 
 The trained-model engine needs the openWakeWord front end (2.4 MB) plus the phrase's own detector: the 1.3 MB download for "hey jarvis", or the one you trained. If either is missing, or the phrase has no detector, **Test** says exactly which instead of listening to nothing.
 

@@ -783,6 +783,11 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 						ref={contentRef}
 						onScroll={handleContentScroll}
 						className={`flex-1 min-w-0 min-h-0 ${activeTab.startsWith('plugin-settings:') ? 'flex flex-col overflow-hidden p-3 sm:p-4' : 'p-6 overflow-y-auto scrollbar-thin'}`}
+						// Keep the Library's sticky strip flush with the scrollport. Its
+						// summary owns the top inset so content cannot scroll above the strip.
+						style={{
+							paddingTop: activeTab === 'models' && modelsNav.panel === 'library' ? 0 : undefined,
+						}}
 					>
 						{activeTab === 'general' && <GeneralTab theme={theme} isOpen={isOpen} />}
 

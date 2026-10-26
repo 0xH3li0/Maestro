@@ -1,20 +1,17 @@
-import React, { memo, useCallback, useMemo, useState } from 'react';
+import React, { memo, useCallback, useMemo, useRef, useState } from 'react';
 import {
 	ArrowUp,
 	Brain,
 	Eye,
 	History,
 	ImageIcon,
-	Keyboard,
 	Mic,
 	MoreHorizontal,
 	PenLine,
 	Pin,
-	Upload,
 	X,
 } from 'lucide-react';
 import type { Shortcut, Session, Theme, ThinkingMode } from '../../../types';
-import { formatEnterToSend, formatEnterToSendTooltip } from '../../../utils/shortcutFormatter';
 import {
 	getPermissionModeLabel,
 	getPermissionModeTooltip,
@@ -29,6 +26,7 @@ import { captureException } from '../../../utils/sentry';
 import { isCoarsePointer } from '../../../utils/touch';
 import { useViewportBreakpoint } from '../../../hooks/ui';
 import { usePhoneLayout } from '../../../hooks/ui/useViewportBreakpoint';
+import { useOptionalContentFits } from '../../../hooks/ui/useOptionalLabelFits';
 import { useAutoModelChoice } from '../../../hooks/agent/useAutoModelChoice';
 import { withAutoModelOption } from '../../../../shared/autoTurn';
 import {
@@ -48,12 +46,9 @@ interface ToolbarControlsProps {
 	theme: Theme;
 	isTerminalMode: boolean;
 	canAttachImages: boolean;
-	onUploadFiles?: (files: File[]) => void;
 	hasReadOnlyCapability: boolean;
 	/** Whether `standard` mode is functional for this agent (has a working relay). */
 	hasStandardCapability: boolean;
-	enterToSend: boolean;
-	setEnterToSend: (value: boolean) => void;
 	setStagedImages: React.Dispatch<React.SetStateAction<string[]>>;
 	/** Whether the browser supports the Web Speech API (from useVoiceInput). */
 	voiceSupported?: boolean;
@@ -108,11 +103,8 @@ export const ToolbarControls = memo(function ToolbarControls({
 	theme,
 	isTerminalMode,
 	canAttachImages,
-	onUploadFiles,
 	hasReadOnlyCapability,
 	hasStandardCapability,
-	enterToSend,
-	setEnterToSend,
 	setStagedImages,
 	voiceSupported,
 	isVoiceListening,
@@ -149,27 +141,12 @@ export const ToolbarControls = memo(function ToolbarControls({
 	// On a phone every toggle moves into the options sheet, so the inline group
 	// never renders there however the "..." was last left.
 	const showToggleGroup = !phone && (!isNarrowViewport || toolbarExpanded);
-	const fileUploadControl =
-		isAiMode && isWebDesktop() && onUploadFiles ? (
-			<label
-				className="flex items-center justify-center p-1 rounded hover:bg-white/10 cursor-pointer"
-				title="Upload local files to the host"
-				aria-label="Upload local files to the host"
-			>
-				<Upload className="w-5 h-5" />
-				<input
-					type="file"
-					multiple
-					className="hidden"
-					aria-label="Choose local files to upload to the host"
-					onChange={(event) => {
-						const files = Array.from(event.target.files ?? []);
-						event.target.value = '';
-						if (files.length > 0) onUploadFiles(files);
-					}}
-				/>
-			</label>
-		) : null;
+	const toggleGroupRef = useRef<HTMLDivElement>(null);
+	const toggleCount = isAiMode
+		? Number(!!onToggleTabSaveToHistory) +
+			Number(hasReadOnlyCapability) +
+			Number(supportsThinking && !!onToggleTabShowThinking)
+		: 0;
 
 	// Voice dictation is a primary touch affordance, so it stays in the always-
 	// visible left action group (next to attach-image) rather than the collapsing
@@ -201,6 +178,9 @@ export const ToolbarControls = memo(function ToolbarControls({
 	// non-functional mode.
 	const currentPermissionMode: 'full' | 'standard' | 'readonly' =
 		rawPermissionMode === 'standard' && !hasStandardCapability ? 'full' : rawPermissionMode;
+	const toggleLabelsFit = useOptionalContentFits(toggleGroupRef, {
+		contentKey: `${showToggleGroup}:${isAiMode}:${!!onToggleTabSaveToHistory}:${hasReadOnlyCapability}:${supportsThinking && !!onToggleTabShowThinking}:${provider.agent.toolType}:${currentPermissionMode}:${tabShowThinking}`,
+	});
 
 	// Advertise the full-screen model/effort switcher from inside the dropdowns
 	// the user already opened, which is where they are thinking about the
@@ -345,7 +325,6 @@ export const ToolbarControls = memo(function ToolbarControls({
 							<ImageIcon className="w-5 h-5" />
 						</button>
 					)}
-					{fileUploadControl}
 					{(showVoiceButton || showACappellaVoiceButton) && (
 						<button
 							type="button"
@@ -431,8 +410,8 @@ export const ToolbarControls = memo(function ToolbarControls({
 	// stretches to match it - without this the pills float in the middle with
 	// dead space under them.
 	return (
-		<div className="mt-auto flex min-w-0 flex-wrap items-center gap-1 px-2 pb-2 pt-1">
-			<div className="flex min-w-0 flex-1 gap-1 items-center">
+		<div className="mt-auto flex min-w-0 flex-wrap items-center gap-2 px-2 pb-2 pt-1">
+			<div className="flex min-w-0 flex-wrap items-center gap-1">
 				{isTerminalMode && (
 					<div
 						className="text-xs font-mono opacity-60 px-2 truncate"
@@ -459,7 +438,6 @@ export const ToolbarControls = memo(function ToolbarControls({
 						<ImageIcon className="w-4 h-4" />
 					</button>
 				)}
-				{fileUploadControl}
 				{showVoiceButton && (
 					<button
 						type="button"
@@ -529,114 +507,123 @@ export const ToolbarControls = memo(function ToolbarControls({
 			)}
 
 			<div
-				className={`flex items-center gap-2 ${isNarrowViewport ? '' : 'ml-auto'} ${showToggleGroup ? '' : 'hidden'}`}
+				ref={toggleGroupRef}
+				className={`ml-auto min-w-0 flex-1 overflow-hidden ${showToggleGroup ? '' : 'hidden'}`}
+				// Reserve the icon row so wrapping never clips an action. The rest
+				// of the available space decides whether the full labels fit.
+				style={{ minWidth: `${toggleCount * 1.75 + Math.max(0, toggleCount - 1) * 0.25}rem` }}
 				data-tour="toolbar-toggles"
 			>
-				{isAiMode && onToggleTabSaveToHistory && (
-					<button
-						onClick={onToggleTabSaveToHistory}
-						className={`flex items-center gap-1.5 text-2xs px-2 py-1 rounded-full cursor-pointer transition-all whitespace-nowrap ${
-							tabSaveToHistory ? '' : 'opacity-40 hover:opacity-70'
-						}`}
-						style={{
-							backgroundColor: tabSaveToHistory ? `${theme.colors.accent}25` : 'transparent',
-							color: tabSaveToHistory ? theme.colors.accent : theme.colors.textDim,
-							border: tabSaveToHistory
-								? `1px solid ${theme.colors.accent}50`
-								: '1px solid transparent',
-						}}
-						title={`Save to History${shortcutSuffix(tabShortcuts.toggleSaveToHistory?.keys)} - Synopsis added after each completion`}
-					>
-						<History className="w-3 h-3" />
-						<span>History</span>
-					</button>
-				)}
-				{isAiMode && hasReadOnlyCapability && (
-					<button
-						onClick={() =>
-							handlePermissionModeChange(
-								nextPermissionMode(currentPermissionMode, hasStandardCapability)
-							)
-						}
-						className={`flex items-center gap-1.5 text-2xs px-2 py-1 rounded-full cursor-pointer transition-all whitespace-nowrap ${
-							currentPermissionMode === 'standard' ? 'opacity-40 hover:opacity-70' : ''
-						}`}
-						style={{
-							backgroundColor:
-								currentPermissionMode === 'readonly'
-									? `${theme.colors.warning}25`
-									: currentPermissionMode === 'full'
-										? `${theme.colors.accent}25`
-										: 'transparent',
-							color:
-								currentPermissionMode === 'readonly'
-									? theme.colors.warning
-									: currentPermissionMode === 'full'
-										? theme.colors.accent
-										: theme.colors.textDim,
-							border:
-								currentPermissionMode === 'readonly'
-									? `1px solid ${theme.colors.warning}50`
-									: currentPermissionMode === 'full'
-										? `1px solid ${theme.colors.accent}50`
-										: '1px solid transparent',
-						}}
-						title={`${getPermissionModeTooltip(
-							currentPermissionMode,
-							provider.agent.toolType
-						)}${shortcutSuffix(tabShortcuts.toggleReadOnlyMode?.keys)}`}
-					>
-						<Eye className="w-3 h-3" />
-						<span>{getPermissionModeLabel(currentPermissionMode, provider.agent.toolType)}</span>
-					</button>
-				)}
-				{isAiMode && supportsThinking && onToggleTabShowThinking && (
-					<button
-						onClick={onToggleTabShowThinking}
-						className={`flex items-center gap-1.5 text-2xs px-2 py-1 rounded-full cursor-pointer transition-all whitespace-nowrap ${
-							tabShowThinking !== 'off' ? '' : 'opacity-40 hover:opacity-70'
-						}`}
-						style={{
-							backgroundColor:
-								tabShowThinking === 'sticky'
-									? `${theme.colors.warning}30`
+				<div className="ml-auto flex w-max items-center gap-1">
+					{isAiMode && onToggleTabSaveToHistory && (
+						<button
+							onClick={onToggleTabSaveToHistory}
+							className={`inline-flex h-7 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap text-2xs rounded-full cursor-pointer transition-all ${toggleLabelsFit ? 'px-2' : 'w-7'} ${
+								tabSaveToHistory ? '' : 'opacity-40 hover:opacity-70'
+							}`}
+							style={{
+								backgroundColor: tabSaveToHistory ? `${theme.colors.accent}25` : 'transparent',
+								color: tabSaveToHistory ? theme.colors.accent : theme.colors.textDim,
+								border: tabSaveToHistory
+									? `1px solid ${theme.colors.accent}50`
+									: '1px solid transparent',
+							}}
+							title={`Save to History${shortcutSuffix(tabShortcuts.toggleSaveToHistory?.keys)} - Synopsis added after each completion`}
+							aria-label={`Save to History: ${tabSaveToHistory ? 'on' : 'off'}`}
+							aria-pressed={tabSaveToHistory}
+						>
+							<History className="w-3.5 h-3.5" />
+							{toggleLabelsFit && <span>History</span>}
+						</button>
+					)}
+					{isAiMode && hasReadOnlyCapability && (
+						<button
+							onClick={() =>
+								handlePermissionModeChange(
+									nextPermissionMode(currentPermissionMode, hasStandardCapability)
+								)
+							}
+							className={`inline-flex h-7 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap text-2xs rounded-full cursor-pointer transition-all ${toggleLabelsFit ? 'px-2' : 'w-7'} ${
+								currentPermissionMode === 'standard' ? 'opacity-40 hover:opacity-70' : ''
+							}`}
+							style={{
+								backgroundColor:
+									currentPermissionMode === 'readonly'
+										? `${theme.colors.warning}25`
+										: currentPermissionMode === 'full'
+											? `${theme.colors.accent}25`
+											: 'transparent',
+								color:
+									currentPermissionMode === 'readonly'
+										? theme.colors.warning
+										: currentPermissionMode === 'full'
+											? theme.colors.accent
+											: theme.colors.textDim,
+								border:
+									currentPermissionMode === 'readonly'
+										? `1px solid ${theme.colors.warning}50`
+										: currentPermissionMode === 'full'
+											? `1px solid ${theme.colors.accent}50`
+											: '1px solid transparent',
+							}}
+							title={`${getPermissionModeTooltip(
+								currentPermissionMode,
+								provider.agent.toolType
+							)}${shortcutSuffix(tabShortcuts.toggleReadOnlyMode?.keys)}`}
+							aria-label={getPermissionModeLabel(currentPermissionMode, provider.agent.toolType)}
+						>
+							<Eye className="w-3.5 h-3.5" />
+							{toggleLabelsFit && (
+								<span>
+									{getPermissionModeLabel(currentPermissionMode, provider.agent.toolType)}
+								</span>
+							)}
+						</button>
+					)}
+					{isAiMode && supportsThinking && onToggleTabShowThinking && (
+						<button
+							onClick={onToggleTabShowThinking}
+							className={`relative inline-flex h-7 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap text-2xs rounded-full cursor-pointer transition-all ${toggleLabelsFit ? 'px-2' : 'w-7'} ${
+								tabShowThinking !== 'off' ? '' : 'opacity-40 hover:opacity-70'
+							}`}
+							style={{
+								backgroundColor:
+									tabShowThinking === 'sticky'
+										? `${theme.colors.warning}30`
+										: tabShowThinking === 'on'
+											? `${theme.colors.accentText}25`
+											: 'transparent',
+								color:
+									tabShowThinking === 'sticky'
+										? theme.colors.warning
+										: tabShowThinking === 'on'
+											? theme.colors.accentText
+											: theme.colors.textDim,
+								border:
+									tabShowThinking === 'sticky'
+										? `1px solid ${theme.colors.warning}50`
+										: tabShowThinking === 'on'
+											? `1px solid ${theme.colors.accentText}50`
+											: '1px solid transparent',
+							}}
+							title={`${
+								tabShowThinking === 'off'
+									? 'Show Thinking - Click to stream AI reasoning'
 									: tabShowThinking === 'on'
-										? `${theme.colors.accentText}25`
-										: 'transparent',
-							color:
-								tabShowThinking === 'sticky'
-									? theme.colors.warning
-									: tabShowThinking === 'on'
-										? theme.colors.accentText
-										: theme.colors.textDim,
-							border:
-								tabShowThinking === 'sticky'
-									? `1px solid ${theme.colors.warning}50`
-									: tabShowThinking === 'on'
-										? `1px solid ${theme.colors.accentText}50`
-										: '1px solid transparent',
-						}}
-						title={`${
-							tabShowThinking === 'off'
-								? 'Show Thinking - Click to stream AI reasoning'
-								: tabShowThinking === 'on'
-									? 'Thinking (temporary) - Click for sticky mode'
-									: 'Thinking (sticky) - Click to turn off'
-						}${shortcutSuffix(tabShortcuts.toggleShowThinking?.keys)}`}
-					>
-						<Brain className="w-3 h-3" />
-						<span>Thinking</span>
-						{tabShowThinking === 'sticky' && <Pin className="w-2.5 h-2.5" />}
-					</button>
-				)}
-				<button
-					onClick={() => setEnterToSend(!enterToSend)}
-					className="flex items-center gap-1 text-2xs opacity-50 hover:opacity-100 px-2 py-1 rounded hover:bg-white/5"
-					title={formatEnterToSendTooltip(enterToSend)}
-				>
-					<Keyboard className="w-3 h-3" />
-					{formatEnterToSend(enterToSend)}
-				</button>
+										? 'Thinking (temporary) - Click for sticky mode'
+										: 'Thinking (sticky) - Click to turn off'
+							}${shortcutSuffix(tabShortcuts.toggleShowThinking?.keys)}`}
+							aria-label={`Thinking: ${tabShowThinking === 'on' ? 'temporary' : tabShowThinking}`}
+							aria-pressed={tabShowThinking !== 'off'}
+						>
+							<Brain className="w-3.5 h-3.5" />
+							{toggleLabelsFit && <span>Thinking</span>}
+							{tabShowThinking === 'sticky' && (
+								<Pin className={`w-2.5 h-2.5 ${toggleLabelsFit ? '' : 'absolute right-0 top-0'}`} />
+							)}
+						</button>
+					)}
+				</div>
 			</div>
 		</div>
 	);
