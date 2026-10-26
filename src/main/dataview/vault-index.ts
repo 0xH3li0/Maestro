@@ -322,6 +322,7 @@ export class VaultIndex extends PageIndex {
 					? entry.data
 					: { ...(entry.data as Record<string, unknown>), lists: [] }) as Record<string, unknown>,
 			})),
+			...(omittedPages > 0 ? { omittedListPages: omittedPages } : {}),
 		};
 		this.snapshotMemo = snapshot;
 		return snapshot;

@@ -42,6 +42,7 @@ describe('VaultIndex.jsSnapshot size bound', () => {
 		expect(snapshot.pages.map((p) => p.path).sort()).toEqual(['Huge.md', 'Small.md']);
 		expect(listsOf(snapshot, 'Small.md')).toHaveLength(3);
 		expect(listsOf(snapshot, 'Huge.md')).toEqual([]);
+		expect(snapshot.omittedListPages).toBe(1);
 	});
 
 	it('keeps the cached entry intact and reuses the snapshot until the index changes', async () => {
@@ -52,5 +53,6 @@ describe('VaultIndex.jsSnapshot size bound', () => {
 		const second = index.jsSnapshot();
 		expect(second).not.toBe(first);
 		expect(listsOf(second, 'Small.md')).toHaveLength(4);
+		expect(second.omittedListPages).toBe(1);
 	});
 });

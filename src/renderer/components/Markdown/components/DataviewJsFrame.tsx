@@ -395,6 +395,7 @@ function DataviewJsGuestFrame({ code, theme, doc }: DataviewJsFrameProps) {
 
 	const partition = snapshot ? dataviewGuestPartition(snapshot.root, snapshot.sshRemoteId) : null;
 	const mountGuest = hasSlot && partition !== null;
+	const omittedListPages = snapshot?.result.omittedListPages ?? 0;
 	const background = isPanelThemeColor(theme.colors.bgMain) ? theme.colors.bgMain : 'transparent';
 	const placeholder = (
 		<div
@@ -437,6 +438,15 @@ function DataviewJsGuestFrame({ code, theme, doc }: DataviewJsFrameProps) {
 				/>
 			) : (
 				height !== null && <div data-dataview-js-spacer="" style={{ height: `${height}px` }} />
+			)}
+			{omittedListPages > 0 && (
+				<div
+					data-dataview-js-trimmed=""
+					className="text-xs"
+					style={{ color: theme.colors.textDim, marginTop: '0.25em' }}
+				>
+					{`Tasks and lists of ${omittedListPages} large ${omittedListPages === 1 ? 'page were' : 'pages were'} left out to keep this script fast.`}
+				</div>
 			)}
 		</div>
 	);

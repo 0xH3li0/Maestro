@@ -173,6 +173,12 @@ describe('parseSandboxMessage: valid host messages', () => {
 		expect(message.type === 'run' && message.snapshot.pages[0].data).toBe(data);
 	});
 
+	it('accepts the count of pages whose lists were left out, and refuses a bad one', () => {
+		const message = hostOk(run({ snapshot: snapshot({ omittedListPages: 3 }) }));
+		expect(message.type === 'run' && message.snapshot.omittedListPages).toBe(3);
+		expect(() => hostOk(run({ snapshot: snapshot({ omittedListPages: -1 }) }))).toThrow();
+	});
+
 	it('has no size cap: a run snapshot over 1 MB is accepted', () => {
 		const files = Array.from({ length: 40_000 }, (_, i) => `Notes/a-long-note-name-${i}.md`);
 		expect(JSON.stringify(files).length).toBeGreaterThan(SANDBOX_MAX_GUEST_MESSAGE_BYTES);
