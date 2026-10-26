@@ -5,6 +5,8 @@
  * imports nothing from Electron or Node.
  */
 
+import type { SketchWireElement } from './payloads';
+
 /** Who wrote a frame. Stamped by the server; clients never trust ciphertext for it. */
 export type SketchActorKind = 'conductor' | 'guest' | 'bot';
 
@@ -129,4 +131,19 @@ export interface SketchRecord {
 	botSessionId?: string;
 	/** Mirror of the server flag (M5). Never set locally. */
 	guestEdited: boolean;
+}
+
+/**
+ * A scene as it is saved to `<sketchId>.excalidraw`: Excalidraw's own file
+ * format, so the file opens in excalidraw.com and in Obsidian unchanged.
+ * Elements and files stay whole; only the fields the store checks are named.
+ */
+export interface SketchScene {
+	type: 'excalidraw';
+	version: number;
+	source?: string;
+	elements: SketchWireElement[];
+	appState: Record<string, unknown>;
+	/** Excalidraw's `BinaryFiles`, keyed by file id. */
+	files: Record<string, unknown>;
 }
