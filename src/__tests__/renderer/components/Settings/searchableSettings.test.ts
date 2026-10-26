@@ -245,6 +245,7 @@ describe('searchableSettings', () => {
 				'encore-quick-chat',
 				'encore-throughput-gauge',
 				'encore-dataview',
+				'encore-sketch-book',
 				'encore-plugins',
 			]);
 			for (const entry of tiles) expect(tileIds.has(entry.id), entry.id).toBe(false);
@@ -273,6 +274,7 @@ describe('searchableSettings', () => {
 				'encore-quick-chat',
 				'encore-throughput-gauge',
 				'encore-dataview',
+				'encore-sketch-book',
 			];
 			for (const id of withBodies) expect(encoreTileForSetting(id), id).toBeDefined();
 		});
@@ -425,6 +427,10 @@ describe('searchableSettings', () => {
 			['sparkline', 'encore-throughput-gauge-display'],
 			['rate window', 'encore-throughput-gauge-display'],
 			['reset peak', 'encore-throughput-gauge-display'],
+			['cloud screening consent', 'encore-sketch-book'],
+			['revoke', 'encore-sketch-book'],
+			['openjev', 'encore-sketch-book'],
+			['sketch book', 'encore-sketch-book'],
 			['dataview', 'encore-dataview'],
 			['obsidian', 'encore-dataview'],
 			['dataviewjs', 'encore-dataview-js'],

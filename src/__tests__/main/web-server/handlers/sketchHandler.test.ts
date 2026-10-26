@@ -28,6 +28,21 @@ vi.mock('../../../../main/sketch/sketch-service', () => ({
 	getSketchService: () => service,
 }));
 
+const consent = {
+	status: vi.fn(),
+	revokeConsent: vi.fn(),
+	requestGrant: vi.fn(),
+};
+
+vi.mock('../../../../main/sketch/sketch-cloud-consent', () => ({
+	getSketchCloudConsent: () => consent,
+}));
+
+vi.mock('../../../../main/stores/getters', async (importOriginal) => ({
+	...(await importOriginal<Record<string, unknown>>()),
+	getLiveSessions: () => [{ id: 'agent-1', name: 'Builder' }],
+}));
+
 import { WebSocketMessageHandler } from '../../../../main/web-server/handlers/messageHandlers';
 import type { WebClient } from '../../../../main/web-server/handlers/messageHandlers';
 
@@ -65,6 +80,9 @@ describe('sketch_command handler', () => {
 		service.openSketch.mockResolvedValue({ record: { sketchId: SKETCH_ID }, tabId: 'tab-1' });
 		service.readSketch.mockResolvedValue({ format: 'summary' });
 		service.exportSketch.mockResolvedValue({ file: { format: 'json' } });
+		consent.status.mockResolvedValue({ consent: {}, rooms: [] });
+		consent.revokeConsent.mockResolvedValue({ consent: {}, rooms: [] });
+		consent.requestGrant.mockResolvedValue({ consent: { jev: { grantedAt: 1 } }, rooms: [] });
 		handler = new WebSocketMessageHandler();
 		client = createMockClient(true);
 	});
@@ -122,6 +140,41 @@ describe('sketch_command handler', () => {
 			requestId: 'r1',
 			timestamp: expect.any(Number),
 		});
+	});
+
+	it('reads the screening consent status', async () => {
+		const reply = await send({ action: 'screening-consent', op: 'status' });
+		expect(consent.status).toHaveBeenCalled();
+		expect(reply).toMatchObject({ success: true, response: { consent: {} } });
+	});
+
+	it('revokes a consent for the named engine', async () => {
+		await send({ action: 'screening-consent', op: 'revoke', engine: 'openjev' });
+		expect(consent.revokeConsent).toHaveBeenCalledWith('openjev');
+	});
+
+	it('grants for a person directly, and names the agent caller for the desktop confirmation', async () => {
+		await send({ action: 'screening-consent', op: 'grant', engine: 'jev' });
+		expect(consent.requestGrant).toHaveBeenLastCalledWith('jev', {});
+
+		await send({
+			action: 'screening-consent',
+			op: 'grant',
+			engine: 'jev',
+			fromSessionId: 'agent-1',
+		});
+		expect(consent.requestGrant).toHaveBeenLastCalledWith('jev', { fromAgent: 'Builder' });
+	});
+
+	it('refuses a bad screening-consent op or engine', async () => {
+		const badOp = await send({ action: 'screening-consent', op: 'allow', engine: 'jev' });
+		expect(badOp).toMatchObject({ success: false });
+		expect(String(badOp.error)).toContain('grant, revoke or status');
+
+		const badEngine = await send({ action: 'screening-consent', op: 'grant', engine: 'gpt' });
+		expect(badEngine).toMatchObject({ success: false });
+		expect(String(badEngine.error)).toContain('jev or openjev');
+		expect(consent.requestGrant).not.toHaveBeenCalled();
 	});
 
 	it('refuses an unknown action', async () => {

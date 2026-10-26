@@ -14,10 +14,15 @@
 
 import { logger } from '../../../utils/logger';
 import { getSketchService } from '../../../sketch/sketch-service';
+import { getSketchCloudConsent } from '../../../sketch/sketch-cloud-consent';
 import {
 	isSketchCommandAction,
+	isSketchScreeningConsentOp,
 	type SketchCommandAction,
 } from '../../../../shared/sketch/commands';
+import { isSketchCloudEngine } from '../../../../shared/sketch/cloud-consent';
+import { readCallerMessageFields } from '../../../../shared/agentDelegation';
+import { getLiveSessions } from '../../../stores/getters';
 import { LOG_CONTEXT } from './shared';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
 
@@ -41,7 +46,35 @@ function run(action: SketchCommandAction, message: WebClientMessage): Promise<un
 			return service.readSketch(sketchId, (message.format as 'summary' | undefined) ?? 'summary');
 		case 'export':
 			return service.exportSketch(sketchId, message.format as 'json');
+		case 'screening-consent':
+			return screeningConsent(message);
 	}
+}
+
+/**
+ * `maestro-cli sketch screening-consent grant|revoke|status` (spec section
+ * 8.10). A grant from an agent caller raises the desktop confirmation (A1) and
+ * stores nothing unless the conductor allows it; revoke and status run.
+ */
+function screeningConsent(message: WebClientMessage): Promise<unknown> {
+	const consent = getSketchCloudConsent();
+	const op = message.op;
+	if (!isSketchScreeningConsentOp(op)) {
+		throw new Error(
+			`screening-consent expects grant, revoke or status, not ${String(op ?? '(none)')}.`
+		);
+	}
+	if (op === 'status') return consent.status();
+	const engine = message.engine;
+	if (!isSketchCloudEngine(engine)) {
+		throw new Error(`--engine expects jev or openjev, not ${String(engine ?? '(none)')}.`);
+	}
+	if (op === 'revoke') return consent.revokeConsent(engine);
+	const caller = readCallerMessageFields(message);
+	const fromAgent = caller
+		? (getLiveSessions().find((s) => s.id === caller.fromSessionId)?.name ?? caller.fromSessionId)
+		: undefined;
+	return consent.requestGrant(engine, fromAgent ? { fromAgent } : {});
 }
 
 export async function handleSketchCommand(

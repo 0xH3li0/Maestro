@@ -37,6 +37,7 @@ import type { SpokenNoticeMode } from '../../../shared/spokenNotices';
 import type { GlossLevel } from '../../../shared/themeGloss';
 import type { QuickChatSettings } from '../../../shared/quickChat';
 import type { ThroughputGaugeSettings } from '../../../shared/throughputGauge';
+import type { SketchBookSettings } from '../../../shared/sketch/cloud-consent';
 import {
 	useSettingsStore,
 	loadAllSettings,
@@ -523,6 +524,10 @@ export interface UseSettingsReturn {
 	// Throughput Gauge settings (scope, metric, layout, style, rate window)
 	throughputGaugeSettings: ThroughputGaugeSettings;
 	setThroughputGaugeSettings: (value: ThroughputGaugeSettings) => Promise<boolean>;
+
+	// Sketch Book settings (cloud screening consent, spec section 8.10)
+	sketchBookSettings: SketchBookSettings;
+	setSketchBookSettings: (value: SketchBookSettings) => void;
 
 	// Maestro Cue history retention (days kept in cue.db)
 	cueHistoryRetentionDays: number;

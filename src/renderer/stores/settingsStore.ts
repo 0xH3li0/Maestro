@@ -71,6 +71,11 @@ import {
 	type ThroughputGaugeSettings,
 } from '../../shared/throughputGauge';
 import {
+	SKETCH_BOOK_SETTINGS_KEY,
+	normalizeSketchBookSettings,
+	type SketchBookSettings,
+} from '../../shared/sketch/cloud-consent';
+import {
 	DEFAULT_CUE_HISTORY_RETENTION_DAYS,
 	resolveCueHistoryRetentionDays,
 } from '../../shared/cue/retention';
@@ -534,6 +539,7 @@ export interface SettingsStoreState
 	directorNotesSettings: DirectorNotesSettings;
 	quickChatSettings: QuickChatSettings;
 	throughputGaugeSettings: ThroughputGaugeSettings;
+	sketchBookSettings: SketchBookSettings;
 	cueHistoryRetentionDays: number;
 	groupCueEntries: boolean;
 	useNativeTitleBar: boolean;
@@ -668,6 +674,8 @@ export interface SettingsStoreActions
 	setQuickChatSettings: (value: QuickChatSettings) => void;
 	/** Resolves once the write lands on disk (`false` when it failed), for `maestro-cli throughput-gauge set`. */
 	setThroughputGaugeSettings: (value: ThroughputGaugeSettings) => Promise<boolean>;
+	/** Sketch Book settings; main follows a consent change (revoke) through the store's change event. */
+	setSketchBookSettings: (value: SketchBookSettings) => void;
 	setCueHistoryRetentionDays: (value: number) => void;
 	setGroupCueEntries: (value: boolean) => void;
 	setUseNativeTitleBar: (value: boolean) => void;
@@ -941,6 +949,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		directorNotesSettings: DEFAULT_DIRECTOR_NOTES_SETTINGS,
 		quickChatSettings: resolveQuickChatSettings(undefined),
 		throughputGaugeSettings: resolveThroughputGaugeSettings(undefined),
+		sketchBookSettings: {},
 		cueHistoryRetentionDays: DEFAULT_CUE_HISTORY_RETENTION_DAYS,
 		groupCueEntries: true,
 		useNativeTitleBar: isWindowsPlatform(),
@@ -1563,6 +1572,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setThroughputGaugeSettings: (value) => {
 			set({ throughputGaugeSettings: value });
 			return window.maestro.settings.set(THROUGHPUT_GAUGE_SETTINGS_KEY, value);
+		},
+
+		setSketchBookSettings: (value) => {
+			set({ sketchBookSettings: value });
+			window.maestro.settings.set(SKETCH_BOOK_SETTINGS_KEY, value);
 		},
 
 		setCueHistoryRetentionDays: (value) => {
@@ -2838,6 +2852,11 @@ export async function loadAllSettings(): Promise<void> {
 			);
 		}
 
+		// Sketch Book settings (the cloud screening consent; malformed entries read as no consent)
+		if (allSettings[SKETCH_BOOK_SETTINGS_KEY] !== undefined) {
+			patch.sketchBookSettings = normalizeSketchBookSettings(allSettings[SKETCH_BOOK_SETTINGS_KEY]);
+		}
+
 		hydrateWakatimeSettings(allSettings, patch);
 		hydrateDelegationGraphSettings(allSettings, patch);
 		// Cue history retention. A stored value that isn't a usable day count
@@ -3172,6 +3191,7 @@ export function getSettingsActions() {
 		setDirectorNotesSettings: state.setDirectorNotesSettings,
 		setQuickChatSettings: state.setQuickChatSettings,
 		setThroughputGaugeSettings: state.setThroughputGaugeSettings,
+		setSketchBookSettings: state.setSketchBookSettings,
 		setWakatimeApiKey: state.setWakatimeApiKey,
 		setWakatimeEnabled: state.setWakatimeEnabled,
 		setWakatimeDetailedTracking: state.setWakatimeDetailedTracking,

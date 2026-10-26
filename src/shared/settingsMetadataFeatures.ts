@@ -153,6 +153,13 @@ export const FEATURES_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: { ...DEFAULT_THROUGHPUT_GAUGE_SETTINGS },
 		category: 'advanced',
 	},
+	sketchBook: {
+		description:
+			'Sketch Book settings. cloudScreenConsent holds the consent to screen guest text on a cloud System One engine: { jev?: {grantedAt}, openjev?: {host, grantedAt} } (grantedAt in ms; OpenJev consent is bound to its host). Granted only with a confirmation: use "maestro-cli sketch screening-consent grant|revoke --engine jev|openjev".',
+		type: 'object',
+		default: {},
+		category: 'advanced',
+	},
 	cueHistoryRetentionDays: {
 		description:
 			'How many days of Maestro Cue run history to keep in the Cue database. Rows older than this are pruned when the Cue engine starts. Raise it to keep a longer Activity Log, lower it to keep the database small.',

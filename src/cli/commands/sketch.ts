@@ -17,6 +17,13 @@
 //   board to a file. PNG and SVG are drawn by the desktop window, JSON is the
 //   `.excalidraw` file itself.
 //
+// - `screening-consent grant|revoke|status --engine jev|openjev` stores or
+//   revokes the conductor's consent to screen guest text on a cloud System One
+//   engine (spec section 8.10). A person at the terminal reads the disclosure
+//   and answers it (or passes `--yes`); an agent caller gets the desktop
+//   confirmation instead (A1), and nothing is stored unless the conductor
+//   allows it. `revoke` and `status` run.
+//
 // `read` and `export` work from the SAVED scene, which the tab autosaves within
 // a second of an edit.
 //
@@ -31,11 +38,21 @@ import { readLiveSessions } from '../services/storage';
 import { formatTextTable } from '../output/formatter';
 import { resolveCliPath } from '../utils/parse';
 import { encoreRefusalFields } from '../utils/encore-gate';
+import { canPrompt, confirmOnTerminal } from '../utils/confirm';
+import { callerMessageFields, readCallerIdentity } from '../../shared/agentDelegation';
+import {
+	isSketchCloudEngine,
+	sketchCloudEngineLabel,
+	sketchCloudScreeningDisclosure,
+	type SketchCloudEngine,
+	type SketchScreeningConsentStatus,
+} from '../../shared/sketch/cloud-consent';
 import { formatRelativeTime, formatSize } from '../../shared/formatters';
 import { resolveBackgroundFlag } from '../../shared/focusPlacement';
 import {
 	isSketchExportFormat,
 	isSketchReadFormat,
+	isSketchScreeningConsentOp,
 	type ExportedSketch,
 	type OpenedSketch,
 	type SketchCommandAction,
@@ -50,6 +67,8 @@ import type { SketchRecord } from '../../shared/sketch/types';
 const OPEN_TIMEOUT_MS = 20_000;
 /** The first PNG or SVG loads Excalidraw and its fonts in the window. */
 const EXPORT_TIMEOUT_MS = 60_000;
+/** An agent's grant waits on the conductor answering the desktop confirmation. */
+const CONSENT_CONFIRM_TIMEOUT_MS = 5 * 60_000;
 
 export interface SketchNewOptions {
 	agent: string;
@@ -72,6 +91,12 @@ export interface SketchOpenOptions {
 
 export interface SketchReadOptions {
 	format?: string;
+	json?: boolean;
+}
+
+export interface SketchScreeningConsentOptions {
+	engine?: string;
+	yes?: boolean;
 	json?: boolean;
 }
 
@@ -289,4 +314,99 @@ export async function sketchExport(sketchId: string, options: SketchExportOption
 	console.log(
 		`Exported "${exported.record.name}" as ${exported.file.format.toUpperCase()} to ${outputPath} (${formatSize(bytes.length)})`
 	);
+}
+
+/** The human reading of the consent state. */
+export function formatScreeningConsentStatus(status: SketchScreeningConsentStatus): string {
+	const lines: string[] = [];
+	lines.push(
+		status.source
+			? `Screen: ${status.source.label} (${status.source.locality}${status.source.host ? `, ${status.source.host}` : ''})`
+			: `Screen: none (${status.sourceProblem ?? 'off'})`
+	);
+	const jev = status.consent.jev;
+	const openjev = status.consent.openjev;
+	lines.push(
+		`Consent: ${sketchCloudEngineLabel('jev')} ${jev ? `granted ${formatRelativeTime(jev.grantedAt)}` : 'not granted'}`
+	);
+	lines.push(
+		`Consent: ${sketchCloudEngineLabel('openjev')} ${openjev ? `granted for ${openjev.host} ${formatRelativeTime(openjev.grantedAt)}` : 'not granted'}`
+	);
+	if (status.source?.locality === 'cloud') {
+		lines.push(
+			status.sourceCovered
+				? 'The engine in force is covered by your consent.'
+				: 'The engine in force is NOT covered: guest text stays withheld from your agent.'
+		);
+	}
+	if (status.rooms.length > 0) {
+		lines.push('', 'Live rooms:');
+		for (const room of status.rooms) {
+			const server = room.serverScreening
+				? `server says ${room.serverScreening}`
+				: 'no server echo yet';
+			lines.push(
+				`  ${room.sketchId}  ${room.screening}${room.liveConfirmed ? ', confirmed' : ''}  (${server})`
+			);
+		}
+	}
+	return lines.join('\n');
+}
+
+export async function sketchScreeningConsent(
+	op: string,
+	options: SketchScreeningConsentOptions
+): Promise<void> {
+	if (!isSketchScreeningConsentOp(op)) {
+		failCommand(
+			`screening-consent expects grant, revoke or status, got "${op}"`,
+			options.json,
+			ExitCode.InvalidUsage
+		);
+	}
+	let engine: SketchCloudEngine | undefined;
+	if (op !== 'status') {
+		if (!isSketchCloudEngine(options.engine)) {
+			failCommand(
+				`--engine expects jev or openjev, got "${options.engine ?? ''}"`,
+				options.json,
+				ExitCode.InvalidUsage
+			);
+		}
+		engine = options.engine as SketchCloudEngine;
+	}
+
+	const caller = readCallerIdentity(process.env);
+	if (op === 'grant' && engine && !caller && !options.yes) {
+		// A person grants at the terminal: show the same disclosure the desktop does.
+		if (!canPrompt()) {
+			failCommand(
+				'Granting cloud screening needs a confirmation. Run it in a terminal, or pass --yes after reading what it sends.',
+				options.json,
+				ExitCode.InvalidUsage
+			);
+		}
+		const disclosure = sketchCloudScreeningDisclosure({ engine, reason: 'grant' });
+		console.log(`${disclosure.message}\n\n${disclosure.detail}\n`);
+		if (!(await confirmOnTerminal(disclosure.title))) {
+			failCommand('Nothing was changed.', options.json);
+		}
+	}
+
+	const status = await request<SketchScreeningConsentStatus>(
+		'screening-consent',
+		{ op, ...(engine ? { engine } : {}), ...callerMessageFields(caller) },
+		options.json,
+		op === 'grant' && caller ? CONSENT_CONFIRM_TIMEOUT_MS : undefined
+	);
+	if (options.json) {
+		printJson({ success: true, op, ...(engine ? { engine } : {}), ...status });
+		return;
+	}
+	if (op === 'grant' && engine) {
+		console.log(`Cloud screening allowed on ${sketchCloudEngineLabel(engine)}.`);
+	} else if (op === 'revoke' && engine) {
+		console.log(`Cloud screening consent revoked for ${sketchCloudEngineLabel(engine)}.`);
+	}
+	console.log(formatScreeningConsentStatus(status));
 }

@@ -5563,7 +5563,7 @@ maestro-cli dataview trusted --json
 
 ## `maestro-cli sketch`
 
-Sketch Book: create, list, open, read and export Excalidraw whiteboards owned by an agent
+Sketch Book: create, list, open, read and export Excalidraw whiteboards owned by an agent, and manage cloud screening consent
 
 ## `maestro-cli sketch new`
 
@@ -5634,6 +5634,22 @@ Write the saved board to a file as PNG, SVG or Excalidraw JSON
 
 ```bash
 maestro-cli sketch export <sketch-id> --format png --output board.png
+```
+
+## `maestro-cli sketch screening-consent <op>`
+
+grant, revoke or show your consent to screen guest text on a cloud engine (Jev, OpenJev). An agent caller gets a desktop confirmation
+
+| Option              | Description                                                     | Default |
+| ------------------- | --------------------------------------------------------------- | ------- |
+| `--engine <engine>` | jev or openjev (grant and revoke)                               | -       |
+| `--yes`             | Grant without the terminal prompt (you have read what it sends) | -       |
+| `--json`            | Output as JSON (for scripting)                                  | -       |
+
+```bash
+maestro-cli sketch screening-consent status
+maestro-cli sketch screening-consent grant --engine jev
+maestro-cli sketch screening-consent revoke --engine openjev --json
 ```
 
 ## `maestro-cli quick-chat`

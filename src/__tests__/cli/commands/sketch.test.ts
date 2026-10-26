@@ -23,6 +23,11 @@ vi.mock('../../../cli/services/storage', async (importOriginal) => ({
 	readLiveSessions: vi.fn(() => [{ id: 'resolved-planner', name: 'Planner' }]),
 }));
 
+vi.mock('../../../cli/utils/confirm', () => ({
+	canPrompt: vi.fn(() => true),
+	confirmOnTerminal: vi.fn(async () => true),
+}));
+
 import {
 	exportFileBytes,
 	formatSketchSummary,
@@ -31,7 +36,10 @@ import {
 	sketchNew,
 	sketchOpen,
 	sketchRead,
+	sketchScreeningConsent,
 } from '../../../cli/commands/sketch';
+import { canPrompt, confirmOnTerminal } from '../../../cli/utils/confirm';
+import { CALLER_AGENT_ID_ENV_VAR } from '../../../shared/agentDelegation';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import { ExitCode } from '../../../cli/exit-codes';
 import { encoreDisabledMessage } from '../../../shared/encoreFeatureDefaults';
@@ -346,6 +354,121 @@ describe('sketch command', () => {
 			expect(
 				exportFileBytes({ format: 'png', mimeType: '', encoding: 'base64', data: 'YWI=' })
 			).toEqual(Buffer.from('ab'));
+		});
+	});
+
+	describe('screening-consent', () => {
+		const status = {
+			consent: { jev: { grantedAt: Date.now() - 60_000 } },
+			source: {
+				kind: 'jev',
+				locality: 'cloud',
+				host: 'api.typesafe.ai',
+				label: 'Jev (TypeSafe cloud)',
+			},
+			sourceCovered: true,
+			rooms: [
+				{
+					sketchId: SKETCH_ID,
+					screening: 'cloud',
+					liveConfirmed: true,
+					serverScreening: 'cloud',
+					serverSince: 1,
+				},
+			],
+		};
+		let savedCaller: string | undefined;
+
+		beforeEach(() => {
+			savedCaller = process.env[CALLER_AGENT_ID_ENV_VAR];
+			delete process.env[CALLER_AGENT_ID_ENV_VAR];
+			vi.mocked(canPrompt).mockReturnValue(true);
+			vi.mocked(confirmOnTerminal).mockResolvedValue(true);
+		});
+
+		afterEach(() => {
+			if (savedCaller === undefined) delete process.env[CALLER_AGENT_ID_ENV_VAR];
+			else process.env[CALLER_AGENT_ID_ENV_VAR] = savedCaller;
+		});
+
+		it('prints the status: the screen, each consent and the live rooms', async () => {
+			const sent = respond(status);
+			await sketchScreeningConsent('status', {});
+
+			expect(sent[0]).toMatchObject({
+				type: 'sketch_command',
+				action: 'screening-consent',
+				op: 'status',
+			});
+			expect(sent[0].engine).toBeUndefined();
+			expect(logged()).toContain('Screen: Jev (TypeSafe cloud) (cloud, api.typesafe.ai)');
+			expect(logged()).toContain('Consent: OpenJev not granted');
+			expect(logged()).toContain('covered by your consent');
+			expect(logged()).toContain(`${SKETCH_ID}  cloud, confirmed  (server says cloud)`);
+		});
+
+		it('asks a person at the terminal with the disclosure before granting', async () => {
+			const sent = respond(status);
+			await sketchScreeningConsent('grant', { engine: 'jev' });
+
+			expect(confirmOnTerminal).toHaveBeenCalledWith(
+				'Screen Sketch Book guests with Jev (TypeSafe cloud)?'
+			);
+			expect(logged()).toContain('decrypted guest chat and canvas text');
+			expect(sent[0]).toMatchObject({ op: 'grant', engine: 'jev' });
+			expect(sent[0].fromSessionId).toBeUndefined();
+			expect(logged()).toContain('Cloud screening allowed on Jev (TypeSafe cloud).');
+		});
+
+		it('changes nothing when the person declines', async () => {
+			vi.mocked(confirmOnTerminal).mockResolvedValue(false);
+			const sent = respond(status);
+			await expect(sketchScreeningConsent('grant', { engine: 'jev' })).rejects.toThrow('__exit__');
+
+			expect(sent).toHaveLength(0);
+			expect(errors()).toContain('Nothing was changed.');
+		});
+
+		it('refuses a grant with no terminal and no --yes, and runs with --yes', async () => {
+			vi.mocked(canPrompt).mockReturnValue(false);
+			const sent = respond(status);
+			await expect(sketchScreeningConsent('grant', { engine: 'jev' })).rejects.toThrow('__exit__');
+			expect(sent).toHaveLength(0);
+			expect(exitSpy).toHaveBeenCalledWith(ExitCode.InvalidUsage);
+
+			await sketchScreeningConsent('grant', { engine: 'jev', yes: true });
+			expect(sent[0]).toMatchObject({ op: 'grant', engine: 'jev' });
+			expect(confirmOnTerminal).not.toHaveBeenCalled();
+		});
+
+		it('sends an agent caller to the desktop confirmation, waiting on the conductor', async () => {
+			process.env[CALLER_AGENT_ID_ENV_VAR] = 'agent-7';
+			const sent = respond(status);
+			await sketchScreeningConsent('grant', { engine: 'openjev', yes: true });
+
+			expect(confirmOnTerminal).not.toHaveBeenCalled();
+			expect(sent[0]).toMatchObject({ op: 'grant', engine: 'openjev', fromSessionId: 'agent-7' });
+			expect(sent[0].timeout).toBe(5 * 60_000);
+		});
+
+		it('revokes without asking and prints JSON', async () => {
+			const sent = respond({ ...status, consent: {} });
+			await sketchScreeningConsent('revoke', { engine: 'jev', json: true });
+
+			expect(confirmOnTerminal).not.toHaveBeenCalled();
+			expect(sent[0]).toMatchObject({ op: 'revoke', engine: 'jev' });
+			expect(json()).toMatchObject({ success: true, op: 'revoke', engine: 'jev', consent: {} });
+		});
+
+		it('requires a known op and engine', async () => {
+			const sent = respond(status);
+			await expect(sketchScreeningConsent('allow', {})).rejects.toThrow('__exit__');
+			await expect(sketchScreeningConsent('grant', { engine: 'gpt' })).rejects.toThrow('__exit__');
+
+			expect(sent).toHaveLength(0);
+			expect(errors()).toContain('screening-consent expects grant, revoke or status');
+			expect(errors()).toContain('--engine expects jev or openjev');
+			expect(exitSpy).toHaveBeenCalledWith(ExitCode.InvalidUsage);
 		});
 	});
 });

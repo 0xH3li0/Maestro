@@ -257,7 +257,14 @@ import {
 	dataviewIndexStatus,
 	dataviewQuery,
 } from './commands/dataview';
-import { sketchExport, sketchList, sketchNew, sketchOpen, sketchRead } from './commands/sketch';
+import {
+	sketchExport,
+	sketchList,
+	sketchNew,
+	sketchOpen,
+	sketchRead,
+	sketchScreeningConsent,
+} from './commands/sketch';
 import { cadenzaOpen, cadenzaUpdate, cadenzaClose } from './commands/cadenza';
 import {
 	movementBegin,
@@ -4616,7 +4623,7 @@ dataviewCmd
 // Sketch Book commands - the verbs that need no room (spec section 9). Each
 // rides `sketch_command` to the SketchService the Sketch tab uses.
 const sketchCmd = encoreCommand(program, 'sketch', 'sketchBook', encoreFlags).description(
-	'Sketch Book: create, list, open, read and export Excalidraw whiteboards owned by an agent'
+	'Sketch Book: create, list, open, read and export Excalidraw whiteboards owned by an agent, and manage cloud screening consent'
 );
 
 sketchCmd
@@ -4658,6 +4665,16 @@ sketchCmd
 	.requiredOption('--output <path>', 'File to write (relative paths resolve against the cwd)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((sketchId, options) => sketchExport(sketchId, options));
+
+sketchCmd
+	.command('screening-consent <op>')
+	.description(
+		'grant, revoke or show your consent to screen guest text on a cloud engine (Jev, OpenJev). An agent caller gets a desktop confirmation'
+	)
+	.option('--engine <engine>', 'jev or openjev (grant and revoke)')
+	.option('--yes', 'Grant without the terminal prompt (you have read what it sends)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((op, options) => sketchScreeningConsent(op, options));
 
 // Quick Chat commands - the hotkey-summoned floating chat window. Each verb is
 // the same action as the matching button in the window.

@@ -11,6 +11,7 @@ import {
 	DataviewSection,
 	DirectorNotesSection,
 	QuickChatSection,
+	SketchBookSection,
 	SymphonyRegistrySection,
 	ThroughputGaugeSection,
 	UsageStatsSection,
@@ -117,6 +118,7 @@ export function EncoreTab({ theme, isOpen, tileRequest }: EncoreTabProps) {
 			/>
 		),
 		dataview: <DataviewSection theme={theme} />,
+		sketchBook: <SketchBookSection theme={theme} />,
 	};
 
 	return (

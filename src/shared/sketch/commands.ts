@@ -25,8 +25,19 @@ import type { ElementAuthorship } from './attribution';
 import type { SketchWireElement } from './payloads';
 import { SKETCH_ACTOR_KINDS, SKETCH_ROLES, type SketchRecord, type SketchScene } from './types';
 
-export const SKETCH_COMMAND_ACTIONS = ['new', 'list', 'open', 'read', 'export'] as const;
+export const SKETCH_COMMAND_ACTIONS = [
+	'new',
+	'list',
+	'open',
+	'read',
+	'export',
+	'screening-consent',
+] as const;
 export type SketchCommandAction = (typeof SKETCH_COMMAND_ACTIONS)[number];
+
+/** `maestro-cli sketch screening-consent <op>` (spec section 8.10). */
+export const SKETCH_SCREENING_CONSENT_OPS = ['grant', 'revoke', 'status'] as const;
+export type SketchScreeningConsentOp = (typeof SKETCH_SCREENING_CONSENT_OPS)[number];
 
 export const SKETCH_READ_FORMATS = ['summary', 'elements'] as const;
 export type SketchReadFormat = (typeof SKETCH_READ_FORMATS)[number];
@@ -49,6 +60,10 @@ function isOneOf<T extends string>(values: readonly T[], value: unknown): value 
 
 export function isSketchCommandAction(value: unknown): value is SketchCommandAction {
 	return isOneOf(SKETCH_COMMAND_ACTIONS, value);
+}
+
+export function isSketchScreeningConsentOp(value: unknown): value is SketchScreeningConsentOp {
+	return isOneOf(SKETCH_SCREENING_CONSENT_OPS, value);
 }
 
 export function isSketchReadFormat(value: unknown): value is SketchReadFormat {

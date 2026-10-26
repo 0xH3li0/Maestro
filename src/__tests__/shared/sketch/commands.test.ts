@@ -9,6 +9,7 @@
 import { describe, it, expect } from 'vitest';
 import {
 	isSketchCommandAction,
+	isSketchScreeningConsentOp,
 	isSketchExportFormat,
 	isSketchReadFormat,
 	normalizeSketchRendererResult,
@@ -25,12 +26,21 @@ function scene(
 }
 
 describe('guards', () => {
-	it('accepts exactly the five room-free actions', () => {
-		for (const action of ['new', 'list', 'open', 'read', 'export']) {
+	it('accepts exactly the room-free actions and screening-consent', () => {
+		for (const action of ['new', 'list', 'open', 'read', 'export', 'screening-consent']) {
 			expect(isSketchCommandAction(action), action).toBe(true);
 		}
 		for (const action of ['share', 'NEW', '', undefined, 1]) {
 			expect(isSketchCommandAction(action), String(action)).toBe(false);
+		}
+	});
+
+	it('accepts the screening-consent ops only', () => {
+		for (const op of ['grant', 'revoke', 'status']) {
+			expect(isSketchScreeningConsentOp(op), op).toBe(true);
+		}
+		for (const op of ['allow', 'GRANT', '', undefined]) {
+			expect(isSketchScreeningConsentOp(op), String(op)).toBe(false);
 		}
 	});
 

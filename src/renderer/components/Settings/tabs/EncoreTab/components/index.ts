@@ -4,6 +4,7 @@ export { DataviewSection } from './DataviewSection';
 export { DirectorNotesSection } from './DirectorNotesSection';
 export { MaestroRunSection } from './MaestroRunSection';
 export { QuickChatSection } from './QuickChatSection';
+export { SketchBookSection } from './SketchBookSection';
 export { SymphonyRegistrySection } from './SymphonyRegistrySection';
 export { ThroughputGaugeSection } from './ThroughputGaugeSection';
 export { UsageStatsSection } from './UsageStatsSection';

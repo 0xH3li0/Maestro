@@ -28,6 +28,12 @@ import {
 	voiceSettingDefault,
 	voiceSettingProblem,
 } from './acappella/voice-settings-schema';
+import {
+	SKETCH_BOOK_SETTINGS_KEY,
+	SKETCH_CLOUD_SCREEN_CONSENT_FIELD,
+	sketchBookSettingPathProblem,
+	sketchBookSettingProblem,
+} from './sketch/cloud-consent';
 // ============================================================================
 // Types
 // ============================================================================
@@ -169,6 +175,15 @@ const NESTED_SETTING_SCHEMAS: Readonly<Record<string, NestedSettingSchema>> = {
 		isText: (path) => VOICE_SETTING_FIELDS[path]?.kind === 'string',
 		redact: redactVoiceSettings,
 		pathProblem: (path) => (isVoiceSettingPath(path) ? null : unknownVoiceSettingMessage(path)),
+	},
+	// The cloud screening consent is granted only through its confirmation.
+	[SKETCH_BOOK_SETTINGS_KEY]: {
+		problem: sketchBookSettingProblem,
+		defaultFor: () => undefined,
+		isField: (path) => path === SKETCH_CLOUD_SCREEN_CONSENT_FIELD,
+		isText: () => false,
+		redact: (_path, value) => value,
+		pathProblem: sketchBookSettingPathProblem,
 	},
 };
 

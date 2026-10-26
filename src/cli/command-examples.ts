@@ -39,6 +39,11 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 		'maestro-cli sketch read <sketch-id> --format elements --json',
 	],
 	'sketch export': ['maestro-cli sketch export <sketch-id> --format png --output board.png'],
+	'sketch screening-consent': [
+		'maestro-cli sketch screening-consent status',
+		'maestro-cli sketch screening-consent grant --engine jev',
+		'maestro-cli sketch screening-consent revoke --engine openjev --json',
+	],
 	// RC queue steering, notifications and Quick Chat controls
 	'queue hold': ['maestro-cli queue hold <item-id> --agent <agent-id>'],
 	'queue resume': ['maestro-cli queue resume <item-id> --agent <agent-id>'],

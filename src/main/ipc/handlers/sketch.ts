@@ -24,6 +24,10 @@ import {
 	type SketchWindowResolver,
 } from '../../sketch/sketch-renderer-bridge';
 import type { SaveToProjectOptions } from '../../sketch/sketch-store';
+import { getSketchCloudConsent, startSketchCloudConsent } from '../../sketch/sketch-cloud-consent';
+import type { SafeSendFn } from '../../utils/safe-send';
+import type { SketchCloudEngine } from '../../../shared/sketch/cloud-consent';
+import type { Screening } from '../../../shared/sketch/protocol';
 import type { SketchScene } from '../../../shared/sketch/types';
 
 const LOG_CONTEXT = '[SketchBook]';
@@ -35,11 +39,17 @@ function opts(operation: string) {
 export interface SketchHandlerDeps {
 	/** The window that owns an agent, or the primary window for `null`. */
 	resolveWindow?: SketchWindowResolver;
+	/** Pushes `sketch:screeningChanged` to every window (cloud screening consent). */
+	safeSend?: SafeSendFn;
 }
 
 export function registerSketchHandlers(deps: SketchHandlerDeps = {}): void {
 	if (deps.resolveWindow) setSketchWindowResolver(deps.resolveWindow);
 	const service = getSketchService();
+	// Cloud screening consent (spec section 8.10): registers the guardrail's
+	// cloud policy and follows the assignments and the System One engine.
+	startSketchCloudConsent({ safeSend: deps.safeSend });
+	const consent = getSketchCloudConsent();
 
 	ipcMain.handle(
 		'sketch:create',
@@ -83,6 +93,51 @@ export function registerSketchHandlers(deps: SketchHandlerDeps = {}): void {
 			opts('saveToProject'),
 			async (sketchId: string, destDir: string, options?: SaveToProjectOptions) =>
 				service.saveSketchToProject(sketchId, destDir, options)
+		)
+	);
+
+	// Cloud screening consent (spec section 8.10). The room client reports the
+	// room's life and the server's echo; Settings and the confirmation read and
+	// change the consent. `maestro-cli sketch screening-consent` reaches the same
+	// module over the WS bridge.
+	ipcMain.handle(
+		'sketch:screeningConsentStatus',
+		withIpcErrorLogging(opts('screeningConsentStatus'), async () => consent.status())
+	);
+	ipcMain.handle(
+		'sketch:grantScreeningConsent',
+		withIpcErrorLogging(opts('grantScreeningConsent'), async (engine: SketchCloudEngine) =>
+			consent.grantConsent(engine)
+		)
+	);
+	ipcMain.handle(
+		'sketch:revokeScreeningConsent',
+		withIpcErrorLogging(opts('revokeScreeningConsent'), async (engine: SketchCloudEngine) =>
+			consent.revokeConsent(engine)
+		)
+	);
+	ipcMain.handle(
+		'sketch:confirmCloudScreening',
+		withIpcErrorLogging(opts('confirmCloudScreening'), async () => consent.confirmCloudScreening())
+	);
+	ipcMain.handle(
+		'sketch:roomScreening',
+		withIpcErrorLogging(opts('roomScreening'), async (sketchId: string) =>
+			consent.roomScreening(sketchId)
+		)
+	);
+	ipcMain.handle(
+		'sketch:setRoomLive',
+		withIpcErrorLogging(opts('setRoomLive'), async (sketchId: string, live: boolean) =>
+			consent.setRoomLive(sketchId, live === true)
+		)
+	);
+	ipcMain.handle(
+		'sketch:reportServerScreening',
+		withIpcErrorLogging(
+			opts('reportServerScreening'),
+			async (sketchId: string, screening: Screening, since: number | null) =>
+				consent.reportServerScreening(sketchId, screening, since)
 		)
 	);
 }

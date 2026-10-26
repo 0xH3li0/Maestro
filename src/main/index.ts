@@ -212,6 +212,7 @@ import { stopCoworkingBridge } from './coworking/coworking-bridge';
 import { startSketchMcpBridge, stopSketchMcpBridge } from './sketch/sketch-mcp-bridge';
 import { getSketchToolService } from './sketch/sketch-tools';
 import { syncSketchMcpServerOff, syncSketchMcpServerOn } from './sketch/sketch-mcp-install';
+import { refreshSketchCloudScreening } from './sketch/sketch-cloud-consent';
 import { initializeStatsDB, closeStatsDB } from './stats';
 import { evaluateCueGate } from './local-models/cue-gate';
 import { scoreCueInjectionText } from './local-models/cue-injection-screen';
@@ -682,6 +683,10 @@ const settingsWatcher = createSettingsWatcher({
 		// hotkeys follow the store's change event, which an outside write never
 		// fires, so they are re-read here.
 		syncACappellaAfterExternalSettingsChange();
+		// `maestro-cli models assign injection-screen ...` moves the Sketch Book
+		// screen's source (a switch to a cloud engine re-asks the conductor while
+		// a room is live), and a hand edit can change the stored consent.
+		refreshSketchCloudScreening();
 	},
 });
 

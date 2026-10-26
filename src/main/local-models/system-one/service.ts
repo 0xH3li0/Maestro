@@ -87,6 +87,7 @@ import { getSettingsStore } from '../../stores/getters';
 import { logger } from '../../utils/logger';
 import type { SafeSendFn } from '../../utils/safe-send';
 import { safeStorageSeal, type SealProvider } from '../../utils/safe-storage-seal';
+import { captureException } from '../../utils/sentry';
 import { getConfiguredLocalModelEndpoints } from '../endpoint-service';
 import { SystemOneError, isSystemOneError } from '../errors';
 import { localModelsDataDir } from '../paths';
@@ -160,8 +161,30 @@ function processEnv(): Record<string, string | undefined> {
 	return (deps.processEnv ?? (() => process.env))();
 }
 
+/** Main-process listeners for a settings or key change ({@link onSystemOneChanged}). */
+const changeListeners = new Set<() => void>();
+
+/**
+ * Hear about every System One settings or key change in the main process: the
+ * engine, the OpenJev URL, a key. Every writer (the card, `maestro-cli s1 set`)
+ * goes through this service, so nothing changes unannounced. Returns the
+ * unsubscribe.
+ */
+export function onSystemOneChanged(listener: () => void): () => void {
+	changeListeners.add(listener);
+	return () => changeListeners.delete(listener);
+}
+
 function announceChange(): void {
 	deps.safeSend?.(SYSTEM_ONE_CHANGED_CHANNEL);
+	for (const listener of [...changeListeners]) {
+		try {
+			listener();
+		} catch (error) {
+			// One listener's bug must not stop the others or the write that announced it.
+			void captureException(error, { operation: 'systemOne:changeListener' });
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------
