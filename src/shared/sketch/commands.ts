@@ -214,7 +214,16 @@ export interface SketchSessionSnapshot {
 	elements: SketchWireElement[];
 	authors: Record<string, ElementAuthorship>;
 	fileCount: number;
+	/**
+	 * Guest images the conductor approved for the agent (spec section 8.2, I3):
+	 * element id -> the `fileId` approved. An approval covers only that file,
+	 * so a guest who swaps the picture needs a new one. Absent means none.
+	 */
+	approvedImages?: SketchImageApprovals;
 }
+
+/** Element id -> the image `fileId` the conductor approved for the agent (spec section 8.2, I3). */
+export type SketchImageApprovals = Record<string, string>;
 
 export type SketchRendererResult =
 	| {

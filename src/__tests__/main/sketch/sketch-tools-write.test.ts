@@ -60,7 +60,10 @@ import {
 	type SketchToolDeps,
 } from '../../../main/sketch/sketch-tools';
 import { createSlidingWindowGuard } from '../../../main/utils/sliding-window-guard';
-import { sketchSceneVersion } from '../../../shared/sketch/agent-view';
+import {
+	SKETCH_UNTRUSTED_RENDER_NOTICE,
+	sketchSceneVersion,
+} from '../../../shared/sketch/agent-view';
 import {
 	botActor,
 	botEditor,
@@ -73,7 +76,7 @@ import type {
 	SketchSessionSnapshot,
 } from '../../../shared/sketch/commands';
 import type { SketchWireElement } from '../../../shared/sketch/payloads';
-import { CONDUCTOR, INJECTION, asAlpha, el, scene } from './sketchToolsHarness';
+import { CONDUCTOR, INJECTION, asAlpha, el, realGate, scene } from './sketchToolsHarness';
 
 /** A credential `redactSecrets()` recognizes, and what it becomes. */
 const SECRET = 'ghp_wxyzWXYZ0123456789abcd';
@@ -601,6 +604,27 @@ describe('sketch_screenshot and sketch_export: pixels', () => {
 			'box-forged',
 		]);
 		expect(shot).toMatchObject({ withheldCount: 0, guestImageCount: 1 });
+		// Two drawn elements carry text a guest wrote: the agent is told.
+		expect(shot).toMatchObject({
+			untrustedCount: 2,
+			untrustedNotice: SKETCH_UNTRUSTED_RENDER_NOTICE,
+		});
+	});
+
+	it('draws a guest image the session approved for that file', async () => {
+		const renderer = fakeRenderer();
+		const board = mixedBoard();
+		board.approvedImages = { 'img-guest': 'file-guest' };
+		// The real gate with the screen off: guest text stays withheld, while the
+		// image has no text (no link) for the screen to read.
+		const { result } = await asAlpha(board, {
+			renderSession: renderer.renderSession,
+			screen: realGate({ off: true }).screen,
+		});
+		const shot = await result('sketch_screenshot', { sketchId: 'sk-alpha' });
+		expect(renderer.drawnIds()).toEqual(['box-a', 'box-b', 'img-own', 'img-guest', 'box-forged']);
+		expect(shot).toMatchObject({ withheldCount: 2, guestImageCount: 0 });
+		expect(shot).not.toHaveProperty('untrustedNotice');
 	});
 });
 

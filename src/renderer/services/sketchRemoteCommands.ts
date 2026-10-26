@@ -105,6 +105,7 @@ export async function readSketchSessionSnapshot(
 		elements: session.scene.elements,
 		authors: session.authors,
 		fileCount: Object.keys(session.scene.files).length,
+		approvedImages: session.approvedImages,
 	};
 }
 

@@ -22,9 +22,22 @@
  * (`requestSketchRenderer`, over the canonical `requestFromRenderer`), whose
  * window resolver is set once at startup.
  *
- * The gate. Every third-party element a view needs goes through
- * `screenForAgent()` (sketch-guardrail.ts) in one batched call before the view
- * is built; a subject the gate does not clear is withheld (fail closed).
+ * The gate. Every third-party element a view needs (T3, T4, T6 conflicts,
+ * T9, T10 and the change digest) goes through `screenForAgent()`
+ * (sketch-guardrail.ts) in one batched call before the view is built; a
+ * subject the gate does not clear is withheld (fail closed) and comes back
+ * as `{id, type, author, withheld}` with no text. Third-party text the gate
+ * clears is marked `untrusted` where it shows, and the response carries
+ * `untrustedNotice`. Guest images cannot be screened, so one the conductor
+ * has not approved in the session (`approvedImages`) is withheld from every
+ * read and render (spec section 8.2, I3).
+ *
+ * The change digest (spec section 4, "Following human edits"): a bot turn
+ * starts with `changeDigest()`, the gated changes since the agent's last read
+ * as text (`buildSketchChangeDigest()`), built on the same path as T4 and
+ * counted as a read. It takes the turn's posture, so D2's labelled
+ * `unscreened` text can reach a restricted turn; the tools pass none (full
+ * access), so D2 never applies to them.
  *
  * Writes. Main checks the arguments and the caps, runs the per-sketch write
  * rate guard, and passes every outbound text through `screenOutbound()`
@@ -63,14 +76,20 @@ import {
 	diffSketchElements,
 	planSketchAgentRender,
 	selectSketchElements,
+	SKETCH_UNTRUSTED_NOTICE,
+	SKETCH_UNTRUSTED_RENDER_NOTICE,
 	sketchElementsToScreen,
 	sketchSceneVersion,
+	sketchUnapprovedImageIds,
 	sketchVersionMap,
 	type SketchBox,
 	type SketchChangeSet,
 	type SketchReadScope,
+	type SketchTrust,
+	type SketchUntrustedMap,
 	type SketchWithheldMap,
 } from '../../shared/sketch/agent-view';
+import { buildSketchChangeDigest } from '../../shared/sketch/digest';
 import {
 	collectSketchOutboundTexts,
 	forbiddenSketchPatchKeys,
@@ -103,6 +122,7 @@ import {
 	screenForAgent,
 	type AgentScreenRequest,
 	type AgentScreenVerdict,
+	type SketchTurnPosture,
 } from './sketch-guardrail';
 import type { SketchToolCall, SketchToolService } from './sketch-mcp-bridge';
 import {
@@ -261,6 +281,41 @@ export interface SketchToolDeps {
 
 /** A response cut to the byte cap. */
 export type CappedSketchResponse<T> = T & { truncated: boolean; omittedCount?: number };
+
+/** What the gate decided for a view: the withheld ids, and the third-party ids it let through. */
+interface SketchGateResult {
+	withheld: SketchWithheldMap;
+	untrusted: SketchUntrustedMap;
+}
+
+/** `untrustedNotice` for a response that shows third-party text, or nothing. */
+function untrustedNotice(untrusted: SketchUntrustedMap): { untrustedNotice?: string } {
+	return untrusted.size > 0 ? { untrustedNotice: SKETCH_UNTRUSTED_NOTICE } : {};
+}
+
+/** A bot turn's change digest request (spec section 4, "Following human edits"). */
+export interface SketchChangeDigestRequest {
+	agentId: string;
+	sketchId: string;
+	/** The turn's posture; D2 applies only to a restricted turn. Defaults to `full`. */
+	posture?: SketchTurnPosture;
+	/** Diff against this scene version. Defaults to the agent's last read of the sketch. */
+	sinceVersion?: number;
+}
+
+/** A change digest, with the gated change set it was built from. */
+export interface SketchChangeDigest {
+	digest: string;
+	sceneVersion: number;
+	changes: SketchChangeSet;
+}
+
+/** The tool service, and the change digest that shares its read baselines. */
+export interface SketchToolRuntime {
+	tools: SketchToolService;
+	/** The gated changes since the agent's last read, as the text a bot turn starts with. */
+	changeDigest(request: SketchChangeDigestRequest): Promise<SketchChangeDigest>;
+}
 
 /**
  * Keep as many list items as fit in `maxBytes`, filling the lists in order;
@@ -485,6 +540,10 @@ function readScope(params: Record<string, unknown>): SketchReadScope {
 }
 
 export function createSketchToolService(deps: SketchToolDeps = {}): SketchToolService {
+	return createSketchToolRuntime(deps).tools;
+}
+
+export function createSketchToolRuntime(deps: SketchToolDeps = {}): SketchToolRuntime {
 	const readSession = deps.readSession ?? readLiveSketchSession;
 	const listSketches =
 		deps.listSketches ?? ((ownerAgentId) => getSketchService().listSketches({ ownerAgentId }));
@@ -517,24 +576,38 @@ export function createSketchToolService(deps: SketchToolDeps = {}): SketchToolSe
 		return sceneVersion;
 	}
 
+	/** The scene version of the agent's latest read of the sketch, or null. */
+	function lastReadVersion(sketchId: string): number | null {
+		const reads = baselines.get(sketchId);
+		if (!reads || reads.size === 0) return null;
+		return [...reads.keys()].at(-1) ?? null;
+	}
+
 	async function liveSession(agentId: string, sketchId: string): Promise<SketchSessionSnapshot> {
 		const session = await readSession(agentId, sketchId, { open: true });
 		if (!session) throw new Error('Sketch Book: the Maestro window could not open the sketch.');
 		return session;
 	}
 
-	/** Screen the third-party elements in one call; everything not cleared is withheld. */
-	async function gate(
+	/**
+	 * Screen the third-party subjects in one call. Everything not cleared is
+	 * withheld (fail closed); cleared text is untrusted, `unscreened` for D2's
+	 * labelled clear.
+	 */
+	async function screenSubjects(
 		agentId: string,
 		sketchId: string,
 		subjects: readonly SketchWireElement[],
-		authors: Readonly<Record<string, ElementAuthorship>>
-	): Promise<SketchWithheldMap> {
+		authors: Readonly<Record<string, ElementAuthorship>>,
+		posture?: SketchTurnPosture
+	): Promise<SketchGateResult> {
 		const withheld = new Map<string, WithheldReason>();
-		if (subjects.length === 0) return withheld;
+		const untrusted = new Map<string, SketchTrust>();
+		if (subjects.length === 0) return { withheld, untrusted };
 		const verdicts = await screen({
 			sketchId,
 			agentId,
+			...(posture ? { posture } : {}),
 			subjects: subjects.map((element) => {
 				const authorship = currentAuthorship(element, authors);
 				return {
@@ -558,12 +631,77 @@ export function createSketchToolService(deps: SketchToolDeps = {}): SketchToolSe
 		});
 		for (const element of subjects) {
 			const verdict = verdicts.get(element.id);
-			// No posture is passed, so D2's labelled `unscreened` clear cannot occur
-			// here; were it to, these views cannot label it, so it stays withheld.
-			if (verdict?.status === 'clear' && !verdict.unscreened) continue;
+			if (verdict?.status === 'clear') {
+				// Only text is untrusted: a cleared element with none (an approved image) carries no mark.
+				const hasText = sketchTextFields(element).some((field) => !!field?.trim());
+				if (hasText) untrusted.set(element.id, verdict.unscreened ? 'unscreened' : 'screened');
+				continue;
+			}
 			withheld.set(element.id, verdict?.status === 'withheld' ? verdict.reason : 'unscreened');
 		}
-		return withheld;
+		return { withheld, untrusted };
+	}
+
+	/**
+	 * Gate a view of `scope` (T3, T4, T6 conflicts, the digest): the
+	 * third-party elements it reads text from are screened, and every
+	 * unapproved guest image in it is withheld `unscreened` (I3).
+	 */
+	async function gateView(
+		agentId: string,
+		sketchId: string,
+		session: SketchSessionSnapshot,
+		scope: readonly SketchWireElement[],
+		posture?: SketchTurnPosture
+	): Promise<SketchGateResult> {
+		const { elements, authors, approvedImages } = session;
+		const screened = await screenSubjects(
+			agentId,
+			sketchId,
+			sketchElementsToScreen(elements, scope, authors, approvedImages),
+			authors,
+			posture
+		);
+		const withheld = new Map(screened.withheld);
+		for (const id of sketchUnapprovedImageIds(scope, authors, approvedImages)) {
+			withheld.set(id, 'unscreened');
+		}
+		return { withheld, untrusted: screened.untrusted };
+	}
+
+	/** T4 and the digest: the gated changes since `sinceVersion`, counted as a read. */
+	async function gatedChanges(
+		agentId: string,
+		sketchId: string,
+		sinceVersion: number,
+		posture?: SketchTurnPosture
+	): Promise<{ changes: SketchChangeSet; untrusted: SketchUntrustedMap }> {
+		const session = await liveSession(agentId, sketchId);
+		const { elements, authors } = session;
+		const baseline = baselines.get(sketchId)?.get(sinceVersion) ?? null;
+		const sceneVersion = rememberRead(sketchId, elements);
+		// The scene version only grows, so a reader already at (or past) it has missed nothing.
+		const diff =
+			baseline || sinceVersion < sceneVersion
+				? diffSketchElements(baseline, elements)
+				: { added: [], updated: [], deleted: [] };
+		const { withheld, untrusted } = await gateView(
+			agentId,
+			sketchId,
+			session,
+			[...diff.added, ...diff.updated],
+			posture
+		);
+		const entries = buildSketchChangeEntries(elements, diff, authors, withheld, untrusted);
+		return {
+			changes: {
+				sinceVersion,
+				sceneVersion,
+				baseline: baseline || sinceVersion >= sceneVersion ? 'known' : 'unknown',
+				...entries,
+			},
+			untrusted,
+		};
 	}
 
 	/** Run `fn` inside the rate guard for `key`; a refused call does nothing. */
@@ -598,11 +736,16 @@ export function createSketchToolService(deps: SketchToolDeps = {}): SketchToolSe
 		elementIds: string[] | undefined,
 		allowEmpty: boolean
 	) {
-		const { elements, authors } = await liveSession(call.agent.id, record.sketchId);
+		const { elements, authors, approvedImages } = await liveSession(call.agent.id, record.sketchId);
 		const sceneVersion = rememberRead(record.sketchId, elements);
-		const plan = planSketchAgentRender(elements, authors, elementIds);
-		const withheld = await gate(call.agent.id, record.sketchId, plan.toScreen, authors);
-		const render = buildSketchAgentRender(plan.candidates, authors, withheld);
+		const plan = planSketchAgentRender(elements, authors, elementIds, approvedImages);
+		const { withheld, untrusted } = await screenSubjects(
+			call.agent.id,
+			record.sketchId,
+			plan.toScreen,
+			authors
+		);
+		const render = buildSketchAgentRender(plan.candidates, authors, withheld, approvedImages);
 		if (render.elements.length === 0 && !allowEmpty) {
 			const left = render.withheldCount + render.guestImageCount;
 			throw new Error(
@@ -613,6 +756,7 @@ export function createSketchToolService(deps: SketchToolDeps = {}): SketchToolSe
 						: 'Sketch Book: nothing to draw: the sketch is empty.'
 			);
 		}
+		const untrustedCount = render.elements.filter((element) => untrusted.has(element.id)).length;
 		return {
 			sceneVersion,
 			elements: render.elements,
@@ -620,6 +764,9 @@ export function createSketchToolService(deps: SketchToolDeps = {}): SketchToolSe
 				withheldCount: render.withheldCount,
 				guestImageCount: render.guestImageCount,
 				...(plan.missing.length > 0 ? { missing: plan.missing } : {}),
+				...(untrustedCount > 0
+					? { untrustedCount, untrustedNotice: SKETCH_UNTRUSTED_RENDER_NOTICE }
+					: {}),
 			},
 		};
 	}
@@ -680,7 +827,7 @@ export function createSketchToolService(deps: SketchToolDeps = {}): SketchToolSe
 		};
 	}
 
-	return {
+	const tools: SketchToolService = {
 		// T1: the agent's own sketches. A listing never opens a session: a sketch
 		// no window has open reports the version of its saved scene.
 		sketch_list: async (call) => {
@@ -730,25 +877,32 @@ export function createSketchToolService(deps: SketchToolDeps = {}): SketchToolSe
 				throw new Error('Sketch Book: `format` must be "summary" or "elements".');
 			}
 			const scope = readScope(call.params);
-			const { elements, authors, fileCount } = await liveSession(call.agent.id, record.sketchId);
+			const session = await liveSession(call.agent.id, record.sketchId);
+			const { elements, authors, fileCount } = session;
 			const sceneVersion = rememberRead(record.sketchId, elements);
 			const selected = selectSketchElements(elements, scope);
-			const withheld = await gate(
+			const { withheld, untrusted } = await gateView(
 				call.agent.id,
 				record.sketchId,
-				sketchElementsToScreen(elements, selected, authors),
-				authors
+				session,
+				selected
 			);
-			const head = { sketchId: record.sketchId, name: record.name, sceneVersion, fileCount };
+			const head = {
+				sketchId: record.sketchId,
+				name: record.name,
+				sceneVersion,
+				fileCount,
+				...untrustedNotice(untrusted),
+			};
 
 			if (format === 'elements') {
 				return capSketchResponse(
-					[buildSketchAgentElements(selected, authors, withheld)],
+					[buildSketchAgentElements(selected, authors, withheld, untrusted)],
 					([kept]) => ({ ...head, format, elements: kept }),
 					maxBytes
 				);
 			}
-			const summary = buildSketchAgentSummary(elements, selected, authors, withheld);
+			const summary = buildSketchAgentSummary(elements, selected, authors, withheld, untrusted);
 			return capSketchResponse(
 				[summary.frames, summary.shapes, summary.connections, summary.groups],
 				([frames, shapes, connections, groups]) => ({
@@ -771,30 +925,21 @@ export function createSketchToolService(deps: SketchToolDeps = {}): SketchToolSe
 			) {
 				throw new Error('Sketch Book: `sinceVersion` must be a non-negative integer.');
 			}
-			const { elements, authors } = await liveSession(call.agent.id, record.sketchId);
-			const baseline = baselines.get(record.sketchId)?.get(sinceVersion) ?? null;
-			const sceneVersion = rememberRead(record.sketchId, elements);
-			// The scene version only grows, so a reader already at (or past) it has missed nothing.
-			const diff =
-				baseline || sinceVersion < sceneVersion
-					? diffSketchElements(baseline, elements)
-					: { added: [], updated: [], deleted: [] };
-			const withheld = await gate(
+			const { changes, untrusted } = await gatedChanges(
 				call.agent.id,
 				record.sketchId,
-				sketchElementsToScreen(elements, [...diff.added, ...diff.updated], authors),
-				authors
+				sinceVersion
 			);
-			const entries = buildSketchChangeEntries(elements, diff, authors, withheld);
-			const head: Omit<SketchChangeSet, 'added' | 'updated' | 'deleted'> & { sketchId: string } = {
-				sketchId: record.sketchId,
-				sinceVersion,
-				sceneVersion,
-				baseline: baseline || sinceVersion >= sceneVersion ? 'known' : 'unknown',
-			};
+			const { added, updated, deleted, ...rest } = changes;
+			const head = { sketchId: record.sketchId, ...rest, ...untrustedNotice(untrusted) };
 			return capSketchResponse(
-				[entries.added, entries.updated, entries.deleted],
-				([added, updated, deleted]) => ({ ...head, added, updated, deleted }),
+				[added, updated, deleted],
+				([keptAdded, keptUpdated, keptDeleted]) => ({
+					...head,
+					added: keptAdded,
+					updated: keptUpdated,
+					deleted: keptDeleted,
+				}),
 				maxBytes
 			);
 		},
@@ -840,14 +985,14 @@ export function createSketchToolService(deps: SketchToolDeps = {}): SketchToolSe
 					patches: screened.value,
 				});
 				const { elements, authors } = result.conflicts;
-				const withheld = await gate(
+				const { withheld, untrusted } = await gateView(
 					call.agent.id,
 					record.sketchId,
-					sketchElementsToScreen(elements, elements, authors),
-					authors
+					result.conflicts,
+					elements
 				);
 				return capSketchResponse(
-					[buildSketchAgentElements(elements, authors, withheld)],
+					[buildSketchAgentElements(elements, authors, withheld, untrusted)],
 					([conflicts]) => ({
 						sketchId: record.sketchId,
 						sceneVersion: result.sceneVersion,
@@ -855,6 +1000,7 @@ export function createSketchToolService(deps: SketchToolDeps = {}): SketchToolSe
 						missing: result.missing,
 						conflicts,
 						redactedCount: screened.redactedCount,
+						...untrustedNotice(untrusted),
 					}),
 					maxBytes
 				);
@@ -1001,12 +1147,30 @@ export function createSketchToolService(deps: SketchToolDeps = {}): SketchToolSe
 			});
 		},
 	};
+
+	return {
+		tools,
+		changeDigest: async ({ agentId, sketchId, posture, sinceVersion }) => {
+			const since = sinceVersion ?? lastReadVersion(sketchId) ?? 0;
+			const { changes } = await gatedChanges(agentId, sketchId, since, posture);
+			return {
+				digest: buildSketchChangeDigest(changes),
+				sceneVersion: changes.sceneVersion,
+				changes,
+			};
+		},
+	};
 }
 
-let defaultToolService: SketchToolService | null = null;
+let defaultToolRuntime: SketchToolRuntime | null = null;
 
-/** The app's tool service. One instance, so `sketch_changes` baselines survive a flag toggle. */
+/** The app's tool runtime. One instance, so read baselines survive a flag toggle. */
+export function getSketchToolRuntime(): SketchToolRuntime {
+	defaultToolRuntime ??= createSketchToolRuntime();
+	return defaultToolRuntime;
+}
+
+/** The app's tool service. */
 export function getSketchToolService(): SketchToolService {
-	defaultToolService ??= createSketchToolService();
-	return defaultToolService;
+	return getSketchToolRuntime().tools;
 }

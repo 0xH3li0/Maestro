@@ -22,6 +22,10 @@
  *   Excalidraw. A view's own `onChange` never bumps it, so nothing echoes.
  * - `focusRequest` is an agent's `sketch_focus`, waiting for a view to scroll
  *   to it; `chat` is the local chat pane (T12; the room joins it in phase 06).
+ * - `approvedImages` are the guest images the conductor let the agent see
+ *   (spec section 8.2, I3), each bound to the `fileId` approved. Every other
+ *   guest image is withheld from the agent's reads and renders. Kept for the
+ *   session only, never saved.
  */
 
 import { create } from 'zustand';
@@ -38,6 +42,7 @@ import {
 	type SketchEditor,
 } from '../../shared/sketch/attribution';
 import { createKeyedWriteQueue } from '../../shared/keyedWriteQueue';
+import type { SketchImageApprovals } from '../../shared/sketch/commands';
 import type { SketchWireElement } from '../../shared/sketch/payloads';
 import type { SketchActor, SketchScene } from '../../shared/sketch/types';
 import { ipcErrorMessage } from '../utils/ipcErrorMessage';
@@ -113,6 +118,8 @@ export interface SketchSession {
 	focusRequest: SketchFocusRequest | null;
 	/** The chat pane, oldest first. */
 	chat: SketchChatMessage[];
+	/** Guest images the conductor approved for the agent: element id -> `fileId` (I3). */
+	approvedImages: SketchImageApprovals;
 }
 
 /** One Excalidraw `onChange`, as the session takes it. */
@@ -169,6 +176,14 @@ interface SketchSessionState {
 		sketchId: string,
 		message: { actor: SketchActor; text: string }
 	) => SketchChatMessage | null;
+	/**
+	 * The conductor lets the agent see this image as it is now (spec section
+	 * 8.2, I3): the approval is bound to its current `fileId`. False when the
+	 * sketch has no live image with that id.
+	 */
+	approveSketchImage: (sketchId: string, elementId: string) => boolean;
+	/** Withdraw an image approval. */
+	revokeSketchImageApproval: (sketchId: string, elementId: string) => void;
 	/** Record a delivered version in the author map. A stale version is ignored. */
 	recordAuthorship: (sketchId: string, elementId: string, update: AuthorshipUpdate) => void;
 	/** Write the scene to disk now. Saves of one sketch never overlap. */
@@ -195,6 +210,7 @@ function newSession(sketchId: string): SketchSession {
 		externalRevision: 0,
 		focusRequest: null,
 		chat: [],
+		approvedImages: {},
 	};
 }
 
@@ -351,6 +367,28 @@ export const useSketchSessionStore = create<SketchSessionState>((set, get) => {
 				chat: [...session.chat, message].slice(-SKETCH_CHAT_HISTORY_LIMIT),
 			}));
 			return message;
+		},
+
+		approveSketchImage: (sketchId, elementId) => {
+			const element = get().sessions[sketchId]?.scene?.elements.find(
+				(candidate) => candidate.id === elementId
+			);
+			const fileId = element?.fileId;
+			if (!element || element.type !== 'image' || element.isDeleted === true) return false;
+			if (typeof fileId !== 'string' || !fileId) return false;
+			patchSession(sketchId, (session) => ({
+				...session,
+				approvedImages: { ...session.approvedImages, [elementId]: fileId },
+			}));
+			return true;
+		},
+
+		revokeSketchImageApproval: (sketchId, elementId) => {
+			patchSession(sketchId, (session) => {
+				if (!(elementId in session.approvedImages)) return session;
+				const { [elementId]: _revoked, ...approvedImages } = session.approvedImages;
+				return { ...session, approvedImages };
+			});
 		},
 
 		recordAuthorship: (sketchId, elementId, update) => {

@@ -12,9 +12,14 @@
  *     `A -> B`, frames list their members, groups list theirs.
  *   - **Authorship** comes from the session author map, never from
  *     `customData`, which is stripped from every element.
- *   - **Fail closed**: a gate that screens nothing (`withholdAll` in the
- *     harness) withholds every third-party element, and its text leaks
- *     through no label, edge or name.
+ *   - **The real gate** (`realGate()` in the harness, the guardrail over a
+ *     mocked classifier): flagged guest text is withheld and leaks through no
+ *     label, edge or name; with the screen off every third-party element is
+ *     withheld `unscreened` (fail closed); clean guest text passes through,
+ *     marked `untrusted` where it shows, with `untrustedNotice`.
+ *   - **Guest images** are withheld unless the session approved that file.
+ *   - **The change digest** runs the same gated path as T4, counts as a read,
+ *     and hands the turn's posture to the gate.
  *   - **1 MB cap**: an oversized response keeps a prefix and says `truncated`.
  */
 
@@ -38,11 +43,20 @@ vi.mock('../../../main/sketch/sketch-renderer-bridge', () => ({
 }));
 
 import { SKETCH_BRIDGE_ERRORS } from '../../../main/sketch/sketch-mcp-bridge';
-import { SKETCH_MAX_RESPONSE_BYTES, capSketchResponse } from '../../../main/sketch/sketch-tools';
-import { SKETCH_MAX_FREEDRAW_POINTS } from '../../../shared/sketch/agent-view';
+import {
+	SKETCH_MAX_RESPONSE_BYTES,
+	capSketchResponse,
+	createSketchToolRuntime,
+} from '../../../main/sketch/sketch-tools';
+import {
+	SKETCH_MAX_FREEDRAW_POINTS,
+	SKETCH_UNTRUSTED_NOTICE,
+} from '../../../shared/sketch/agent-view';
+import { DIGEST_UNTRUSTED_NOTE } from '../../../shared/sketch/digest';
 import { serializedJsonByteLength } from '../../../shared/jsonUtils';
+import type { SketchSessionSnapshot } from '../../../shared/sketch/commands';
 import type { SketchWireElement } from '../../../shared/sketch/payloads';
-import { GUEST, INJECTION, asAlpha, el, scene } from './sketchToolsHarness';
+import { GUEST, INJECTION, SKETCHES, asAlpha, el, realGate, scene } from './sketchToolsHarness';
 
 /** A small board: two labeled boxes joined by an arrow, inside a frame, the boxes grouped. */
 function flowBoard(): SketchWireElement[] {
@@ -267,24 +281,30 @@ describe('sketch_read_scene authorship', () => {
 	});
 });
 
-describe('sketch_read_scene third-party text (phase 03 stub)', () => {
-	/** The flow board, with a guest relabeling Home and adding a sticky note. */
-	function guestBoard() {
+describe('sketch_read_scene third-party text (the real gate)', () => {
+	/** The flow board, with a guest relabeling Home and adding a sticky note and a frame. */
+	function guestBoard(homeText = INJECTION) {
 		const elements = flowBoard();
 		const home = elements.find((e) => e.id === 'txt-home')!;
-		home.text = INJECTION;
-		home.originalText = INJECTION;
+		home.text = homeText;
+		home.originalText = homeText;
 		elements.push(el('guest-note', 'text', { y: 500, text: INJECTION, originalText: INJECTION }));
 		elements.push(el('guest-frame', 'frame', { y: 800, name: INJECTION }));
 		return scene(elements, { guests: ['txt-home', 'guest-note', 'guest-frame'] });
 	}
 
+	const sam = { id: 'guest-sam', kind: 'guest', name: 'Sam' };
+
 	it('screens only the third-party elements, in one batched call', async () => {
-		const { result, screen } = await asAlpha(guestBoard());
+		const gate = realGate();
+		const { screen } = gate;
+		const { result } = await asAlpha(guestBoard(), { screen });
 		await result('sketch_read_scene', { sketchId: 'sk-alpha', format: 'summary' });
 		expect(screen).toHaveBeenCalledTimes(1);
 		const request = screen.mock.calls[0][0];
 		expect(request).toMatchObject({ sketchId: 'sk-alpha', agentId: 'alpha' });
+		// The tools pass no posture: D2 never applies to a tool call.
+		expect(request).not.toHaveProperty('posture');
 		expect(request.subjects.map((s) => s.elementId).sort()).toEqual([
 			'guest-frame',
 			'guest-note',
@@ -298,36 +318,38 @@ describe('sketch_read_scene third-party text (phase 03 stub)', () => {
 			textHash: 'hash-guest-note',
 			fields: [INJECTION, INJECTION, null, null],
 		});
+		// Conductor text never reaches the classifier.
+		const scored = gate.score.mock.calls.map(([request]) => request.text);
+		expect(scored).toHaveLength(3);
+		expect(scored.every((text) => text.includes(INJECTION))).toBe(true);
 	});
 
-	it('withholds every third-party element and leaks its text nowhere', async () => {
-		const { result } = await asAlpha(guestBoard());
+	it('withholds flagged guest text and leaks it nowhere', async () => {
+		const { result } = await asAlpha(guestBoard(), { screen: realGate().screen });
 		const read = await result('sketch_read_scene', { sketchId: 'sk-alpha', format: 'summary' });
 		const { summary } = read;
-		const sam = { id: 'guest-sam', kind: 'guest', name: 'Sam' };
 
-		expect(summary.shapes.find((s: { id: string }) => s.id === 'box-home')).toMatchObject({
-			labelWithheld: 'unscreened',
-		});
-		expect(summary.shapes.find((s: { id: string }) => s.id === 'box-home')).not.toHaveProperty(
-			'label'
-		);
+		const home = summary.shapes.find((s: { id: string }) => s.id === 'box-home');
+		expect(home).toMatchObject({ labelWithheld: 'flagged' });
+		expect(home).not.toHaveProperty('label');
 		expect(summary.shapes.find((s: { id: string }) => s.id === 'guest-note')).toEqual({
 			id: 'guest-note',
 			type: 'text',
 			author: sam,
-			withheld: 'unscreened',
+			withheld: 'flagged',
 		});
 		expect(summary.frames.find((f: { id: string }) => f.id === 'guest-frame')).toEqual({
 			id: 'guest-frame',
 			type: 'frame',
 			author: sam,
-			withheld: 'unscreened',
+			withheld: 'flagged',
 			elementIds: [],
 		});
 		// The arrow end falls back to the shape's anonymous name.
 		expect(summary.connections[0].edge).toBe('Login -> rectangle#box-home');
 		expect(JSON.stringify(read)).not.toContain(INJECTION);
+		// Nothing third-party reached the agent, so there is nothing to warn about.
+		expect(read).not.toHaveProperty('untrustedNotice');
 
 		const elements = await result('sketch_read_scene', {
 			sketchId: 'sk-alpha',
@@ -337,9 +359,26 @@ describe('sketch_read_scene third-party text (phase 03 stub)', () => {
 			id: 'txt-home',
 			type: 'text',
 			author: sam,
-			withheld: 'unscreened',
+			withheld: 'flagged',
 		});
 		expect(JSON.stringify(elements)).not.toContain(INJECTION);
+	});
+
+	it('withholds every third-party element unscreened while the screen is off (fail closed)', async () => {
+		const { result } = await asAlpha(guestBoard('Checkout'), {
+			screen: realGate({ off: true }).screen,
+		});
+		const read = await result('sketch_read_scene', { sketchId: 'sk-alpha', format: 'elements' });
+		for (const id of ['txt-home', 'guest-note', 'guest-frame']) {
+			expect(read.elements.find((e: { id: string }) => e.id === id)).toEqual({
+				id,
+				type: id === 'guest-frame' ? 'frame' : 'text',
+				author: sam,
+				withheld: 'unscreened',
+			});
+		}
+		expect(JSON.stringify(read)).not.toContain(INJECTION);
+		expect(JSON.stringify(read)).not.toContain('Checkout');
 	});
 
 	it('withholds an element the gate returns no verdict for (fail closed)', async () => {
@@ -351,16 +390,137 @@ describe('sketch_read_scene third-party text (phase 03 stub)', () => {
 		);
 	});
 
-	it('shows third-party text once the gate clears it', async () => {
-		const { result } = await asAlpha(guestBoard(), {
+	it('passes clean guest text through, marked untrusted, with the notice', async () => {
+		const { result } = await asAlpha(guestBoard('Checkout'), { screen: realGate().screen });
+		const read = await result('sketch_read_scene', { sketchId: 'sk-alpha', format: 'summary' });
+		expect(read.untrustedNotice).toBe(SKETCH_UNTRUSTED_NOTICE);
+		const { summary } = read;
+
+		// The conductor's box, labelled by the guest's (clean) text.
+		expect(summary.shapes.find((s: { id: string }) => s.id === 'box-home')).toMatchObject({
+			label: 'Checkout',
+			labelUntrusted: true,
+		});
+		expect(summary.shapes.find((s: { id: string }) => s.id === 'box-home')).not.toHaveProperty(
+			'untrusted'
+		);
+		expect(summary.connections[0]).toMatchObject({
+			edge: 'Login -> Checkout',
+			endsUntrusted: true,
+		});
+		expect(summary.connections[0]).not.toHaveProperty('endsUnscreened');
+		// Conductor text carries no mark.
+		expect(summary.shapes.find((s: { id: string }) => s.id === 'box-login')).not.toHaveProperty(
+			'labelUntrusted'
+		);
+		// The injection on the same board is still withheld.
+		expect(JSON.stringify(read)).not.toContain(INJECTION);
+
+		const elements = await result('sketch_read_scene', {
+			sketchId: 'sk-alpha',
+			format: 'elements',
+		});
+		expect(elements.untrustedNotice).toBe(SKETCH_UNTRUSTED_NOTICE);
+		expect(elements.elements.find((e: { id: string }) => e.id === 'txt-home')).toMatchObject({
+			text: 'Checkout',
+			author: sam,
+			untrusted: true,
+		});
+		expect(elements.elements.find((e: { id: string }) => e.id === 'txt-login')).not.toHaveProperty(
+			'untrusted'
+		);
+	});
+
+	it('marks a D2 clear unscreened', async () => {
+		const { result } = await asAlpha(guestBoard('Checkout'), {
 			screen: async (request) =>
-				new Map(request.subjects.map((s) => [s.elementId, { status: 'clear' as const }])),
+				new Map(
+					request.subjects.map((s) => [s.elementId, { status: 'clear', unscreened: true } as const])
+				),
+		});
+		const elements = await result('sketch_read_scene', {
+			sketchId: 'sk-alpha',
+			format: 'elements',
+		});
+		expect(elements.elements.find((e: { id: string }) => e.id === 'txt-home')).toMatchObject({
+			untrusted: true,
+			unscreened: true,
 		});
 		const { summary } = await result('sketch_read_scene', {
 			sketchId: 'sk-alpha',
 			format: 'summary',
 		});
-		expect(summary.connections[0].edge).toBe(`Login -> ${INJECTION}`);
+		expect(summary.shapes.find((s: { id: string }) => s.id === 'box-home')).toMatchObject({
+			labelUntrusted: true,
+			labelUnscreened: true,
+		});
+		expect(summary.connections[0]).toMatchObject({ endsUntrusted: true, endsUnscreened: true });
+	});
+
+	it('adds no notice to a board with only conductor text', async () => {
+		const { screen } = realGate();
+		const { result } = await asAlpha(scene(flowBoard()), { screen });
+		const read = await result('sketch_read_scene', { sketchId: 'sk-alpha', format: 'summary' });
+		expect(screen).not.toHaveBeenCalled();
+		expect(read).not.toHaveProperty('untrustedNotice');
+	});
+});
+
+describe('sketch_read_scene guest images', () => {
+	const image = (fileId: string, version = 1) =>
+		el('img-1', 'image', { fileId, status: 'saved', version });
+
+	it('withholds a guest image the conductor has not approved, in both formats', async () => {
+		const { screen } = realGate();
+		const { result } = await asAlpha(scene([image('file-a')], { guests: ['img-1'] }), { screen });
+		const elements = await result('sketch_read_scene', {
+			sketchId: 'sk-alpha',
+			format: 'elements',
+		});
+		expect(elements.elements).toEqual([
+			{
+				id: 'img-1',
+				type: 'image',
+				author: { id: 'guest-sam', kind: 'guest', name: 'Sam' },
+				withheld: 'unscreened',
+			},
+		]);
+		expect(JSON.stringify(elements)).not.toContain('file-a');
+		const { summary } = await result('sketch_read_scene', {
+			sketchId: 'sk-alpha',
+			format: 'summary',
+		});
+		expect(summary.shapes[0]).toMatchObject({ id: 'img-1', withheld: 'unscreened' });
+		// Pixels cannot be screened: the image never goes to the classifier.
+		expect(screen).not.toHaveBeenCalled();
+	});
+
+	it('withholds an image whose author is unknown', async () => {
+		const { result } = await asAlpha(scene([image('file-a')], { unknown: ['img-1'] }));
+		const read = await result('sketch_read_scene', { sketchId: 'sk-alpha', format: 'elements' });
+		expect(read.elements[0]).toMatchObject({ withheld: 'unscreened' });
+	});
+
+	it('shows a guest image the session approved, until the guest swaps the file', async () => {
+		const approved = { ...scene([image('file-a')], { guests: ['img-1'] }) };
+		approved.approvedImages = { 'img-1': 'file-a' };
+		const { result, setScene } = await asAlpha(approved, { screen: realGate().screen });
+		const read = await result('sketch_read_scene', { sketchId: 'sk-alpha', format: 'elements' });
+		expect(read.elements[0]).toMatchObject({ id: 'img-1', fileId: 'file-a' });
+		expect(read.elements[0]).not.toHaveProperty('withheld');
+
+		const swapped = scene([image('file-b', 2)], { guests: ['img-1'] });
+		swapped.approvedImages = { 'img-1': 'file-a' };
+		setScene(swapped);
+		const after = await result('sketch_read_scene', { sketchId: 'sk-alpha', format: 'elements' });
+		expect(after.elements[0]).toMatchObject({ id: 'img-1', withheld: 'unscreened' });
+		expect(JSON.stringify(after)).not.toContain('file-b');
+	});
+
+	it('shows a conductor image without approval', async () => {
+		const { result } = await asAlpha(scene([image('file-a')]));
+		const read = await result('sketch_read_scene', { sketchId: 'sk-alpha', format: 'elements' });
+		expect(read.elements[0]).toMatchObject({ id: 'img-1', fileId: 'file-a' });
 	});
 });
 
@@ -372,8 +532,8 @@ describe('sketch_changes', () => {
 		expect(changes.added).toHaveLength(7);
 	});
 
-	it('diffs against a scene version the agent read, and withholds the guest edit', async () => {
-		const { result, setScene } = await asAlpha(scene(flowBoard()));
+	it('diffs against a scene version the agent read, and withholds the flagged guest edit', async () => {
+		const { result, setScene } = await asAlpha(scene(flowBoard()), { screen: realGate().screen });
 		const first = await result('sketch_read_scene', { sketchId: 'sk-alpha', format: 'summary' });
 		expect(first.sceneVersion).toBe(7);
 
@@ -397,10 +557,32 @@ describe('sketch_changes', () => {
 				id: 'txt-home',
 				type: 'text',
 				lastEditedBy: { id: 'guest-sam', kind: 'guest', name: 'Sam' },
-				withheld: 'unscreened',
+				withheld: 'flagged',
 			},
 		]);
 		expect(JSON.stringify(changes)).not.toContain(INJECTION);
+		expect(changes).not.toHaveProperty('untrustedNotice');
+	});
+
+	it('passes a clean guest edit through, marked untrusted', async () => {
+		const { result, setScene } = await asAlpha(scene(flowBoard()), { screen: realGate().screen });
+		await result('sketch_read_scene', { sketchId: 'sk-alpha', format: 'summary' });
+		const next = flowBoard().map((e) =>
+			e.id === 'txt-home' ? { ...e, version: 2, text: 'Checkout', originalText: 'Checkout' } : e
+		);
+		setScene(scene(next, { guests: ['txt-home'] }));
+
+		const changes = await result('sketch_changes', { sketchId: 'sk-alpha', sinceVersion: 7 });
+		expect(changes.untrustedNotice).toBe(SKETCH_UNTRUSTED_NOTICE);
+		expect(changes.updated).toEqual([
+			{
+				id: 'txt-home',
+				type: 'text',
+				lastEditedBy: { id: 'guest-sam', kind: 'guest', name: 'Sam' },
+				label: 'Checkout',
+				untrusted: true,
+			},
+		]);
 	});
 
 	it('reports no changes to a reader already at the scene version', async () => {
@@ -454,5 +636,82 @@ describe('the 1 MB response cap', () => {
 		);
 		expect(capped).toEqual({ first: ['a', 'b'], second: [], truncated: true, omittedCount: 2 });
 		expect(serializedJsonByteLength(capped)).toBeLessThanOrEqual(80);
+	});
+});
+
+describe('the change digest', () => {
+	function digestRuntime(initial: SketchSessionSnapshot, gate = realGate()) {
+		let live = initial;
+		const runtime = createSketchToolRuntime({
+			readSession: async () => live,
+			screen: gate.screen,
+		});
+		return {
+			runtime,
+			screen: gate.screen,
+			setScene: (next: SketchSessionSnapshot) => {
+				live = next;
+			},
+		};
+	}
+
+	it('lists the whole board on the first turn and counts as a read', async () => {
+		const { runtime, setScene } = digestRuntime(scene(flowBoard()));
+		const first = await runtime.changeDigest({ agentId: 'alpha', sketchId: 'sk-alpha' });
+		expect(first.sceneVersion).toBe(7);
+		expect(first.changes.baseline).toBe('unknown');
+		expect(first.digest).toContain('Board at sceneVersion 7');
+		expect(first.digest).toContain('"Login"');
+
+		const next = flowBoard().map((e) =>
+			e.id === 'txt-home' ? { ...e, version: 2, text: 'Checkout', originalText: 'Checkout' } : e
+		);
+		next.push(el('guest-note', 'text', { y: 500, text: INJECTION, originalText: INJECTION }));
+		setScene(scene(next, { guests: ['txt-home', 'guest-note'] }));
+
+		const second = await runtime.changeDigest({ agentId: 'alpha', sketchId: 'sk-alpha' });
+		expect(second.changes).toMatchObject({ sinceVersion: 7, sceneVersion: 9, baseline: 'known' });
+		expect(second.digest).toContain('- Updated by "Sam" (guest): text "Checkout" (untrusted)');
+		expect(second.digest).toContain('- 1 element by "Sam" (guest) withheld: flagged');
+		expect(second.digest.split('\n').at(-1)).toBe(DIGEST_UNTRUSTED_NOTE);
+		expect(second.digest).not.toContain(INJECTION);
+	});
+
+	it('shares its read baselines with sketch_changes', async () => {
+		const { runtime } = digestRuntime(scene(flowBoard()));
+		await runtime.tools.sketch_read_scene!({
+			agent: { id: 'alpha', name: 'Alpha', sshRemote: false, cwd: '/work/alpha' },
+			params: { sketchId: 'sk-alpha', format: 'summary' },
+			sketch: SKETCHES['sk-alpha'],
+		});
+		const digest = await runtime.changeDigest({ agentId: 'alpha', sketchId: 'sk-alpha' });
+		expect(digest.digest).toBe('No board changes since sceneVersion 7 (now 7).');
+	});
+
+	it('hands the turn posture to the gate: a restricted turn reads off-screen text labelled (D2)', async () => {
+		const board = flowBoard().map((e) =>
+			e.id === 'txt-home' ? { ...e, text: 'Checkout', originalText: 'Checkout' } : e
+		);
+		const { runtime, screen } = digestRuntime(
+			scene(board, { guests: ['txt-home'] }),
+			realGate({ off: true })
+		);
+		const restricted = await runtime.changeDigest({
+			agentId: 'alpha',
+			sketchId: 'sk-alpha',
+			posture: 'restricted',
+			sinceVersion: 0,
+		});
+		expect(screen.mock.calls[0][0].posture).toBe('restricted');
+		expect(restricted.digest).toContain('text "Checkout" (untrusted, unscreened)');
+
+		const full = await runtime.changeDigest({
+			agentId: 'alpha',
+			sketchId: 'sk-alpha',
+			posture: 'full',
+			sinceVersion: 0,
+		});
+		expect(full.digest).not.toContain('Checkout');
+		expect(full.digest).toContain('withheld: unscreened');
 	});
 });

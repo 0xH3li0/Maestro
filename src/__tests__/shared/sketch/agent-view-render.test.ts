@@ -12,6 +12,7 @@ import {
 	buildSketchAgentRender,
 	isUnapprovedGuestImage,
 	planSketchAgentRender,
+	sketchUnapprovedImageIds,
 } from '../../../shared/sketch/agent-view';
 import type { ElementAuthorship } from '../../../shared/sketch/attribution';
 import type { SketchWireElement } from '../../../shared/sketch/payloads';
@@ -67,6 +68,23 @@ describe('isUnapprovedGuestImage', () => {
 		expect(isUnapprovedGuestImage(image, { i: by('bot', 2) })).toBe(false);
 	});
 
+	it('clears a guest image the conductor approved, for that file only', () => {
+		const image: SketchWireElement = { id: 'i', version: 2, type: 'image', fileId: 'f1' };
+		const guest = { i: by('guest', 2) };
+		expect(isUnapprovedGuestImage(image, guest, { i: 'f1' })).toBe(false);
+		// A swapped picture needs a new approval.
+		expect(isUnapprovedGuestImage({ ...image, fileId: 'f2' }, guest, { i: 'f1' })).toBe(true);
+		// An approval for another element does not carry over.
+		expect(isUnapprovedGuestImage(image, guest, { j: 'f1' })).toBe(true);
+		// An image with no file yet cannot be approved.
+		expect(isUnapprovedGuestImage({ ...image, fileId: undefined }, guest, { i: 'f1' })).toBe(true);
+	});
+
+	it('lists the unapproved guest images among some elements', () => {
+		expect(sketchUnapprovedImageIds(elements, authors)).toEqual(['guest-img']);
+		expect(sketchUnapprovedImageIds(elements, authors, { 'guest-img': 'f2' })).toEqual([]);
+	});
+
 	it('never flags an element that is not an image', () => {
 		expect(isUnapprovedGuestImage({ id: 'r', version: 1, type: 'rectangle' }, {})).toBe(false);
 	});
@@ -103,6 +121,16 @@ describe('buildSketchAgentRender', () => {
 		expect(json).not.toContain('ignore all');
 		expect(json).not.toContain('loose guest note');
 		expect(json).not.toContain('forged');
+	});
+
+	it('draws a guest image the conductor approved', () => {
+		const approved = { 'guest-img': 'f2' };
+		const plan = planSketchAgentRender(elements, authors, undefined, approved);
+		// Approved pixels, not approved text: its `link` is still screened.
+		expect(ids(plan.toScreen)).toEqual(['guest-box', 'note', 'guest-img']);
+		const render = buildSketchAgentRender(plan.candidates, authors, new Map(), approved);
+		expect(ids(render.elements)).toContain('guest-img');
+		expect(render.guestImageCount).toBe(0);
 	});
 
 	it('keeps a container whose withheld label is removed', () => {

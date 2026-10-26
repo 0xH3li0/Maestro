@@ -1,8 +1,9 @@
 /**
  * Shared fixtures for the Sketch Book tool tests (sketch-tools-read.test.ts,
  * sketch-tools-write.test.ts): two agents and their sketches, scene and
- * author-map builders, and a harness that drives `createSketchToolService()`
- * through the real bridge router as agent `alpha`.
+ * author-map builders, a harness that drives `createSketchToolService()`
+ * through the real bridge router as agent `alpha`, and `realGate()`, the real
+ * guardrail over a mocked local classifier.
  *
  * The importing test file must mock `electron`, the logger, Sentry,
  * `sketch-service` and `sketch-renderer-bridge` (vi.mock is hoisted only in
@@ -14,7 +15,16 @@ import {
 	createSketchBridgeDispatcher,
 	type SketchBridgeConnection,
 } from '../../../main/sketch/sketch-mcp-bridge';
-import type { AgentScreenRequest, AgentScreenVerdict } from '../../../main/sketch/sketch-guardrail';
+import type { InjectionScoreRequest } from '../../../main/local-models/injection-screen';
+import {
+	createSketchGuardrail,
+	type AgentScreenRequest,
+	type AgentScreenVerdict,
+} from '../../../main/sketch/sketch-guardrail';
+import type {
+	InjectionScore,
+	InjectionSourceInfo,
+} from '../../../shared/local-models/injection-screen';
 import type { SketchOwnerAgent } from '../../../main/sketch/sketch-service';
 import {
 	createSketchToolService,
@@ -106,6 +116,37 @@ export async function withholdAll(
 			{ status: 'withheld', reason: 'unscreened' } as const,
 		])
 	);
+}
+
+/** The local classifier `realGate()` scores on. */
+export const PROMPT_GUARD: InjectionSourceInfo = {
+	kind: 'local-classifier',
+	locality: 'local',
+	label: 'Prompt Guard 2 22M',
+};
+
+/**
+ * The real gate (sketch-guardrail.ts) over a mocked local classifier: text
+ * containing `INJECTION` scores 0.97 (flagged), anything else 0.02 (clean).
+ * `off: true` leaves the `injection-screen` task unassigned. The audit log
+ * has no sketch to write to, so it writes nothing.
+ */
+export function realGate({ off = false }: { off?: boolean } = {}) {
+	const score = vi.fn(
+		async (request: InjectionScoreRequest): Promise<InjectionScore> => ({
+			status: 'scored',
+			score: request.text.includes(INJECTION) ? 0.97 : 0.02,
+		})
+	);
+	const guardrail = createSketchGuardrail({
+		score,
+		resolveSource: async () => (off ? { status: 'off' } : PROMPT_GUARD),
+		resolveLocalClassifier: async () => null,
+		assignmentKey: () => (off ? 'off' : 'prompt-guard'),
+		auditPath: async () => null,
+		providerHasReadOnlyArgs: () => true,
+	});
+	return { screen: vi.fn(guardrail.screenForAgent), score, guardrail };
 }
 
 export interface ToolHarnessOptions {

@@ -378,6 +378,36 @@ describe('focus requests and chat', () => {
 	});
 });
 
+describe('guest image approvals', () => {
+	it('binds an approval to the image file and keeps it out of the saved scene', async () => {
+		await openWith(scene([el('img', 1, { type: 'image', fileId: 'file-a' }), el('box', 1)]));
+		const store = useSketchSessionStore.getState();
+		expect(session().approvedImages).toEqual({});
+		expect(store.approveSketchImage(SKETCH_ID, 'img')).toBe(true);
+		expect(session().approvedImages).toEqual({ img: 'file-a' });
+		expect(session().dirty).toBe(false);
+
+		store.revokeSketchImageApproval(SKETCH_ID, 'img');
+		expect(session().approvedImages).toEqual({});
+	});
+
+	it('approves only a live image with a file', async () => {
+		await openWith(
+			scene([
+				el('box', 1),
+				el('gone', 1, { type: 'image', fileId: 'file-a', isDeleted: true }),
+				el('pending', 1, { type: 'image' }),
+			])
+		);
+		const store = useSketchSessionStore.getState();
+		for (const id of ['box', 'gone', 'pending', 'missing']) {
+			expect(store.approveSketchImage(SKETCH_ID, id)).toBe(false);
+		}
+		expect(store.approveSketchImage('no-session', 'box')).toBe(false);
+		expect(session().approvedImages).toEqual({});
+	});
+});
+
 describe('openReadySketchSession', () => {
 	it('reads the scene the first time and reuses the session after', async () => {
 		sketchApi.readScene.mockResolvedValueOnce(scene([el('a', 1)]));

@@ -154,7 +154,7 @@ describe('runRemoteSketchCommand readSession', () => {
 		});
 		expect(result).toEqual({
 			success: true,
-			session: { elements: scene.elements, authors: {}, fileCount: 1 },
+			session: { elements: scene.elements, authors: {}, fileCount: 1, approvedImages: {} },
 		});
 		expect(useSketchSessionStore.getState().sessions['sketch-1'].status).toBe('ready');
 	});
@@ -185,6 +185,7 @@ describe('runRemoteSketchCommand readSession', () => {
 					externalRevision: 0,
 					focusRequest: null,
 					chat: [],
+					approvedImages: {},
 				},
 			},
 		});
@@ -195,7 +196,12 @@ describe('runRemoteSketchCommand readSession', () => {
 		});
 		expect(result).toEqual({
 			success: true,
-			session: { elements: scene.elements, authors: { live: author }, fileCount: 0 },
+			session: {
+				elements: scene.elements,
+				authors: { live: author },
+				fileCount: 0,
+				approvedImages: {},
+			},
 		});
 		expect(readScene).not.toHaveBeenCalled();
 	});
@@ -222,7 +228,7 @@ describe('runRemoteSketchCommand agent writes', () => {
 			sceneVersion: 3,
 			elements: [{ id: 'r1', type: 'rectangle' }],
 			missing: [],
-			conflicts: { elements: [], authors: {}, fileCount: 0 },
+			conflicts: { elements: [], authors: {}, fileCount: 0, approvedImages: {} },
 		};
 		agentWrites.applySketchAgentWrite.mockResolvedValue(report);
 		const write = { op: 'delete' as const, ids: ['r1'] };
@@ -333,6 +339,7 @@ describe('runRemoteSketchCommand renderForAgent', () => {
 					externalRevision: 0,
 					focusRequest: null,
 					chat: [],
+					approvedImages: {},
 				},
 			},
 		});

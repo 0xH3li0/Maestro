@@ -121,7 +121,12 @@ function writeResult(
 		sceneVersion: sketchSceneVersion(session?.scene?.elements ?? []),
 		elements,
 		missing,
-		conflicts: { elements: conflicts, authors, fileCount: 0 },
+		conflicts: {
+			elements: conflicts,
+			authors,
+			fileCount: 0,
+			approvedImages: session?.approvedImages ?? {},
+		},
 	};
 }
 

@@ -17,6 +17,7 @@ import type { ElementAuthorship } from '../../../shared/sketch/attribution';
 import {
 	DIGEST_MAX_NAMED_ELEMENTS,
 	DIGEST_MAX_QUOTED_CHARS,
+	DIGEST_UNTRUSTED_NOTE,
 	buildSketchChangeDigest,
 	describeSketchAuthor,
 } from '../../../shared/sketch/digest';
@@ -47,6 +48,38 @@ function entry(
 }
 
 describe('buildSketchChangeDigest', () => {
+	it('marks third-party labels and ends with what the mark means', () => {
+		const digest = buildSketchChangeDigest(
+			changeSet({
+				updated: [
+					entry('t1', SAM, { type: 'text', label: 'Checkout', untrusted: true }),
+					entry('b1', PEDRAM, { label: 'Pay', labelUntrusted: true, labelUnscreened: true }),
+					entry('b2', PEDRAM, { label: 'Home' }),
+				],
+			})
+		);
+		expect(digest).toBe(
+			[
+				'Board changes since sceneVersion 10 (now 14):',
+				'- Updated by "Sam" (guest): text "Checkout" (untrusted)',
+				'- Updated by "Pedram" (conductor): rectangle "Pay" (untrusted, unscreened), rectangle "Home"',
+				DIGEST_UNTRUSTED_NOTE,
+			].join('\n')
+		);
+	});
+
+	it('adds no note when no third-party label is named', () => {
+		const named = Array.from({ length: DIGEST_MAX_NAMED_ELEMENTS }, (_, i) =>
+			entry(`b${i}`, PEDRAM, { label: `Box ${i}` })
+		);
+		// Past the "and N more" cut: counted, never quoted.
+		const hidden = entry('late', PEDRAM, { label: 'Late', labelUntrusted: true });
+		const digest = buildSketchChangeDigest(changeSet({ added: [...named, hidden] }));
+		expect(digest).toContain('and 1 more');
+		expect(digest).not.toContain('Late');
+		expect(digest).not.toContain(DIGEST_UNTRUSTED_NOTE);
+	});
+
 	it('words one withheld guest element as the spec does', () => {
 		const digest = buildSketchChangeDigest(
 			changeSet({ added: [entry('n1', SAM, { type: 'text', withheld: 'unscreened' })] })
