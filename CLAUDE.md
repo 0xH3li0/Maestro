@@ -471,6 +471,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Naming the OS file manager in copy:** `getFileManagerName()`, `fileManagerName()`, `getRevealLabel()`, `getOpenInLabel()` in `src/renderer/utils/platformUtils.ts`
 - **Rendering raw terminal output (ANSI):** `useAnsiConverter(theme)` in `src/renderer/hooks/ui/useAnsiConverter.ts`, then `getCachedAnsiHtml()` in `src/renderer/utils/textProcessing.ts`
 - **Loading Excalidraw (Sketch Book):** `loadExcalidraw()`, `loadMermaidToExcalidraw()`, `installExcalidrawAssetPath()` in `src/renderer/components/SketchBook/excalidrawAssets.ts`; fonts copied by `excalidrawAssetsPlugin()` in `scripts/vite-excalidraw-assets.ts`
+- **Sketch Book wire frames and payloads:** `parseServerFrame()`, `buildGuardrailRejected()` in `src/shared/sketch/protocol.ts`; `encodePayload()`, `decodePayload()` in `src/shared/sketch/payloads.ts`
 - **Previewing a parquet file:** `<ParquetViewer>` in `src/renderer/components/ParquetViewer/`, over the main-process engine in `src/main/parquet/` and the shared filter language in `src/shared/parquet/`
 - **Graphing a set of documents rather than one:** `BuildOptions.scopeFiles` / `scopeDirectory` in `src/renderer/components/DocumentGraph/graphDataBuilder.ts`, opened via `openGraphScope()` in `fileExplorerStore.ts`
 - **Sizing a Document Graph node:** `calculateNodeWidth()`, `calculateNodeHeight()` in `src/renderer/components/DocumentGraph/mindMapLayouts.ts` (never the `NODE_WIDTH` constant)
