@@ -14,10 +14,11 @@ import * as os from 'os';
 import type { SshRemoteConfig, AgentSshRemoteConfig } from '../../types';
 import { getSshRemoteConfig, SshRemoteSettingsStore } from './ssh-remote-resolver';
 import { buildSshCommand, buildSshCommandWithStdin } from './ssh-command-builder';
-import { buildPromptArgv, WINDOWS_PROMPT_ARGV_MAX_CHARS } from './prompt-delivery';
+import { buildPromptArgv, promptExceedsArgvLimit } from './prompt-delivery';
 import { logger } from '../host';
 import { DEFAULT_QUERY_SOURCE, QUERY_SOURCE_ENV_VAR, type QuerySource } from '../../querySource';
 import { stripBlankEnvVars } from '../../agentEnvironment';
+import { isWindows } from '../../platformDetection';
 
 /**
  * Add the turn-origin marker to the env exported to the remote host. Stamped
@@ -59,15 +60,16 @@ export function sshUnresolvedRemoteMessage(sshConfig: AgentSshRemoteConfig): str
 }
 
 /**
- * Longest local ssh command line (in characters) launched inline. Past it the
- * launch goes through the stdin script. The Windows CreateProcess cap is the
- * tightest limit on the machine running ssh, so it sets the number.
+ * Whether an inline ssh command line is too long to start. Two machines limit
+ * it. The one running ssh: Windows caps the whole command line, Linux and
+ * macOS cap each argument. And the remote host, whose sshd hands the remote
+ * command to the login shell as ONE `-c` argument, so the POSIX per-argument
+ * cap applies there as well. Off Windows the per-argument check covers both
+ * ends; on Windows the whole-line cap is far tighter than the remote one.
  */
-export const SSH_INLINE_COMMAND_MAX_CHARS = WINDOWS_PROMPT_ARGV_MAX_CHARS;
-
-/** Characters a command line takes: the command, each argument, and a separator between them. */
-function commandLineLength(command: string, args: string[]): number {
-	return args.reduce((total, arg) => total + 1 + arg.length, command.length);
+function inlineSshCommandTooLong(command: string, args: string[], windowsHost: boolean): boolean {
+	if (windowsHost) return promptExceedsArgvLimit([command, ...args].join(' '), true);
+	return args.some((arg) => promptExceedsArgvLimit(arg, false));
 }
 
 /**
@@ -106,6 +108,8 @@ export interface SshSpawnWrapConfig {
 	 * as an argument, exactly as on the inline path.
 	 */
 	launchViaStdinScript?: boolean;
+	/** Whether the machine that spawns ssh is Windows, for its command-line limit. Defaults to `isWindows()`. */
+	isWindowsHost?: boolean;
 }
 
 /**
@@ -249,6 +253,8 @@ export async function wrapSpawnWithSsh(
 	// KB), which overruns the Windows CreateProcess cap and fails the spawn with
 	// ENAMETOOLONG. Such a launch goes through the stdin script instead, which
 	// carries the same command line to the remote shell with no local limit.
+	// The limit is the host's own, so on Linux and macOS that same command still
+	// launches inline: only a command that could not have started changes path.
 	const inlineSshCommand = config.launchViaStdinScript
 		? undefined
 		: await buildSshCommand(sshResult.config, {
@@ -257,16 +263,19 @@ export async function wrapSpawnWithSsh(
 				cwd: config.cwd,
 				env: withQuerySource(config.customEnvVars, config.querySource),
 			});
-	const inlineLength = inlineSshCommand
-		? commandLineLength(inlineSshCommand.command, inlineSshCommand.args)
-		: 0;
-	const inlineTooLong = inlineLength > SSH_INLINE_COMMAND_MAX_CHARS;
-	if (inlineTooLong) {
+	const inlineTooLong =
+		!!inlineSshCommand &&
+		inlineSshCommandTooLong(
+			inlineSshCommand.command,
+			inlineSshCommand.args,
+			config.isWindowsHost ?? isWindows()
+		);
+	if (inlineSshCommand && inlineTooLong) {
 		logger.info(
 			'Using the stdin script for an SSH command line too long to pass inline',
 			LOG_CONTEXT,
 			{
-				commandLineLength: inlineLength,
+				commandLineLength: [inlineSshCommand.command, ...inlineSshCommand.args].join(' ').length,
 				reason: 'avoid-command-line-length-limit',
 			}
 		);

@@ -25,8 +25,11 @@ vi.mock('../../../main/utils/logger', () => ({
 import {
 	wrapSpawnWithSsh,
 	sshUnresolvedRemoteMessage,
-	SSH_INLINE_COMMAND_MAX_CHARS,
 } from '../../../main/utils/ssh-spawn-wrapper';
+import {
+	POSIX_PROMPT_ARGV_MAX_BYTES,
+	WINDOWS_PROMPT_ARGV_MAX_CHARS,
+} from '../../../shared/maestro-lib/launch/prompt-delivery';
 import type { SshRemoteSettingsStore } from '../../../main/utils/ssh-remote-resolver';
 
 const remote = {
@@ -152,23 +155,29 @@ describe('wrapSpawnWithSsh', () => {
 			expect(result.sshStdinScript).toBeUndefined();
 		});
 
-		// MAESTRO-172/173/16C: a group chat participant or consult with a short
-		// prompt still carries Maestro's whole system prompt inline
-		// (`--append-system-prompt`, tens of KB) over SSH. Inline, that rides the
-		// LOCAL ssh command line and a Windows host refuses it with ENAMETOOLONG.
-		it('switches to the stdin script when the inline command line is too long', async () => {
-			const systemPrompt = 'x'.repeat(SSH_INLINE_COMMAND_MAX_CHARS);
+		/** The inline builder folds the remote command into one ssh argument, as the real one does. */
+		function remoteCommandAsOneArg() {
 			mockBuildSshCommand.mockImplementation(async (_remote, options: { args: string[] }) => ({
 				command: 'ssh',
 				args: ['jennifer.local', `claude ${options.args.join(' ')}`],
 				remoteCommandLine: 'claude',
 			}));
+		}
+
+		// MAESTRO-172/173/16C: a group chat participant or consult with a short
+		// prompt still carries Maestro's whole system prompt inline
+		// (`--append-system-prompt`, tens of KB) over SSH. Inline, that rides the
+		// LOCAL ssh command line and a Windows host refuses it with ENAMETOOLONG.
+		it('switches to the stdin script when the inline command line is too long for a Windows host', async () => {
+			const systemPrompt = 'x'.repeat(WINDOWS_PROMPT_ARGV_MAX_CHARS);
+			remoteCommandAsOneArg();
 
 			const result = await wrapSpawnWithSsh(
 				{
 					...baseConfig,
 					args: ['--print', '--append-system-prompt', systemPrompt],
 					prompt: 'short question',
+					isWindowsHost: true,
 				},
 				{ enabled: true, remoteId: 'jennifer-box' },
 				sshStore
@@ -183,6 +192,49 @@ describe('wrapSpawnWithSsh', () => {
 			expect(options.args).toContain('short question');
 			expect(result.sshStdinScript).toBe('#!/bin/bash');
 			expect(result.args).toEqual(['jennifer.local']);
+		});
+
+		// The same command starts fine from Linux or macOS, whose limit is per
+		// argument (128 KiB on Linux), so it keeps the inline path and its -tt.
+		it('keeps that command inline on a Linux or macOS host', async () => {
+			remoteCommandAsOneArg();
+
+			const result = await wrapSpawnWithSsh(
+				{
+					...baseConfig,
+					args: ['--print', '--append-system-prompt', 'x'.repeat(WINDOWS_PROMPT_ARGV_MAX_CHARS)],
+					prompt: 'short question',
+					isWindowsHost: false,
+				},
+				{ enabled: true, remoteId: 'jennifer-box' },
+				sshStore
+			);
+
+			expect(mockBuildSshCommandWithStdin).not.toHaveBeenCalled();
+			expect(result.sshStdinScript).toBeUndefined();
+		});
+
+		// sshd hands the remote command to the login shell as one argument, so
+		// past the POSIX per-argument cap neither end could start it inline.
+		// Measured in UTF-8 bytes: 34,000 euro signs are 102,000 bytes.
+		it('switches to the stdin script on a Linux or macOS host once one argument passes the byte cap', async () => {
+			remoteCommandAsOneArg();
+			const systemPrompt = '\u20ac'.repeat(34_000);
+			expect(systemPrompt.length).toBeLessThan(POSIX_PROMPT_ARGV_MAX_BYTES);
+
+			const result = await wrapSpawnWithSsh(
+				{
+					...baseConfig,
+					args: ['--print', '--append-system-prompt', systemPrompt],
+					prompt: 'short question',
+					isWindowsHost: false,
+				},
+				{ enabled: true, remoteId: 'jennifer-box' },
+				sshStore
+			);
+
+			expect(mockBuildSshCommandWithStdin).toHaveBeenCalledTimes(1);
+			expect(result.sshStdinScript).toBe('#!/bin/bash');
 		});
 	});
 
