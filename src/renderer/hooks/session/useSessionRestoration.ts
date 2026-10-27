@@ -347,6 +347,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 	}, []);
 	const loadActiveDeferredContent = useCallback(async (): Promise<boolean> => {
 		if (!isWebDesktop() || !useSessionStore.getState().sessionsReadOk) return true;
+		if (typeof window.maestro.sessions.getDeferredContent !== 'function') return true;
 		const { sessions, activeSessionId } = useSessionStore.getState();
 		const session = sessions.find((item) => item.id === activeSessionId);
 		const deferred = session?.deferredContent;
@@ -979,8 +980,10 @@ export function useSessionRestoration(): SessionRestorationReturn {
 			deferredLoadsFailed.current.clear();
 			if (!useSessionStore.getState().sessionsReadOk) retrySessionLoad.current();
 			void loadActiveDeferredContent();
-			void reattachLiveAiTurns();
-			void refreshWebRuntime();
+			void (async () => {
+				await reattachLiveAiTurns();
+				await refreshWebRuntime();
+			})();
 			return;
 		}
 		detail.waitUntil(
