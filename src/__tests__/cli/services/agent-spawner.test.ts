@@ -2010,6 +2010,60 @@ Some text with [x] in it that's not a checkbox
 			}
 		);
 
+		it.each([
+			['claude-code', 'cancel'],
+			['claude-code', 'deadline'],
+			['codex', 'cancel'],
+			['codex', 'deadline'],
+		] as const)('bounds stalled %s launch preparation by %s', async (provider, stop) => {
+			vi.resetModules();
+			const { spawnAgent: freshSpawnAgent } = await import('../../../cli/services/agent-spawner');
+			vi.useFakeTimers();
+			const controller = new AbortController();
+			let finish!: () => void;
+			const stalled = new Promise<void>((resolve) => {
+				finish = resolve;
+			});
+			mockCheckBinaryExists.mockImplementationOnce(async () => {
+				await stalled;
+				return { exists: true, path: `/usr/local/bin/${provider}` };
+			});
+			const onProcessStarted = vi.fn();
+			try {
+				const pending = freshSpawnAgent(provider, '/project', 'prompt', undefined, {
+					timeoutMs: 1_000,
+					signal: controller.signal,
+					onProcessStarted,
+				});
+				await vi.advanceTimersByTimeAsync(0);
+				expect(mockCheckBinaryExists).toHaveBeenCalledOnce();
+				if (stop === 'cancel') controller.abort();
+				else await vi.advanceTimersByTimeAsync(1_000);
+				await vi.advanceTimersByTimeAsync(0);
+				expect(
+					await Promise.race([
+						pending,
+						Promise.resolve().then(() => Promise.resolve('still waiting')),
+					])
+				).toMatchObject({
+					success: false,
+					error:
+						stop === 'cancel'
+							? 'Agent run cancelled'
+							: 'Agent run stopped: absolute runtime ceiling exceeded',
+				});
+				finish();
+				await vi.advanceTimersByTimeAsync(0);
+				expect(mockSpawn).not.toHaveBeenCalled();
+				expect(onProcessStarted).not.toHaveBeenCalled();
+				expect(vi.getTimerCount()).toBe(0);
+			} finally {
+				controller.abort();
+				finish();
+				vi.useRealTimers();
+			}
+		});
+
 		it('charges launch preparation to the original absolute budget', async () => {
 			vi.useFakeTimers();
 			try {

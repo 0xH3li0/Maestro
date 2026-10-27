@@ -1765,7 +1765,56 @@ export async function spawnAgent(
 	assertHeadlessIdleProfile(options?.idle, options?.timeoutMs);
 	// Effort fallback and asynchronous launch planning share one absolute ceiling.
 	const deadlineAt = options?.timeoutMs ? Date.now() + options.timeoutMs : undefined;
-	const result = await spawnAgentOnce(toolType, cwd, prompt, agentSessionId, options, deadlineAt);
+	const runAttempt = async (attemptOptions?: SpawnAgentOptions): Promise<AgentResult> => {
+		const signal = attemptOptions?.signal;
+		if (signal?.aborted) return interruptedResult();
+		const remainingMs = deadlineAt === undefined ? undefined : deadlineAt - Date.now();
+		if (remainingMs !== undefined && remainingMs <= 0)
+			return spawnFailureResult('Agent run stopped: absolute runtime ceiling exceeded');
+		if (remainingMs === undefined && !signal)
+			return spawnAgentOnce(toolType, cwd, prompt, agentSessionId, attemptOptions, deadlineAt);
+
+		// Bound preparation only. Once a child exists its supervisor owns stop and
+		// settlement, so the caller keeps authority until process cleanup finishes.
+		let stopPreparation: () => void = () => {};
+		const stopped = new Promise<AgentResult>((resolve) => {
+			stopPreparation = () =>
+				resolve(
+					signal?.aborted
+						? { ...interruptedResult(), error: 'Agent run cancelled' }
+						: spawnFailureResult('Agent run stopped: absolute runtime ceiling exceeded')
+				);
+		});
+		const timer = remainingMs === undefined ? undefined : setTimeout(stopPreparation, remainingMs);
+		timer?.unref?.();
+		const cleanupPreparation = () => {
+			clearTimeout(timer);
+			signal?.removeEventListener('abort', stopPreparation);
+		};
+		signal?.addEventListener('abort', stopPreparation, { once: true });
+		try {
+			return await Promise.race([
+				spawnAgentOnce(
+					toolType,
+					cwd,
+					prompt,
+					agentSessionId,
+					{
+						...attemptOptions,
+						onProcessStarted: (pid) => {
+							cleanupPreparation();
+							attemptOptions?.onProcessStarted?.(pid);
+						},
+					},
+					deadlineAt
+				),
+				stopped,
+			]);
+		} finally {
+			cleanupPreparation();
+		}
+	};
+	const result = await runAttempt(options);
 	if (result.success || !options?.customEffort) return result;
 
 	const rejection = parseEffortRejection(`${result.error ?? ''}\n${result.response ?? ''}`);
@@ -1775,17 +1824,7 @@ export async function spawnAgent(
 	console.error(
 		`[maestro] ${describeEffortRejection(toolType, rejection)} Retrying at the agent's configured effort.`
 	);
-	return spawnAgentOnce(
-		toolType,
-		cwd,
-		prompt,
-		agentSessionId,
-		{
-			...options,
-			customEffort: undefined,
-		},
-		deadlineAt
-	);
+	return runAttempt({ ...options, customEffort: undefined });
 }
 
 async function spawnAgentOnce(
