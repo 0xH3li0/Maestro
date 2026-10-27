@@ -24,6 +24,11 @@ vi.mock('../../../../main/utils/logger', () => ({
 	logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
+let settings: Record<string, unknown> = {};
+vi.mock('../../../../main/stores/getters', () => ({
+	getSettingsStore: () => ({ get: (key: string) => settings[key] }),
+}));
+
 const manager = {
 	appendJourneyEntry: vi.fn(),
 	readJourney: vi.fn(),
@@ -51,6 +56,7 @@ describe('journey handlers', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		registeredHandlers.clear();
+		settings = {};
 		manager.appendJourneyEntry.mockResolvedValue(true);
 		manager.readJourney.mockResolvedValue([ENTRY]);
 		manager.getJourneyFilePath.mockReturnValue('/data/journey/agent-1.jsonl');
@@ -71,6 +77,18 @@ describe('journey handlers', () => {
 
 		manager.appendJourneyEntry.mockResolvedValueOnce(false);
 		await expect(invoke('journey:append', ENTRY)).resolves.toBe(false);
+	});
+
+	it('records nothing while the user has switched the journey off', async () => {
+		settings.userJourneyEnabled = false;
+		await expect(invoke('journey:append', ENTRY)).resolves.toBe(false);
+		expect(manager.appendJourneyEntry).not.toHaveBeenCalled();
+
+		// Reading what was already recorded still works.
+		await expect(invoke('journey:read', 'agent-1')).resolves.toEqual([ENTRY]);
+
+		settings.userJourneyEnabled = true;
+		await expect(invoke('journey:append', ENTRY)).resolves.toBe(true);
 	});
 
 	it('reads an agent journey with well-typed options only', async () => {

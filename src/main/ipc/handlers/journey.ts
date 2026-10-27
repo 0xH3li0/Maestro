@@ -4,7 +4,9 @@
  * Thin pass-throughs to `src/main/user-journey-manager.ts`, which owns the
  * per-agent JSONL files. The store normalizes every entry (known fields only,
  * `browser.*` targets re-sanitized), so `journey:append` hands the renderer's
- * object straight through. The handlers only check that an agent id is a
+ * object straight through, unless the user switched recording off
+ * (`userJourneyEnabled`): this is the one place that setting is read, so every
+ * recorder honors it. The handlers only check that an agent id is a
  * non-empty string, so a malformed call fails loudly instead of writing to
  * `journey/.jsonl`.
  */
@@ -18,11 +20,17 @@ import {
 	type ReadJourneyOptions,
 } from '../../user-journey-manager';
 import { isUserJourneyKind, type UserJourneyEntry } from '../../../shared/userJourney';
+import { getSettingsStore } from '../../stores/getters';
 
 const LOG_CONTEXT = '[UserJourney]';
 
 function opts(operation: string) {
 	return { context: LOG_CONTEXT, operation };
+}
+
+/** Whether the user lets Maestro record the journey. Anything but an explicit `false` is on. */
+function isRecordingEnabled(): boolean {
+	return getSettingsStore().get('userJourneyEnabled') !== false;
 }
 
 function requireAgentId(agentId: unknown): string {
@@ -47,7 +55,7 @@ export function registerJourneyHandlers(): void {
 	ipcMain.handle(
 		'journey:append',
 		withIpcErrorLogging(opts('append'), async (entry: UserJourneyEntry) =>
-			appendJourneyEntry(entry)
+			isRecordingEnabled() ? appendJourneyEntry(entry) : false
 		)
 	);
 	ipcMain.handle(
