@@ -20,13 +20,11 @@ import {
 	systemPromptSectionsFor,
 } from '../../shared/maestroSystemPrompt';
 import type { TemplateContext } from '../../shared/templateVariables';
-import { RECENT_TIMELINE_SOURCES, recentTimelineOptions } from '../../shared/timeline';
 import type { StoredSession } from '../stores/types';
 import { getPrompt } from '../prompt-manager';
 import { getSessionsStore, getSettingsStore } from '../stores/getters';
 import { getHistoryManager } from '../history-manager';
 import { getJourneyFilePath } from '../user-journey-manager';
-import { readAgentTimeline, timelineAgentFor } from '../agent-timeline';
 import { getMaestroRunService } from '../maestro-run';
 import { resolveBundledCliPathSync } from '../maestro-cli-manager';
 import { execFileNoThrow } from './execFile';
@@ -92,11 +90,11 @@ function resolvedCliPath(): string | undefined {
 	}
 }
 
-export function isSshRecord(record: StoredSession): boolean {
+function isSshRecord(record: StoredSession): boolean {
 	return !!record.sessionSshRemoteConfig?.enabled || !!record.sshRemoteId;
 }
 
-export function findStoredSession(sessionId: string): StoredSession | undefined {
+function findStoredSession(sessionId: string): StoredSession | undefined {
 	try {
 		const sessions = getSessionsStore().get('sessions', []) as StoredSession[];
 		return sessions.find((s) => s.id === sessionId);
@@ -171,7 +169,7 @@ function loadPluginSections(
 /**
  * The full Maestro system prompt for one persisted agent: the base template
  * with that agent's identity, git branch (local only), history and journey
- * files (local only), recent timeline, conductor profile, the Pianola role section when it is the Pianola
+ * files (local only), conductor profile, the Pianola role section when it is the Pianola
  * agent, and every enabled plugin section (`localOnly` ones skipped over SSH).
  *
  * Accepts the session id or the already-loaded stored record. Returns undefined
@@ -201,13 +199,6 @@ export async function buildMaestroSystemPromptForSession(
 	const gitBranch = !isSsh && record.isGitRepo && cwd ? await localGitBranch(cwd) : undefined;
 	const historyFilePath = isSsh ? undefined : await localHistoryFilePath(record.id);
 	const journeyFilePath = isSsh ? undefined : localJourneyFilePath(record.id);
-	// History and the journey are recorded on this machine wherever the agent
-	// runs, so an SSH agent still gets them; its commits are on the remote.
-	const timelineNow = Date.now();
-	const timelineEvents = await readAgentTimeline(
-		timelineAgentFor({ id: record.id, cwd, isGitRepo: record.isGitRepo, isSsh }),
-		{ sources: RECENT_TIMELINE_SOURCES, ...recentTimelineOptions(timelineNow), now: timelineNow }
-	);
 	// The launcher is on this Mac, so an SSH agent is never told about it.
 	const maestroRunPath = isSsh ? undefined : await localMaestroRunPath();
 
@@ -229,7 +220,6 @@ export async function buildMaestroSystemPromptForSession(
 		activeTabId: opts.activeTabId,
 		historyFilePath,
 		journeyFilePath,
-		timelineEvents,
 		conductorProfile,
 		computerHistoryDir: isSsh ? undefined : localComputerHistoryDir(),
 		maestroRunPath,

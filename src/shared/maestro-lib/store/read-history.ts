@@ -323,3 +323,48 @@ export async function readRecentHistory(
 		await handle.close().catch(() => undefined);
 	}
 }
+
+/** A history entry found by id, with the agent whose file holds it. */
+export interface FoundHistoryEntry {
+	agentId: string;
+	entry: HistoryEntry;
+}
+
+/**
+ * The entries whose id starts with `idPrefix`, across `agentIds`. A JSONL file
+ * is parsed only when its raw text contains the prefix, and then only the
+ * lines that do, so looking up one entry across every agent costs a read, not
+ * a parse, per file. A legacy single-object file is read whole. Never throws:
+ * an unreadable file holds no matches.
+ */
+export async function findHistoryEntries(
+	paths: Pick<MaestroPaths, 'historyDir'>,
+	agentIds: readonly string[],
+	idPrefix: string
+): Promise<FoundHistoryEntry[]> {
+	const found: FoundHistoryEntry[] = [];
+	if (!idPrefix) return found;
+	for (const agentId of agentIds) {
+		let raw: string;
+		try {
+			raw = await fsp.readFile(historyFilePath(paths.historyDir, agentId), 'utf-8');
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== 'ENOENT') continue;
+			const legacy = readHistory(paths, agentId, { limit: Number.MAX_SAFE_INTEGER });
+			if (legacy.status !== 'ok') continue;
+			for (const entry of legacy.entries) {
+				if (entry.id.startsWith(idPrefix)) found.push({ agentId, entry });
+			}
+			continue;
+		}
+		if (!raw.includes(idPrefix)) continue;
+		const lines = raw
+			.split('\n')
+			.filter((line) => line.includes(idPrefix))
+			.join('\n');
+		for (const entry of normalizeHistoryEntries(parseHistoryJsonl(stripJsonBom(lines)).entries)) {
+			if (entry.id.startsWith(idPrefix)) found.push({ agentId, entry });
+		}
+	}
+	return found;
+}

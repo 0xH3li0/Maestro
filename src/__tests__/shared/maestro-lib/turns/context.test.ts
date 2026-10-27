@@ -192,42 +192,17 @@ describe('loadTurnContext', () => {
 		expect(withFile.context.historyFilePath).toBe(historyFilePath(paths.historyDir, 'agent-1'));
 	});
 
-	it('names the journey file and reads the recent timeline against the given clock', async () => {
-		const now = new Date(2026, 0, 1).getTime();
-		const recent = { ts: now - 60_000, agentId: 'agent-1', kind: 'file.open', target: '/p/a.ts' };
-		const stale = { ...recent, ts: now - 3 * 60 * 60 * 1000 };
-		write(journeyFilePath(dir, 'agent-1'), `${JSON.stringify(stale)}\n${JSON.stringify(recent)}\n`);
-		const turn = {
-			id: 'h-1',
-			type: 'USER',
-			timestamp: now - 30_000,
-			summary: 'fixed it',
-			projectPath: '/work/project',
-		};
-		write(historyFilePath(paths.historyDir, 'agent-1'), `${JSON.stringify(turn)}\n`);
-		const runGit = vi.fn(
-			async () => `abc1234\x1f${Math.floor((now - 10_000) / 1000)}\x1fAda\x1fship it\n`
-		);
-
-		const result = await load(makeAgent({ isGitRepo: true }), { runGit });
+	it('names the journey file for a local agent only', async () => {
+		const result = await load();
 		if (!result.ok) throw new Error(result.message);
 		expect(result.context.journeyFilePath).toBe(journeyFilePath(dir, 'agent-1'));
-		expect(result.context.timelineEvents?.map((e) => [e.source, e.ts, e.text])).toEqual([
-			['journey', recent.ts, 'user opened /p/a.ts'],
-			['history', turn.timestamp, 'USER: fixed it'],
-			['git', Math.floor((now - 10_000) / 1000) * 1000, 'commit by Ada: ship it'],
-		]);
-		expect(runGit).toHaveBeenCalledWith('/work/project', expect.arrayContaining(['log']));
 
 		const ssh = await load(
-			makeAgent({ isGitRepo: true, sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' } }),
-			{ probeBinary: found('/never'), runGit }
+			makeAgent({ sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' } }),
+			{ probeBinary: found('/never') }
 		);
 		if (!ssh.ok) throw new Error(ssh.message);
 		expect(ssh.context.journeyFilePath).toBeUndefined();
-		// History and the journey are recorded here; the commits are on the remote.
-		expect(ssh.context.timelineEvents?.map((e) => e.source)).toEqual(['journey', 'history']);
-		expect(runGit).toHaveBeenCalledTimes(1);
 	});
 
 	it('states the data dir, the CLI script and the clock it was given', async () => {

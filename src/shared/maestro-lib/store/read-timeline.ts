@@ -3,10 +3,8 @@
  * machine: history and journey files under the data directory, `git log` in
  * the working directory, and the Computer History store.
  *
- * Read-only, and shared by every caller so they cannot disagree: the desktop's
- * prompt builder and `timeline:read` IPC, `maestro-cli timeline`, and the
- * system-prompt builders that run outside Electron. Nothing here throws: a
- * source that cannot be read adds a note and no events.
+ * Read-only, behind `maestro-cli timeline`. Nothing here throws: a source that
+ * cannot be read adds a note and no events.
  */
 
 import { computerHistoryDir } from '../../computer-history/paths';

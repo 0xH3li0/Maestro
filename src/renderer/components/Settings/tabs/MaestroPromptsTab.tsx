@@ -45,7 +45,7 @@ import { isPromptAvailable } from '../../../../shared/promptDefinitions';
 import { useActiveSession } from '../../../hooks/session/useActiveSession';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { gitService } from '../../../services/git';
-import { loadTimelinePromptContext } from '../../../utils/spawnHelpers';
+import { loadJourneyFilePath } from '../../../utils/spawnHelpers';
 import { isSessionRemote } from '../../../utils/sessionHelpers';
 import { DualPaneFileEditor, type DualPaneFileEditorItem } from '../../shared/DualPaneFileEditor';
 import { FilterInput } from '../../ui/FilterInput';
@@ -633,7 +633,7 @@ export function MaestroPromptsTab({
 				} catch {
 					// ignore
 				}
-				const timeline = await loadTimelinePromptContext(
+				const journeyFilePath = await loadJourneyFilePath(
 					activeSession.id,
 					isSessionRemote(activeSession)
 				);
@@ -644,7 +644,7 @@ export function MaestroPromptsTab({
 						gitBranch,
 						groupId: (activeSession as any).groupId,
 						historyFilePath,
-						...timeline,
+						journeyFilePath,
 						conductorProfile,
 					})
 				);

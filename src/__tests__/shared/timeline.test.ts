@@ -4,22 +4,17 @@ import type { StoredEvent } from '../../shared/computer-history/types';
 import type { HistoryEntry } from '../../shared/types';
 import {
 	DEFAULT_TIMELINE_SOURCES,
-	RECENT_TIMELINE_EMPTY_TEXT,
-	RECENT_TIMELINE_MAX_EVENTS,
-	RECENT_TIMELINE_MAX_PER_SOURCE,
-	RECENT_TIMELINE_SOURCES,
-	RECENT_TIMELINE_WINDOW_MS,
 	collapseRepeatedAppSwitches,
 	computerEventToTimelineEvent,
-	formatRecentTimeline,
 	formatTimelineLine,
 	gitTimelineArgs,
 	historyEntryToTimelineEvent,
 	isTimelineSource,
 	journeyEntryToTimelineEvent,
 	parseGitTimeline,
-	recentTimelineOptions,
 	selectTimelineEvents,
+	timelineFollowUp,
+	timelineFollowUps,
 	type TimelineEvent,
 } from '../../shared/timeline';
 
@@ -44,12 +39,11 @@ function event(overrides: Partial<TimelineEvent> = {}): TimelineEvent {
 }
 
 describe('timeline sources', () => {
-	it('knows its sources and leaves Computer History out of the defaults and the snapshot', () => {
+	it('knows its sources and leaves Computer History out of the defaults', () => {
 		expect(isTimelineSource('git')).toBe(true);
 		expect(isTimelineSource('computer')).toBe(true);
 		expect(isTimelineSource('transcripts')).toBe(false);
 		expect(DEFAULT_TIMELINE_SOURCES).not.toContain('computer');
-		expect(RECENT_TIMELINE_SOURCES).not.toContain('computer');
 	});
 });
 
@@ -253,37 +247,23 @@ describe('formatTimelineLine', () => {
 	});
 });
 
-describe('recent timeline snapshot', () => {
-	it('reads the last two hours with per-source and total caps', () => {
-		expect(RECENT_TIMELINE_WINDOW_MS).toBe(2 * 60 * 60 * 1000);
-		expect(recentTimelineOptions(NOW)).toEqual({
-			sinceMs: NOW - RECENT_TIMELINE_WINDOW_MS,
-			perSourceTail: RECENT_TIMELINE_MAX_PER_SOURCE,
-			tail: RECENT_TIMELINE_MAX_EVENTS,
-		});
-	});
-
-	it('renders one bullet per event, or the empty text', () => {
-		expect(formatRecentTimeline([], NOW)).toBe(RECENT_TIMELINE_EMPTY_TEXT);
-		const e = event({ ref: 'abc' });
-		expect(formatRecentTimeline([e], NOW)).toBe(`- ${formatTimelineLine(e, NOW)}`);
-	});
-
-	it('drops events outside the window even when the caller passed them', () => {
-		expect(formatRecentTimeline([event({ ts: NOW - RECENT_TIMELINE_WINDOW_MS - 1 })], NOW)).toBe(
-			RECENT_TIMELINE_EMPTY_TEXT
+describe('follow-ups', () => {
+	it('names the command that reads more about one event', () => {
+		expect(timelineFollowUp(event({ ref: 'h-1' }))).toBe('timeline show h-1');
+		expect(timelineFollowUp(event({ source: 'git', ref: SHA }))).toBe(`git show ${SHA}`);
+		expect(timelineFollowUp(event({ source: 'journey', text: 'user saved a.ts' }))).toBeUndefined();
+		expect(timelineFollowUp(event({ source: 'computer', ts: Date.UTC(2026, 0, 1) }))).toBe(
+			'computer-history query --since 2026-01-01T00:00:00.000Z --until 2026-01-01T00:05:00.000Z'
 		);
 	});
 
-	it('cannot be drowned by one source', () => {
-		const saves = Array.from({ length: 30 }, (_, i) =>
-			event({ ts: TODAY + i, source: 'journey', text: `save ${i}` })
-		);
-		const lines = formatRecentTimeline(
-			[event({ ts: TODAY - 1, text: 'turn' }), ...saves],
-			NOW
-		).split('\n');
-		expect(lines).toHaveLength(RECENT_TIMELINE_MAX_PER_SOURCE + 1);
-		expect(lines[0]).toContain('turn');
+	it('lists a read-more line per source present, then how to widen the view', () => {
+		const lines = timelineFollowUps([event({}), event({ source: 'git', ref: SHA })]);
+		expect(lines[0]).toMatch(/^timeline show <entry>/);
+		expect(lines[1]).toMatch(/^git show <commit>/);
+		expect(lines.some((l) => l.startsWith('journey'))).toBe(false);
+		expect(lines.some((l) => l.startsWith('computer-history'))).toBe(false);
+		expect(lines[lines.length - 1]).toContain('--since 1w');
+		expect(timelineFollowUps([])).toHaveLength(1);
 	});
 });

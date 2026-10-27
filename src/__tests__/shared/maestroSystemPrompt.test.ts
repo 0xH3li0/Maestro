@@ -10,8 +10,6 @@ import {
 	assembleMaestroSystemPrompt,
 	systemPromptSectionsFor,
 	MAESTRO_SYSTEM_PROMPT_SECTION_SEPARATOR,
-	RECENT_TIMELINE_POINTER,
-	RECENT_TIMELINE_SECTION_HEADING,
 } from '../../shared/maestroSystemPrompt';
 import {
 	FIRST_PARTY_PLUGIN_DEFINITIONS,
@@ -20,7 +18,6 @@ import {
 	MAESTRO_RUN_FIRST_PARTY_PLUGIN,
 } from '../../shared/plugins/first-party';
 import type { TemplateContext } from '../../shared/templateVariables';
-import { RECENT_TIMELINE_EMPTY_TEXT, type TimelineEvent } from '../../shared/timeline';
 
 // Maestro Cue ships on and carries a section; the cases about other plugins
 // switch it off so each asserts only the section it is about.
@@ -216,65 +213,5 @@ describe('assembleMaestroSystemPrompt', () => {
 			pluginSections: ['{{COMPUTER_HISTORY_DIR}}'],
 		});
 		expect(result).toBe('BASE');
-	});
-});
-
-// Providers cache the system prompt as a prefix, so the per-turn timeline must
-// sit after every stable byte or each turn re-pays for the whole prompt.
-describe('assembleMaestroSystemPrompt: recent timeline placement', () => {
-	const NOW = new Date(2031, 0, 2, 12, 0);
-	const turn = (text: string, ageMs: number): TimelineEvent => ({
-		ts: NOW.getTime() - ageMs,
-		source: 'history',
-		agentId: 'agent-1',
-		text,
-		ref: text,
-	});
-	const build = (
-		timelineEvents: TimelineEvent[],
-		template = 'HEAD\n\n{{RECENT_TIMELINE}}\n\nTAIL'
-	) =>
-		assembleMaestroSystemPrompt({
-			template,
-			context: { ...context, timelineEvents, now: NOW },
-			roleSections: ['ROLE'],
-			pluginSections: ['PLUGIN {{AGENT_NAME}}'],
-		});
-	const sep = MAESTRO_SYSTEM_PROMPT_SECTION_SEPARATOR;
-	const timelineSection = `${sep}${RECENT_TIMELINE_SECTION_HEADING}\n\n`;
-
-	it('writes the pointer in place and renders the timeline as the last section', () => {
-		const result = build([turn('USER: one', 60_000)]);
-		const stable = `HEAD\n\n${RECENT_TIMELINE_POINTER}\n\nTAIL${sep}ROLE${sep}PLUGIN Alice`;
-		expect(result.startsWith(`${stable}${timelineSection}- `)).toBe(true);
-		expect(result.slice(stable.length)).toContain('history USER: one');
-	});
-
-	it('keeps every byte before the timeline identical when the timeline changes between turns', () => {
-		const first = build([turn('USER: one', 60_000)]);
-		const second = build([turn('USER: one', 60_000), turn('USER: two', 1_000)]);
-		expect(first).not.toBe(second);
-		const prefixOf = (prompt: string) => prompt.slice(0, prompt.lastIndexOf(timelineSection));
-		expect(prefixOf(first)).toBe(prefixOf(second));
-		expect(prefixOf(first)).not.toContain('USER: one');
-	});
-
-	it('hoists a token from a customized template or a section, once, whatever its case', () => {
-		const result = build([], '{{recent_timeline}} A {{RECENT_TIMELINE}}');
-		expect(result).toBe(
-			`${RECENT_TIMELINE_POINTER} A ${RECENT_TIMELINE_POINTER}${sep}ROLE${sep}PLUGIN Alice${timelineSection}${RECENT_TIMELINE_EMPTY_TEXT}`
-		);
-		const fromSection = assembleMaestroSystemPrompt({
-			template: 'BASE',
-			context,
-			pluginSections: ['Recent: {{RECENT_TIMELINE}}'],
-		});
-		expect(fromSection).toBe(
-			`BASE${sep}Recent: ${RECENT_TIMELINE_POINTER}${timelineSection}${RECENT_TIMELINE_EMPTY_TEXT}`
-		);
-	});
-
-	it('appends no timeline section when nothing names the variable', () => {
-		expect(build([turn('USER: one', 60_000)], 'BASE')).toBe(`BASE${sep}ROLE${sep}PLUGIN Alice`);
 	});
 });

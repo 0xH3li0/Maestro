@@ -2,7 +2,6 @@ import { buildSessionDeepLink, buildGroupDeepLink } from './deep-link-urls';
 import { formatAdditionalDirectoriesForPrompt } from './additionalDirectories';
 import type { AdditionalDirectory } from './types';
 import { resolveEncoreFeatures, type EncoreFeatureDefaults } from './encoreFeatureDefaults';
-import { formatRecentTimeline, type TimelineEvent } from './timeline';
 
 /**
  * Template Variable System for Auto Run and Custom AI Commands
@@ -20,7 +19,6 @@ import { formatRecentTimeline, type TimelineEvent } from './timeline';
  *   {{AGENT_SESSION_ID}}  - Agent session ID (for conversation continuity)
  *   {{AGENT_HISTORY_PATH}} - Path to agent's history JSON file (for task recall)
  *   {{AGENT_JOURNEY_PATH}} - Path to agent's User Journey JSONL file (what the user did in Maestro)
- *   {{RECENT_TIMELINE}}   - The agent's timeline for the past 2 hours (turns, user actions in Maestro, commits), one line each
  *   {{TAB_ID}}            - This conversation's AI tab ID (for CLI targeting; empty on headless spawns)
  *   {{TAB_NAME}}          - Custom tab name (alias: SESSION_NAME)
  *   {{TOOL_TYPE}}         - Agent type (claude-code, codex, opencode, factory-droid)
@@ -225,12 +223,6 @@ export interface TemplateContext {
 	 */
 	journeyFilePath?: string;
 	/**
-	 * The agent's recent timeline events, for {{RECENT_TIMELINE}}. Builders read
-	 * them with `recentTimelineOptions()`; substitution applies the window and
-	 * the caps again.
-	 */
-	timelineEvents?: readonly TimelineEvent[];
-	/**
 	 * `<userData>/computer-history` on the Maestro machine, for the Computer
 	 * History system-prompt section. Builders leave it unset for SSH-remote
 	 * agents, whose shell cannot reach that path.
@@ -361,10 +353,6 @@ export const TEMPLATE_VARIABLES = [
 	},
 	{ variable: '{{AGENT_HISTORY_PATH}}', description: 'History file path (task recall)' },
 	{ variable: '{{AGENT_JOURNEY_PATH}}', description: 'User Journey file path (user actions)' },
-	{
-		variable: '{{RECENT_TIMELINE}}',
-		description: "Agent's timeline: turns, user actions, commits (last 2 hours)",
-	},
 	{ variable: '{{AGENT_NAME}}', description: 'Agent name' },
 	{ variable: '{{AGENT_PATH}}', description: 'Agent home directory path' },
 	{ variable: '{{AGENT_SESSION_ID}}', description: 'Agent session ID' },
@@ -735,7 +723,6 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		predecessorHandoff,
 		historyFilePath,
 		journeyFilePath,
-		timelineEvents,
 		computerHistoryDir,
 		maestroRunPath,
 		conductorProfile,
@@ -755,7 +742,6 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		AGENT_SESSION_ID: session.agentSessionId || '',
 		AGENT_HISTORY_PATH: historyFilePath || '',
 		AGENT_JOURNEY_PATH: journeyFilePath || '',
-		RECENT_TIMELINE: formatRecentTimeline(timelineEvents ?? [], now.getTime()),
 		COMPUTER_HISTORY_DIR: computerHistoryDir || '',
 		MAESTRO_RUN_PATH: maestroRunPath || '',
 		// The AI tab this spawn belongs to. Empty for headless spawns (CLI send,

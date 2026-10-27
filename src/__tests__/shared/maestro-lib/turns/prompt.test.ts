@@ -5,10 +5,6 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
-	RECENT_TIMELINE_POINTER,
-	RECENT_TIMELINE_SECTION_HEADING,
-} from '../../../../shared/maestroSystemPrompt';
-import {
 	appendNudgeMessage,
 	buildAgentSystemPrompt,
 	buildMessagePrompt,
@@ -20,8 +16,6 @@ import {
 } from '../../../../shared/maestro-lib/turns/prompt';
 
 const SEP = '\n\n---\n\n';
-// What `{{RECENT_TIMELINE}}` reads as in place, then the timeline section the assembler appends last.
-const TIMELINE_TAIL = `${RECENT_TIMELINE_POINTER}${SEP}${RECENT_TIMELINE_SECTION_HEADING}\n\n`;
 
 describe('appendNudgeMessage', () => {
 	it('puts the nudge behind the text, after a rule', () => {
@@ -228,27 +222,13 @@ describe('buildAgentSystemPrompt', () => {
 		);
 	});
 
-	it('fills the journey path and the recent timeline, keeping only the timeline for SSH', () => {
-		const now = new Date(2031, 0, 2, 12, 0);
+	it('fills the journey path, and leaves it out for SSH', () => {
 		const context = {
-			prompts: { maestroSystem: '[{{AGENT_JOURNEY_PATH}}] {{RECENT_TIMELINE}}' },
+			prompts: { maestroSystem: '[{{AGENT_JOURNEY_PATH}}]' },
 			journeyFilePath: '/j/a-1.jsonl',
-			timelineEvents: [
-				{
-					ts: now.getTime() - 1000,
-					source: 'journey' as const,
-					agentId: 'a-1',
-					text: 'user deleted /x.ts',
-				},
-			],
-			now,
 		};
-		const local = buildAgentSystemPrompt(agent, undefined, context) ?? '';
-		expect(local.startsWith(`[/j/a-1.jsonl] ${TIMELINE_TAIL}- `)).toBe(true);
-		expect(local).toMatch(/ journey user deleted \/x\.ts$/);
-		const remote = buildAgentSystemPrompt(ssh, undefined, context) ?? '';
-		expect(remote.startsWith(`[] ${TIMELINE_TAIL}- `)).toBe(true);
-		expect(remote).toMatch(/ journey user deleted \/x\.ts$/);
+		expect(buildAgentSystemPrompt(agent, undefined, context)).toBe('[/j/a-1.jsonl]');
+		expect(buildAgentSystemPrompt(ssh, undefined, context)).toBe('[]');
 	});
 
 	it('leaves out what is read from this machine for an SSH agent', () => {

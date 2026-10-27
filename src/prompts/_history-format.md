@@ -1,6 +1,6 @@
 ## Task Recall (history JSONL)
 
-Start with `maestro-cli timeline`: it lists recent history entries next to the user's actions and commits, each with an `[entry <id>]` handle. Read the file below when you need an entry's full reply.
+Start with `maestro-cli timeline`: it lists recent history entries next to the user's actions and commits, each with an `[entry <id>]` handle, and `timeline show <id>` prints one entry in full. Read the file below only for a scan the CLI does not cover.
 
 Your history is stored at `{{AGENT_HISTORY_PATH}}` as JSONL: one entry per line, appended when a turn finishes, so the newest entries are at the end. Another agent's history sits in the same folder, named `<agentId>.jsonl`. A line can fail to parse after a crash; skip it.
 

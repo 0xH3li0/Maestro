@@ -2,7 +2,7 @@
  * @file system-prompt.test.ts
  * @description Tests for `prepareMaestroSystemPromptCli` - the CLI-side
  * builder that loads `maestro-system-prompt`, threads in branch / history /
- * timeline / conductor context, and returns the substituted template for use as
+ * conductor context, and returns the substituted template for use as
  * `appendSystemPrompt`. Mirrors the renderer's `prepareMaestroSystemPrompt`
  * in `src/renderer/utils/spawnHelpers.ts`.
  */
@@ -17,10 +17,6 @@ vi.mock('../../../cli/services/prompt-loader', () => ({
 vi.mock('../../../cli/services/storage', () => ({
 	getConfigDirectory: vi.fn(() => '/mock/config'),
 	getJourneyFilePath: vi.fn((id: string) => `/mock/config/journey/${id}.jsonl`),
-	getTimelinePaths: vi.fn(() => ({
-		userDataDir: '/mock/config',
-		historyDir: '/mock/config/history',
-	})),
 	readSettingValue: vi.fn(),
 	resolveSessionHistoryFilePath: vi.fn(),
 }));
@@ -29,32 +25,14 @@ vi.mock('../../../shared/maestro-run/state-file', () => ({
 	readMaestroRunReadyPath: vi.fn(),
 }));
 
-vi.mock('../../../shared/maestro-lib/store/read-timeline', () => ({
-	readTimeline: vi.fn(async () => ({ events: [], notes: [] })),
-}));
-
 vi.mock('../../../cli/services/git-utils', () => ({
 	getGitBranch: vi.fn(),
 	isGitRepo: vi.fn(),
 }));
 
 import { prepareMaestroSystemPromptCli } from '../../../cli/services/system-prompt';
-import {
-	MAESTRO_SYSTEM_PROMPT_SECTION_SEPARATOR,
-	RECENT_TIMELINE_POINTER,
-	RECENT_TIMELINE_SECTION_HEADING,
-} from '../../../shared/maestroSystemPrompt';
-
-// The timeline section the assembler appends after everything else; `{{RECENT_TIMELINE}}` reads as the pointer.
-const TIMELINE_SECTION = `${MAESTRO_SYSTEM_PROMPT_SECTION_SEPARATOR}${RECENT_TIMELINE_SECTION_HEADING}\n\n`;
 import { getCliPrompt } from '../../../cli/services/prompt-loader';
 import { readSettingValue, resolveSessionHistoryFilePath } from '../../../cli/services/storage';
-import { readTimeline } from '../../../shared/maestro-lib/store/read-timeline';
-import {
-	RECENT_TIMELINE_MAX_EVENTS,
-	RECENT_TIMELINE_SOURCES,
-	RECENT_TIMELINE_WINDOW_MS,
-} from '../../../shared/timeline';
 import { getGitBranch, isGitRepo } from '../../../cli/services/git-utils';
 import { readMaestroRunReadyPath } from '../../../shared/maestro-run/state-file';
 
@@ -85,54 +63,19 @@ describe('prepareMaestroSystemPromptCli', () => {
 		vi.mocked(resolveSessionHistoryFilePath).mockReturnValue(undefined);
 		// Default: the app has not recorded MaestroRun as ready.
 		vi.mocked(readMaestroRunReadyPath).mockReturnValue(undefined);
-		vi.mocked(readTimeline).mockResolvedValue({ events: [], notes: [] });
 	});
 
-	it('fills the journey path and the empty timeline text when nothing happened', async () => {
-		vi.mocked(getCliPrompt).mockResolvedValue(
-			'journey=[{{AGENT_JOURNEY_PATH}}] recent=[{{RECENT_TIMELINE}}]'
+	it('fills the journey path, and leaves it empty for SSH sessions', async () => {
+		vi.mocked(getCliPrompt).mockResolvedValue('journey=[{{AGENT_JOURNEY_PATH}}]');
+
+		expect(await prepareMaestroSystemPromptCli(mockSession({ id: 'sess-1' }))).toBe(
+			'journey=[/mock/config/journey/sess-1.jsonl]'
 		);
-
-		const before = Date.now();
-		const result = await prepareMaestroSystemPromptCli(mockSession({ id: 'sess-1' }));
-
-		expect(result).toBe(
-			`journey=[/mock/config/journey/sess-1.jsonl] recent=[${RECENT_TIMELINE_POINTER}]${TIMELINE_SECTION}Nothing in the last 2 hours.`
-		);
-		const input = vi.mocked(readTimeline).mock.calls[0][0];
-		expect(input.paths).toEqual({
-			userDataDir: '/mock/config',
-			historyDir: '/mock/config/history',
-		});
-		expect(input.sources).toEqual(RECENT_TIMELINE_SOURCES);
-		expect(input.tail).toBe(RECENT_TIMELINE_MAX_EVENTS);
-		expect(input.sinceMs).toBeGreaterThanOrEqual(before - RECENT_TIMELINE_WINDOW_MS);
-		// A local git repository: commits are read in the working directory.
-		expect(input.agents).toEqual([
-			{ id: 'sess-1', cwd: '/path/to/project', gitCwd: '/path/to/project' },
-		]);
-	});
-
-	it('renders the timeline, and drops the journey path and git for SSH sessions', async () => {
-		vi.mocked(getCliPrompt).mockResolvedValue(
-			'journey=[{{AGENT_JOURNEY_PATH}}] recent=[{{RECENT_TIMELINE}}]'
-		);
-		vi.mocked(readTimeline).mockResolvedValue({
-			events: [
-				{ ts: Date.now(), source: 'journey', agentId: 'sess-1', text: 'user saved src/a.ts' },
-			],
-			notes: [],
-		});
-
-		const result = await prepareMaestroSystemPromptCli(
-			mockSession({ id: 'sess-1', sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' } })
-		);
-
 		expect(
-			result?.startsWith(`journey=[] recent=[${RECENT_TIMELINE_POINTER}]${TIMELINE_SECTION}- `)
-		).toBe(true);
-		expect(result).toMatch(/ journey user saved src\/a\.ts$/);
-		expect(vi.mocked(readTimeline).mock.calls[0][0].agents[0].gitCwd).toBeUndefined();
+			await prepareMaestroSystemPromptCli(
+				mockSession({ id: 'sess-1', sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' } })
+			)
+		).toBe('journey=[]');
 	});
 
 	it('substitutes agent identity, branch, and conductor profile into the template', async () => {

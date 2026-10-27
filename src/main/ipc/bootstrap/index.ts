@@ -61,7 +61,6 @@ import {
 	registerMemoryHandlers,
 	registerTabsHandlers,
 	registerJourneyHandlers,
-	registerTimelineHandlers,
 	registerContextTimelineHandlers,
 	registerPianolaHandlers,
 	registerPluginsHandlers,
@@ -351,10 +350,6 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	// User Journey: per-agent log of what the user did inside Maestro (files
 	// opened, saved, browsed). See src/main/user-journey-manager.ts.
 	registerJourneyHandlers();
-
-	// Timeline: one agent's turns, user actions, and commits merged in time
-	// order. See src/main/agent-timeline.ts.
-	registerTimelineHandlers();
 
 	// Register Context Timeline capture handlers (per-agent turn history backfill).
 	// The renderer calls these on every panel open and timeline clear, so leaving

@@ -30,8 +30,6 @@ import { getAgentDefinition, type AgentConfig } from '../providers/definitions';
 import { readAgentConfigsStore, readSettingsStore } from '../store/read-stores';
 import { historyFilePath } from '../store/read-history';
 import { journeyFilePath } from '../store/read-journey';
-import { readTimeline, type TimelineGitRunner } from '../store/read-timeline';
-import { RECENT_TIMELINE_SOURCES, recentTimelineOptions } from '../../timeline';
 import type { TurnAgent, TurnContext } from './assemble';
 import { locateProviderBinary } from './provider-binary';
 import { isPianolaEnabled } from '../../agentVisibility';
@@ -72,8 +70,6 @@ export interface SystemPromptSources {
 	now?: () => Date;
 	/** Test seam. */
 	readGitBranch?(cwd: string): Promise<string | undefined>;
-	/** Test seam for the timeline's `git log`. */
-	runGit?: TimelineGitRunner;
 }
 
 export interface TurnContextSources extends SystemPromptSources {
@@ -188,23 +184,6 @@ async function readSystemPromptContext(
 
 	const shared = readPluginSectionContext(sshEnabled, sources, settingsData, loader);
 	const journeyFile = journeyFilePath(sources.paths.userDataDir, agent.id);
-	// History and the journey are recorded on this machine wherever the agent runs, so an SSH
-	// agent still gets them; its commits are on the remote, so git is local agents only.
-	const timelineNow = shared.now.getTime();
-	const { events: timelineEvents } = await readTimeline({
-		paths: sources.paths,
-		agents: [
-			{
-				id: agent.id,
-				cwd: agent.cwd,
-				gitCwd: !sshEnabled && agent.isGitRepo ? agent.cwd : undefined,
-			},
-		],
-		sources: RECENT_TIMELINE_SOURCES,
-		...recentTimelineOptions(timelineNow),
-		runGit: sources.runGit,
-		now: timelineNow,
-	});
 	return {
 		...shared,
 		prompts: {
@@ -219,7 +198,6 @@ async function readSystemPromptContext(
 		gitBranch,
 		historyFilePath: historyPath,
 		journeyFilePath: sshEnabled ? undefined : journeyFile,
-		timelineEvents,
 	};
 }
 

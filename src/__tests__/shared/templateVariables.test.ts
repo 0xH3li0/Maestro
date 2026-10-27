@@ -15,7 +15,6 @@ import {
 	TemplateContext,
 	TemplateSessionInfo,
 } from '../../shared/templateVariables';
-import { formatTimestamp } from '../../shared/formatters';
 
 // Helper to create a minimal session for testing
 function createTestSession(overrides: Partial<TemplateSessionInfo> = {}): TemplateSessionInfo {
@@ -92,7 +91,6 @@ describe('TEMPLATE_VARIABLES constant', () => {
 		expect(variables).toContain('{{AGENT_SESSION_ID}}');
 		expect(variables).toContain('{{AGENT_HISTORY_PATH}}');
 		expect(variables).toContain('{{AGENT_JOURNEY_PATH}}');
-		expect(variables).toContain('{{RECENT_TIMELINE}}');
 		expect(variables).toContain('{{COMPUTER_HISTORY_DIR}}');
 		expect(variables).toContain('{{MAESTRO_RUN_PATH}}');
 		expect(variables).toContain('{{TAB_ID}}');
@@ -310,46 +308,6 @@ describe('substituteTemplateVariables', () => {
 			expect(
 				substituteTemplateVariables('Journey: {{AGENT_JOURNEY_PATH}}', createTestContext({}))
 			).toBe('Journey: ');
-		});
-
-		it('should render {{RECENT_TIMELINE}} from timelineEvents, one line per event', () => {
-			const now = new Date(2026, 9, 18, 14, 30);
-			const ts = new Date(2026, 9, 18, 14, 2).getTime();
-			const context = createTestContext({
-				now,
-				session: createTestSession({ cwd: '/repo' }),
-				timelineEvents: [
-					{
-						ts,
-						source: 'history',
-						agentId: 'session-123',
-						text: 'USER: fixed the tooltip',
-						ref: '1a2b3c4d-0000-0000-0000-000000000000',
-					},
-					{ ts: ts + 1, source: 'journey', agentId: 'session-123', text: 'user saved src/a.ts' },
-					{
-						ts: ts + 2,
-						source: 'git',
-						agentId: 'session-123',
-						text: 'commit by Ada: fix tooltip',
-						ref: '5e6217267fdc8fc45851e994487efc72f6bef442',
-					},
-				],
-			});
-			const time = formatTimestamp(ts, 'time');
-			expect(substituteTemplateVariables('{{RECENT_TIMELINE}}', context)).toBe(
-				[
-					`- ${time} history USER: fixed the tooltip [entry 1a2b3c4d]`,
-					`- ${time} journey user saved src/a.ts`,
-					`- ${time} git commit by Ada: fix tooltip [commit 5e621726]`,
-				].join('\n')
-			);
-		});
-
-		it('should render {{RECENT_TIMELINE}} as the empty text with no events', () => {
-			expect(substituteTemplateVariables('{{RECENT_TIMELINE}}', createTestContext({}))).toBe(
-				'Nothing in the last 2 hours.'
-			);
 		});
 
 		it('should replace {{MAESTRO_RUN_PATH}} with maestroRunPath, and with nothing when unset', () => {

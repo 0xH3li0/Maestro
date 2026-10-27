@@ -693,9 +693,19 @@ Show what happened, oldest first: agent turns, user actions in Maestro, commits
 | `--since <time>`   | Start: 30m, 2h, 1d, 1w, ISO-8601, or epoch (default 1d)  | -       |
 | `--until <time>`   | End (default now)                                        | -       |
 | `--sources <list>` | Comma list of sources (default history,journey,git)      | -       |
-| `--tail <n>`       | Only the newest N events (default 50)                    | -       |
+| `--tail <n>`       | Only the newest N events (default 30)                    | -       |
+| `--per-source <n>` | Only the newest N events of each source (default 15)     | -       |
 | `--grep <text>`    | Only events whose line matches (regex, case-insensitive) | -       |
 | `--json`           | Output as JSON (for scripting)                           | -       |
+
+## `maestro-cli timeline show <entry>`
+
+Show one agent turn in full (its reply, tab, and timing) by an [entry &lt;id>] handle
+
+| Option             | Description                                    | Default |
+| ------------------ | ---------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent ID or name (default: search every agent) | -       |
+| `--json`           | Output as JSON (for scripting)                 | -       |
 
 ## `maestro-cli journey`
 

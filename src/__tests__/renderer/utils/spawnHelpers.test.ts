@@ -1,9 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
-	loadTimelinePromptContext,
+	loadJourneyFilePath,
 	prepareMaestroSystemPrompt,
 } from '../../../renderer/utils/spawnHelpers';
-import { RECENT_TIMELINE_MAX_EVENTS, type TimelineEvent } from '../../../shared/timeline';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 
 vi.mock('../../../renderer/utils/templateVariables', () => ({
@@ -47,9 +46,6 @@ describe('prepareMaestroSystemPrompt', () => {
 			},
 			journey: {
 				getPath: vi.fn().mockResolvedValue('/mock/journey/session-1.jsonl'),
-			},
-			timeline: {
-				read: vi.fn().mockResolvedValue([]),
 			},
 		};
 	});
@@ -127,13 +123,9 @@ describe('prepareMaestroSystemPrompt', () => {
 		expect((window as any).maestro.history.getFilePath).not.toHaveBeenCalled();
 	});
 
-	it('reads the journey path and the recent timeline for non-SSH sessions', async () => {
+	it('reads the journey path for non-SSH sessions', async () => {
 		await prepareMaestroSystemPrompt({ session: baseSession });
 		expect((window as any).maestro.journey.getPath).toHaveBeenCalledWith('session-1');
-		expect((window as any).maestro.timeline.read).toHaveBeenCalledWith(
-			'session-1',
-			expect.objectContaining({ tail: RECENT_TIMELINE_MAX_EVENTS, sinceMs: expect.any(Number) })
-		);
 	});
 
 	it('handles history file path errors gracefully', async () => {
@@ -300,59 +292,27 @@ describe('prepareMaestroSystemPrompt', () => {
 	});
 });
 
-describe('loadTimelinePromptContext', () => {
-	const event: TimelineEvent = {
-		ts: 1,
-		source: 'journey',
-		agentId: 'a1',
-		text: 'user opened a.ts',
-	};
-
+describe('loadJourneyFilePath', () => {
 	beforeEach(() => {
 		(window as any).maestro = {
 			...(window as any).maestro,
-			journey: {
-				getPath: vi.fn().mockResolvedValue('/mock/journey/a1.jsonl'),
-			},
-			timeline: {
-				read: vi.fn().mockResolvedValue([event]),
-			},
+			journey: { getPath: vi.fn().mockResolvedValue('/mock/journey/a1.jsonl') },
 		};
 	});
 
-	it('returns the journey path and the timeline for a local agent', async () => {
-		await expect(loadTimelinePromptContext('a1', false)).resolves.toEqual({
-			journeyFilePath: '/mock/journey/a1.jsonl',
-			timelineEvents: [event],
-		});
+	it('returns the path for a local agent', async () => {
+		await expect(loadJourneyFilePath('a1', false)).resolves.toBe('/mock/journey/a1.jsonl');
 	});
 
-	it('skips the local-only path for an SSH agent but keeps its timeline', async () => {
-		await expect(loadTimelinePromptContext('a1', true)).resolves.toEqual({
-			journeyFilePath: undefined,
-			timelineEvents: [event],
-		});
+	it('skips the local-only path for an SSH agent', async () => {
+		await expect(loadJourneyFilePath('a1', true)).resolves.toBeUndefined();
 		expect((window as any).maestro.journey.getPath).not.toHaveBeenCalled();
 	});
 
-	it('leaves a value unset when its lookup fails', async () => {
+	it('reads a failed lookup or a missing bridge as no path', async () => {
 		(window as any).maestro.journey.getPath.mockRejectedValueOnce(new Error('no path'));
-		(window as any).maestro.timeline.read.mockRejectedValueOnce(new Error('no read'));
-		await expect(loadTimelinePromptContext('a1', false)).resolves.toEqual({
-			journeyFilePath: undefined,
-			timelineEvents: undefined,
-		});
-	});
-
-	it('tolerates missing journey and timeline bridges', async () => {
-		(window as any).maestro = {
-			...(window as any).maestro,
-			journey: undefined,
-			timeline: undefined,
-		};
-		await expect(loadTimelinePromptContext('a1', false)).resolves.toEqual({
-			journeyFilePath: undefined,
-			timelineEvents: undefined,
-		});
+		await expect(loadJourneyFilePath('a1', false)).resolves.toBeUndefined();
+		(window as any).maestro = { ...(window as any).maestro, journey: undefined };
+		await expect(loadJourneyFilePath('a1', false)).resolves.toBeUndefined();
 	});
 });

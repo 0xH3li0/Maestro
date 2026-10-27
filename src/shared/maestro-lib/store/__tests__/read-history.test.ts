@@ -7,6 +7,7 @@ import {
 	historyFilePath,
 	legacyHistoryFilePath,
 	pageHistoryEntries,
+	findHistoryEntries,
 	readHistory,
 	readRecentHistory,
 	type HistoryEntry,
@@ -252,5 +253,61 @@ describe('readRecentHistory', () => {
 
 	it('reads a missing file as no entries', async () => {
 		expect(await readRecentHistory(paths(), 'nobody', { sinceMs: 0 })).toEqual([]);
+	});
+});
+
+describe('findHistoryEntries', () => {
+	let historyDir: string;
+	const paths = () => ({ historyDir });
+
+	beforeEach(() => {
+		historyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-lib-find-history-'));
+		fs.writeFileSync(
+			historyFilePath(historyDir, 'agent-1'),
+			jsonl([
+				entry('abcd-1', 1),
+				entry('ffff-1', 2),
+				entry('legacy', 3, { type: 'AUTO', sourceAgentName: 'Docs' }),
+			])
+		);
+		fs.writeFileSync(
+			historyFilePath(historyDir, 'agent-2'),
+			`${jsonl([entry('abcd-2', 4)])}{"id":"abcd-torn`
+		);
+		fs.writeFileSync(
+			legacyHistoryFilePath(historyDir, 'agent-3'),
+			JSON.stringify({ entries: [entry('abcd-3', 5)] })
+		);
+	});
+
+	afterEach(() => {
+		fs.rmSync(historyDir, { recursive: true, force: true });
+	});
+
+	it('finds every entry whose id starts with the prefix, with its agent', async () => {
+		const found = await findHistoryEntries(paths(), ['agent-1', 'agent-2', 'agent-3'], 'abcd');
+		expect(found.map((f) => [f.agentId, f.entry.id])).toEqual([
+			['agent-1', 'abcd-1'],
+			['agent-2', 'abcd-2'],
+			['agent-3', 'abcd-3'],
+		]);
+	});
+
+	it('matches the id, not text elsewhere in the entry, and normalizes legacy consults', async () => {
+		fs.writeFileSync(
+			historyFilePath(historyDir, 'agent-4'),
+			jsonl([entry('zzzz-1', 1, { summary: 'mentions ffff-1 in passing' })])
+		);
+		expect(await findHistoryEntries(paths(), ['agent-4'], 'ffff')).toEqual([]);
+		const [legacy] = await findHistoryEntries(paths(), ['agent-1'], 'legacy');
+		expect(legacy.entry.type).toBe('AGENT');
+	});
+
+	it('reads only the agents it is given, and an empty prefix or missing file as nothing', async () => {
+		expect((await findHistoryEntries(paths(), ['agent-2'], 'abcd')).map((f) => f.entry.id)).toEqual(
+			['abcd-2']
+		);
+		expect(await findHistoryEntries(paths(), ['agent-1'], '')).toEqual([]);
+		expect(await findHistoryEntries(paths(), ['nobody'], 'abcd')).toEqual([]);
 	});
 });

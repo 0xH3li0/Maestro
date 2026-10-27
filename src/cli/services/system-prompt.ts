@@ -2,7 +2,7 @@
 //
 // Mirrors `src/renderer/utils/spawnHelpers.ts:prepareMaestroSystemPrompt` so a
 // bot driving Maestro through `maestro-cli send` or Auto Run sees the same
-// Maestro context - agent identity, git branch, history-file pointer, timeline,
+// Maestro context - agent identity, git branch, history-file pointer,
 // conductor profile, prompt customizations - that a desktop-spawned agent
 // receives. Without this, CLI-spawned agents are missing the entire "what is
 // Maestro and what can I do with it" preamble.
@@ -16,12 +16,9 @@ import {
 	systemPromptSectionsFor,
 } from '../../shared/maestroSystemPrompt';
 import { getCliPrompt } from './prompt-loader';
-import { RECENT_TIMELINE_SOURCES, recentTimelineOptions } from '../../shared/timeline';
-import { readTimeline } from '../../shared/maestro-lib/store/read-timeline';
 import {
 	getConfigDirectory,
 	getJourneyFilePath,
-	getTimelinePaths,
 	readSettingValue,
 	resolveSessionHistoryFilePath,
 } from './storage';
@@ -94,22 +91,6 @@ export async function prepareMaestroSystemPromptCli(
 	const isSsh = !!session.sessionSshRemoteConfig?.enabled;
 	const historyFilePath = isSsh ? undefined : resolveSessionHistoryFilePath(session.id);
 	const journeyFilePath = isSsh ? undefined : getJourneyFilePath(session.id);
-	// History and the journey are recorded on this machine wherever the agent
-	// runs, so an SSH agent still gets them; its commits are on the remote.
-	const timelineNow = Date.now();
-	const { events: timelineEvents } = await readTimeline({
-		paths: getTimelinePaths(),
-		agents: [
-			{
-				id: session.id,
-				cwd: session.cwd,
-				gitCwd: !isSsh && sessionIsGitRepo ? session.cwd : undefined,
-			},
-		],
-		sources: RECENT_TIMELINE_SOURCES,
-		...recentTimelineOptions(timelineNow),
-		now: timelineNow,
-	});
 
 	const conductorProfileSetting = readSettingValue('conductorProfile');
 	const conductorProfile =
@@ -150,7 +131,6 @@ export async function prepareMaestroSystemPromptCli(
 			groupId: session.groupId,
 			historyFilePath,
 			journeyFilePath,
-			timelineEvents,
 			conductorProfile,
 			computerHistoryDir: isSsh ? undefined : computerHistoryDir(getConfigDirectory()),
 			maestroRunPath,

@@ -6,7 +6,6 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { TimelineEvent } from '../../../shared/timeline';
 
 vi.mock('electron', () => ({
 	app: { getPath: vi.fn(() => '/data') },
@@ -35,12 +34,6 @@ vi.mock('../../../main/history-manager', () => ({
 
 vi.mock('../../../main/user-journey-manager', () => ({
 	getJourneyFilePath: vi.fn((id: string) => `/data/journey/${id}.jsonl`),
-}));
-
-let timelineEvents: TimelineEvent[] = [];
-vi.mock('../../../main/agent-timeline', async (importOriginal) => ({
-	...(await importOriginal<typeof import('../../../main/agent-timeline')>()),
-	readAgentTimeline: vi.fn(async () => timelineEvents),
 }));
 
 vi.mock('../../../main/utils/execFile', () => ({
@@ -77,16 +70,6 @@ import {
 	buildPluginSystemPromptSections,
 } from '../../../main/utils/maestro-system-prompt';
 import { execFileNoThrow } from '../../../main/utils/execFile';
-import { readAgentTimeline } from '../../../main/agent-timeline';
-import { RECENT_TIMELINE_MAX_EVENTS, RECENT_TIMELINE_SOURCES } from '../../../shared/timeline';
-import {
-	MAESTRO_SYSTEM_PROMPT_SECTION_SEPARATOR,
-	RECENT_TIMELINE_POINTER,
-	RECENT_TIMELINE_SECTION_HEADING,
-} from '../../../shared/maestroSystemPrompt';
-
-// What `{{RECENT_TIMELINE}}` reads as in place, then the timeline section the assembler appends last.
-const TIMELINE_TAIL = `${RECENT_TIMELINE_POINTER}${MAESTRO_SYSTEM_PROMPT_SECTION_SEPARATOR}${RECENT_TIMELINE_SECTION_HEADING}\n\n`;
 import { logger } from '../../../main/utils/logger';
 
 const agent = (overrides: Record<string, any> = {}) => ({
@@ -109,7 +92,6 @@ describe('buildMaestroSystemPromptForSession', () => {
 		prompts['computer-history-system'] = 'HISTORY {{COMPUTER_HISTORY_DIR}}';
 		storedSessions = [agent()];
 		settings = { conductorProfile: 'me' };
-		timelineEvents = [];
 	});
 
 	it('builds the base prompt for a stored agent by id', async () => {
@@ -142,41 +124,13 @@ describe('buildMaestroSystemPromptForSession', () => {
 		expect(execFileNoThrow).not.toHaveBeenCalled();
 	});
 
-	it('fills the journey path and the recent timeline, reading git in a local repository', async () => {
-		prompts['maestro-system-prompt'] = '{{AGENT_JOURNEY_PATH}}|{{RECENT_TIMELINE}}';
-		timelineEvents = [
-			{ ts: Date.now(), source: 'journey', agentId: 'agent-1', text: 'user opened src/a.ts' },
-		];
-		const result = await buildMaestroSystemPromptForSession('agent-1');
-		expect(result?.startsWith(`/data/journey/agent-1.jsonl|${TIMELINE_TAIL}- `)).toBe(true);
-		expect(result).toMatch(/ journey user opened src\/a\.ts$/);
-		expect(readAgentTimeline).toHaveBeenCalledWith(
-			{ id: 'agent-1', cwd: '/proj', gitCwd: '/proj' },
-			expect.objectContaining({
-				sources: RECENT_TIMELINE_SOURCES,
-				tail: RECENT_TIMELINE_MAX_EVENTS,
-				sinceMs: expect.any(Number),
-			})
-		);
-	});
-
-	it('reads the empty text with no events, and keeps the timeline but not git or the path over SSH', async () => {
-		prompts['maestro-system-prompt'] = '{{AGENT_JOURNEY_PATH}}|{{RECENT_TIMELINE}}';
+	it('fills the journey path, and leaves it empty for an SSH agent', async () => {
+		prompts['maestro-system-prompt'] = 'journey=[{{AGENT_JOURNEY_PATH}}]';
 		expect(await buildMaestroSystemPromptForSession('agent-1')).toBe(
-			`/data/journey/agent-1.jsonl|${TIMELINE_TAIL}Nothing in the last 2 hours.`
+			'journey=[/data/journey/agent-1.jsonl]'
 		);
 		storedSessions = [agent({ sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' } })];
-		timelineEvents = [
-			{ ts: Date.now(), source: 'history', agentId: 'agent-1', text: 'USER: did it', ref: 'abc' },
-		];
-		const remote = await buildMaestroSystemPromptForSession('agent-1');
-		expect(remote?.startsWith(`|${TIMELINE_TAIL}- `)).toBe(true);
-		expect(remote).toMatch(/ history USER: did it \[entry abc\]$/);
-		expect(vi.mocked(readAgentTimeline).mock.calls.at(-1)?.[0]).toEqual({
-			id: 'agent-1',
-			cwd: '/proj',
-			gitCwd: undefined,
-		});
+		expect(await buildMaestroSystemPromptForSession('agent-1')).toBe('journey=[]');
 	});
 
 	it('appends the Pianola role section for the Pianola agent', async () => {

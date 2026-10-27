@@ -5,7 +5,6 @@ import {
 	assembleMaestroSystemPrompt,
 	systemPromptSectionsFor,
 } from '../../shared/maestroSystemPrompt';
-import { recentTimelineOptions, type TimelineEvent } from '../../shared/timeline';
 
 /**
  * `<userData>/computer-history`, fetched from main once per renderer lifetime
@@ -57,39 +56,29 @@ async function loadPrompt(id: string): Promise<string | undefined> {
 }
 
 /**
- * The timeline inputs of a system prompt ({{AGENT_JOURNEY_PATH}} and
- * {{RECENT_TIMELINE}}), shared by the spawn and the Maestro Prompts preview.
- * Main reads the timeline (`timeline:read`), leaving commits out for an SSH
- * agent; only the journey file path is local-only here. A failed lookup leaves
- * that value unset (the snapshot then reads as empty).
+ * The agent's User Journey file for {{AGENT_JOURNEY_PATH}}, shared by the spawn
+ * and the Maestro Prompts preview. Undefined for an SSH agent (the path is on
+ * this machine) or when the lookup fails.
  */
-export async function loadTimelinePromptContext(
+export async function loadJourneyFilePath(
 	agentId: string,
 	isSsh: boolean
-): Promise<{ journeyFilePath?: string; timelineEvents?: TimelineEvent[] }> {
-	let journeyFilePath: string | undefined;
-	let timelineEvents: TimelineEvent[] | undefined;
-	if (!isSsh) {
-		try {
-			journeyFilePath = (await window.maestro.journey.getPath(agentId)) || undefined;
-		} catch {
-			// Ignore journey errors
-		}
-	}
+): Promise<string | undefined> {
+	if (isSsh) return undefined;
 	try {
-		timelineEvents = await window.maestro.timeline.read(agentId, recentTimelineOptions(Date.now()));
+		return (await window.maestro.journey.getPath(agentId)) || undefined;
 	} catch {
-		// Ignore timeline errors
+		// Ignore journey errors
+		return undefined;
 	}
-	return { journeyFilePath, timelineEvents };
 }
 
 /**
  * Prepare the Maestro system prompt for an agent spawn.
  *
  * Loads the prompt template, resolves git branch, history and journey file
- * paths, the recent timeline, and conductor profile, then hands everything to
- * the shared assembler (`src/shared/maestroSystemPrompt.ts`), which also appends the Pianola role
+ * paths, and conductor profile, then hands everything to the shared assembler
+ * (`src/shared/maestroSystemPrompt.ts`), which also appends the Pianola role
  * section and every enabled first-party plugin section.
  *
  * Must be called on every spawn (fresh AND resume): agents like Claude Code
@@ -138,10 +127,7 @@ export async function prepareMaestroSystemPrompt(opts: {
 		}
 	}
 
-	const { journeyFilePath, timelineEvents } = await loadTimelinePromptContext(
-		opts.session.id,
-		isSsh
-	);
+	const journeyFilePath = await loadJourneyFilePath(opts.session.id, isSsh);
 
 	const { conductorProfile, encoreFeatures } = useSettingsStore.getState();
 
@@ -176,7 +162,6 @@ export async function prepareMaestroSystemPrompt(opts: {
 			activeTabId: opts.activeTabId,
 			historyFilePath,
 			journeyFilePath,
-			timelineEvents,
 			conductorProfile,
 			computerHistoryDir,
 			maestroRunPath,

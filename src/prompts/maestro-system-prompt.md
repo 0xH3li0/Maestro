@@ -246,16 +246,7 @@ The reference material is split into focused, on-demand includes. Each `Path` be
 
 ## Timeline: What Happened Recently
 
-Before you ask what "where were we", "the file I just saved", or "what the other agent did" means, check the timeline: every record Maestro keeps, merged oldest first. This agent's last 2 hours, as of this turn's start:
-
-{{RECENT_TIMELINE}}
-
-Live view: `{{MAESTRO_CLI_PATH}} timeline --agent {{AGENT_ID}}`. Add `--since 1w` or `--grep <text>`, or drop `--agent` for every agent. Each line names its source; open the source only when the line is not enough:
-
-- `history`, an agent's finished turns: grep the `[entry <id>]` in `{{AGENT_HISTORY_PATH}}` (other agents' files sit beside it); `fullResponse` is the whole reply. Fields: `{{REF:_history-format}}`.
-- `journey`, the user's file and browser actions in Maestro: `journey --agent {{AGENT_ID}}`.
-- `git`, commits on the current branch: `git show <sha>`.
-- Conversations are not in it: `session show <tab-id>`.
+Before you ask what "where were we", "the file I just saved", or "what the other agent did" means, run `{{MAESTRO_CLI_PATH}} timeline --agent {{AGENT_ID}}`. It merges every record Maestro keeps into one list, oldest first, each line tagged by source: `history` (agent turns), `journey` (the user's file and browser actions in Maestro), and `git` (commits). It shows the tip only, and ends with the commands that read more, such as `timeline show <entry>` for one turn in full. Drop `--agent` to see every agent.
 
 ## Git Worktrees Go Where the User Can See Them
 

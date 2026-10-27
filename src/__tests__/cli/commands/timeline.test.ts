@@ -1,7 +1,8 @@
 /**
  * @file timeline.test.ts
- * @description Tests for `maestro-cli timeline`: sources, filters, the text and
- * `--json` output, and the Computer History gate. History and journey files are
+ * @description Tests for `maestro-cli timeline` and `timeline show`: sources,
+ * filters, the text and `--json` output, the read-more follow-ups, the Computer
+ * History gate, and finding one entry by an id prefix. History and journey files are
  * real JSONL in a temp data directory, so the shared readers run for real; the
  * agent list and the Encore gate are mocked, and no agent is a git repository
  * (its cwd does not exist), so git contributes nothing.
@@ -29,7 +30,7 @@ vi.mock('../../../cli/utils/encore-gate', () => ({
 	}),
 }));
 
-import { timeline } from '../../../cli/commands/timeline';
+import { timeline, timelineShow } from '../../../cli/commands/timeline';
 import { requireEncore } from '../../../cli/utils/encore-gate';
 
 const NOW = Date.now();
@@ -55,7 +56,7 @@ function output(): string {
 
 function jsonOutput(): {
 	success: boolean;
-	events?: (TimelineEvent & { time: string; agentName?: string })[];
+	events?: (TimelineEvent & { time: string; agentName?: string; more?: string })[];
 	notes?: string[];
 	error?: string;
 } {
@@ -81,6 +82,9 @@ beforeEach(() => {
 			type: 'USER',
 			timestamp: NOW - 30 * MIN,
 			summary: 'fixed auth',
+			fullResponse: 'fixed auth\n\nThe token now refreshes before it expires.',
+			elapsedTimeMs: 65_000,
+			tabId: 'tab-alpha-1',
 			projectPath: alpha.cwd,
 		},
 	]);
@@ -122,7 +126,10 @@ describe('timeline --json', () => {
 		expect(result.events?.[0]).toMatchObject({
 			ref: 'h-alpha',
 			time: new Date(NOW - 30 * MIN).toISOString(),
+			more: 'timeline show h-alpha',
 		});
+		// A journey line is the whole record: nothing more to read.
+		expect(result.events?.[2].more).toBeUndefined();
 		expect(result.notes).toEqual([]);
 	});
 });
@@ -159,6 +166,14 @@ describe('timeline filters', () => {
 		expect(jsonOutput().events?.map((e) => e.source)).toEqual(['journey']);
 	});
 
+	it('--per-source keeps the newest N of each source', async () => {
+		await timeline({ perSource: '1', json: true });
+		expect(jsonOutput().events?.map((e) => [e.source, e.ref])).toEqual([
+			['history', 'h-beta'],
+			['journey', undefined],
+		]);
+	});
+
 	it('rejects an unknown source, naming only the sources this machine has', async () => {
 		await timeline({ sources: 'history,transcripts', json: true });
 		const result = jsonOutput();
@@ -176,7 +191,10 @@ describe('timeline filters', () => {
 		log.mockClear();
 		await timeline({ tail: '5abc' });
 		expect(String(errorLog.mock.calls[0]?.[0])).toContain('Invalid --tail');
-		expect(exit).toHaveBeenCalledTimes(2);
+
+		await timeline({ perSource: '-1' });
+		expect(String(errorLog.mock.calls[1]?.[0])).toContain('Invalid --per-source');
+		expect(exit).toHaveBeenCalledTimes(3);
 	});
 });
 
@@ -205,6 +223,15 @@ describe('timeline text output', () => {
 		expect(text).not.toContain('Alpha:');
 	});
 
+	it('ends with the read-more commands for the sources it showed', async () => {
+		await timeline({ agent: alpha.id });
+		const text = output();
+		expect(text).toContain('Read more:');
+		expect(text).toMatch(/^ {2}timeline show <entry>/m);
+		expect(text).toMatch(/^ {2}journey --agent <id>/m);
+		expect(text).not.toContain('git show <commit>');
+	});
+
 	it('names the agent on each line when the timeline spans agents', async () => {
 		await timeline({});
 		expect(output()).toMatch(/history Beta: AUTO: ran docs/);
@@ -221,5 +248,66 @@ describe('timeline text output', () => {
 	it('says so when nothing matches', async () => {
 		await timeline({ grep: 'no-such-thing' });
 		expect(output()).toBe('No timeline events.');
+	});
+});
+
+describe('timeline show', () => {
+	function showJson(): {
+		success: boolean;
+		agentId?: string;
+		agentName?: string;
+		entry?: { id: string; fullResponse?: string };
+		error?: string;
+	} {
+		return JSON.parse(String(log.mock.calls[0]?.[0]));
+	}
+
+	it('finds an entry by an id prefix across every agent', async () => {
+		await timelineShow('h-bet', { json: true });
+		expect(showJson()).toMatchObject({
+			success: true,
+			agentId: beta.id,
+			agentName: 'Beta',
+			entry: { id: 'h-beta' },
+		});
+	});
+
+	it('prints the reply once, the timing, and the commands that read more', async () => {
+		await timelineShow('h-alpha', {});
+		const text = output();
+		expect(text).toMatch(/^USER turn \| .+ \| Alpha \| 1m$/m);
+		expect(text).toContain('The token now refreshes before it expires.');
+		// The reply opens with the summary, so the summary is not printed apart.
+		expect(text).not.toContain('Summary:');
+		expect(text).toContain('session show tab-alpha-1');
+		expect(text).toContain(`timeline --agent ${alpha.id} --until `);
+	});
+
+	it('prints the summary apart when the reply does not open with it', async () => {
+		await timelineShow('h-beta', {});
+		expect(output()).toContain('Summary: ran docs');
+		expect(output()).not.toContain('session show');
+	});
+
+	it('searches one agent with --agent', async () => {
+		await timelineShow('h-beta', { agent: 'Alpha', json: true });
+		expect(showJson().success).toBe(false);
+	});
+
+	it('refuses a short, unknown, or ambiguous id', async () => {
+		await timelineShow('h-', { json: true });
+		expect(showJson().error).toContain('too short');
+
+		log.mockClear();
+		await timelineShow('5e621726', { json: true });
+		expect(showJson().error).toContain('git show 5e621726');
+
+		log.mockClear();
+		writeJsonl(path.join(dataDir, 'history', `${beta.id}.jsonl`), [
+			{ id: 'h-alpha-copy', type: 'USER', timestamp: NOW, summary: 'copy', projectPath: beta.cwd },
+		]);
+		await timelineShow('h-alpha', { json: true });
+		expect(showJson().error).toContain('matches 2 entries');
+		expect(exit).toHaveBeenCalledTimes(3);
 	});
 });

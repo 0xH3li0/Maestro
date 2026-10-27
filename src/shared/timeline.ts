@@ -7,12 +7,15 @@
  * - `history`: the agent's finished turns (`src/main/history-manager.ts`).
  * - `journey`: what the user did inside Maestro (`src/shared/userJourney.ts`).
  * - `git`: commits on the working directory's current branch (first parent).
- * - `computer`: Computer History, an Encore Feature. Callers include it only
- *   while the feature is on, and never in the system prompt snapshot: it is
- *   high-volume and holds text the user merely looked at.
+ * - `computer`: Computer History, an Encore Feature. Read only while the
+ *   feature is on, and only when asked for: it is high-volume and holds text
+ *   the user merely looked at.
  *
- * A line carries a summary and a `ref` to drill into (a history entry id, a
- * commit sha), never the full record. This module is pure: the readers live in
+ * The timeline is the tip of the iceberg: a line carries a summary and a `ref`
+ * to drill into (a history entry id, a commit sha), never the full record, and
+ * `timelineFollowUps()` names the commands that read more. Nothing here goes
+ * into a system prompt: it changes every turn, which would defeat the
+ * provider's prompt cache. This module is pure: the readers live in
  * `src/shared/maestro-lib/store/read-timeline.ts`.
  */
 
@@ -280,41 +283,42 @@ export function formatTimelineLine(
 	return `${formatDigestTime(event.ts, now)} ${event.source} ${agent}${event.text}${refLabel(event)}`;
 }
 
-/** How far back the `{{RECENT_TIMELINE}}` snapshot reaches. */
-export const RECENT_TIMELINE_WINDOW_MS = 2 * 60 * 60 * 1000;
+/** How wide a window `timelineFollowUp()` gives a Computer History event. */
+const COMPUTER_FOLLOW_UP_MS = 5 * 60 * 1000;
 
-/** Most events the snapshot shows. */
-export const RECENT_TIMELINE_MAX_EVENTS = 15;
-
-/** Most events of any one source the snapshot shows, so a burst of saves cannot hide the turns. */
-export const RECENT_TIMELINE_MAX_PER_SOURCE = 8;
-
-/** The sources the snapshot reads. Computer History is never in it (see the module comment). */
-export const RECENT_TIMELINE_SOURCES: readonly TimelineSource[] = ['history', 'journey', 'git'];
-
-/** What `{{RECENT_TIMELINE}}` reads when the window is empty. */
-export const RECENT_TIMELINE_EMPTY_TEXT = 'Nothing in the last 2 hours.';
-
-/** The window and caps of the `{{RECENT_TIMELINE}}` snapshot, as of `now`. */
-export function recentTimelineOptions(now: number): SelectTimelineOptions & { sinceMs: number } {
-	return {
-		sinceMs: now - RECENT_TIMELINE_WINDOW_MS,
-		perSourceTail: RECENT_TIMELINE_MAX_PER_SOURCE,
-		tail: RECENT_TIMELINE_MAX_EVENTS,
-	};
+/**
+ * The command that reads more about one event, or undefined when its line is
+ * the whole record (a journey action). Bare verbs: the caller knows how it
+ * invokes `maestro-cli`.
+ */
+export function timelineFollowUp(event: TimelineEvent): string | undefined {
+	if (event.source === 'history' && event.ref) return `timeline show ${event.ref}`;
+	if (event.source === 'git' && event.ref) return `git show ${event.ref}`;
+	if (event.source === 'computer') {
+		const since = new Date(event.ts).toISOString();
+		const until = new Date(event.ts + COMPUTER_FOLLOW_UP_MS).toISOString();
+		return `computer-history query --since ${since} --until ${until}`;
+	}
+	return undefined;
 }
 
 /**
- * The `{{RECENT_TIMELINE}}` text: one `formatTimelineLine` bullet per event,
- * oldest first, or `RECENT_TIMELINE_EMPTY_TEXT`. Applies the window and the
- * caps itself, so a caller may pass a wider read.
+ * The "read more" lines printed under a timeline: one per source that has
+ * events, then how to widen or narrow the view.
  */
-export function formatRecentTimeline(
-	events: readonly TimelineEvent[],
-	now: number,
-	options: FormatTimelineLineOptions = {}
-): string {
-	const recent = selectTimelineEvents(events, recentTimelineOptions(now));
-	if (recent.length === 0) return RECENT_TIMELINE_EMPTY_TEXT;
-	return recent.map((event) => `- ${formatTimelineLine(event, now, options)}`).join('\n');
+export function timelineFollowUps(events: readonly TimelineEvent[]): string[] {
+	const present = new Set(events.map((e) => e.source));
+	const lines: string[] = [];
+	if (present.has('history')) {
+		lines.push('timeline show <entry>    a turn in full: reply, tab, transcript command');
+	}
+	if (present.has('git')) lines.push('git show <commit>        a commit and its diff');
+	if (present.has('journey')) {
+		lines.push("journey --agent <id>     the user's actions alone, filter with --kind");
+	}
+	if (present.has('computer')) {
+		lines.push('computer-history query   captured text and windows, with --since and --grep');
+	}
+	lines.push('--since 1w | --grep <text> | --sources <list> | no --agent for every agent');
+	return lines;
 }
