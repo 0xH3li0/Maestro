@@ -248,7 +248,7 @@ describe('sketch owner auth', () => {
 			const h = harness();
 			await h.auth.register(EMAIL);
 			const clientToken = JSON.parse(h.request.mock.calls[0][1].body).clientToken;
-			h.request
+			h.respond
 				.mockResolvedValueOnce(json({ status: 'pending' }))
 				.mockResolvedValueOnce(json({ status: 'pending' }))
 				.mockResolvedValueOnce(json({ status: 'confirmed', authToken: OWNER_TOKEN }));
@@ -282,7 +282,7 @@ describe('sketch owner auth', () => {
 			const h = harness();
 			await h.auth.register(EMAIL);
 			const registeredAt = h.clock.now;
-			h.request
+			h.respond
 				.mockResolvedValueOnce(json({ status: 'pending' }))
 				.mockResolvedValueOnce(json({ status: 'pending' }))
 				.mockResolvedValueOnce(json({ status: 'confirmed', authToken: OWNER_TOKEN }));
