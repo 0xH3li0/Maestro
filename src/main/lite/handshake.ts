@@ -7,6 +7,12 @@ import type { LiteProfile } from '../../shared/lite-control';
 
 export class HostConnectionError extends Error {
 	name = 'HostConnectionError';
+	constructor(
+		message: string,
+		readonly retryable = false
+	) {
+		super(message);
+	}
 }
 
 /** Require a compatible, ready host with the pinned identity and authentication appropriate to its transport. */
@@ -61,7 +67,8 @@ export function validateHandshake(
 	}
 	if (!host.ready)
 		throw new HostConnectionError(
-			`Host is not ready: ${host.unavailableReason || 'keep full Maestro and its owning window running.'}`
+			`Host is not ready: ${host.unavailableReason || 'keep full Maestro and its owning window running.'}`,
+			true
 		);
 	if (!host.capabilities.sessions || !host.capabilities.terminal || !host.capabilities.files)
 		throw new HostConnectionError(

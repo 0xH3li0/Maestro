@@ -135,7 +135,11 @@ export const BRIDGE_HEARTBEAT_INTERVAL_MS = 15000;
  * returning to the tab.
  */
 export const BRIDGE_PONG_TIMEOUT_MS = 8000;
+export const BRIDGE_CONNECT_TIMEOUT_MS = 10000;
+export const BRIDGE_RECOVERY_TIMEOUT_MS = 30000;
 
+const BRIDGE_RECONNECT_BASE_MS = 1000;
+const BRIDGE_RECONNECT_MAX_MS = 30000;
 const BRIDGE_READ_TIMEOUT_MS = 30_000;
 const BRIDGE_MUTATION_TIMEOUT_MS = 120_000;
 function isPersistenceChannel(channel: string): boolean {
@@ -224,7 +228,10 @@ class BridgeClient {
 	// Heartbeats detect dead peers, but renderer suspension is not a peer failure.
 	private heartbeatTimer: ReturnType<typeof setInterval> | undefined;
 	private pongDeadline: ReturnType<typeof setTimeout> | undefined;
-
+	private connectDeadline: ReturnType<typeof setTimeout> | undefined;
+	private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+	private reconnectAttempt = 0;
+	private terminalDisconnect = false;
 	constructor(private readonly config: BridgeConfig) {
 		this.ready = new Promise((r) => (this.resolveReady = r));
 		setConnectionState('connecting');
@@ -236,10 +243,45 @@ class BridgeClient {
 		}
 		this.connect(config.wsUrl);
 		document.addEventListener('visibilitychange', () => {
-			if (!document.hidden) this.probeHeartbeat();
+			if (!document.hidden) this.recoverConnection();
 		});
-		window.addEventListener('pageshow', () => this.probeHeartbeat());
-		window.addEventListener('online', () => this.probeHeartbeat());
+		window.addEventListener('pageshow', () => this.recoverConnection());
+		window.addEventListener('online', () => this.recoverConnection());
+	}
+
+	private recoverConnection(): void {
+		if (this.terminalDisconnect) return;
+		const socket = this.ws;
+		if (socket?.readyState === WebSocket.OPEN) {
+			this.probeHeartbeat();
+			return;
+		}
+		if (socket?.readyState === WebSocket.CONNECTING) {
+			this.disconnect(socket, 4000);
+			try {
+				socket.close(4000, 'connection superseded');
+			} catch {
+				/* Already retired locally. */
+			}
+			return;
+		}
+		if (socket) return;
+		this.scheduleReconnect(true);
+	}
+
+	private scheduleReconnect(immediate = false): void {
+		if (this.terminalDisconnect) return;
+		clearTimeout(this.reconnectTimer);
+		const ceiling = Math.min(
+			BRIDGE_RECONNECT_MAX_MS,
+			BRIDGE_RECONNECT_BASE_MS * 2 ** this.reconnectAttempt
+		);
+		const delay = immediate ? 0 : Math.floor(Math.random() * (ceiling + 1));
+		if (!immediate) this.reconnectAttempt++;
+		this.reconnectTimer = setTimeout(() => {
+			this.reconnectTimer = undefined;
+			this.connect(this.config.wsUrl);
+		}, delay);
 	}
 
 	private resumeUrl(url: string): string {
@@ -253,6 +295,7 @@ class BridgeClient {
 		this.invalidState = false;
 		this.uncertainPersistence = false;
 		this.connected = true;
+		this.reconnectAttempt = 0;
 		setConnectionState('connected');
 		this.resolveReady();
 		if (!reconciled) window.dispatchEvent(new Event(WEB_BRIDGE_RECONCILE_EVENT));
@@ -264,12 +307,25 @@ class BridgeClient {
 			socket = new WebSocket(this.hadOpenConnection ? this.resumeUrl(url) : url);
 			this.ws = socket;
 		} catch (error) {
-			console.error('[bridge] WebSocket construction failed - retrying in 1s', error);
-			setTimeout(() => this.connect(url), 1000);
+			console.error('[bridge] WebSocket construction failed - scheduling recovery', error);
+			this.scheduleReconnect();
 			return;
 		}
+		clearTimeout(this.connectDeadline);
+		this.connectDeadline = setTimeout(() => {
+			if (this.ws !== socket || socket.readyState !== WebSocket.CONNECTING) return;
+			console.warn('[bridge] WebSocket connection timed out');
+			this.disconnect(socket, 4000);
+			try {
+				socket.close(4000, 'connection timed out');
+			} catch {
+				/* Already retired locally. */
+			}
+		}, BRIDGE_CONNECT_TIMEOUT_MS);
 		socket.addEventListener('open', () => {
 			if (this.ws !== socket) return;
+			clearTimeout(this.connectDeadline);
+			this.connectDeadline = undefined;
 			this.startHeartbeat();
 			if (this.hadOpenConnection) {
 				this.resumePending = true;
@@ -393,20 +449,26 @@ class BridgeClient {
 		this.recoveryEvents = [];
 		this.recoveryEventBytes = 0;
 		clearTimeout(this.recoveryTimer);
+		clearTimeout(this.connectDeadline);
+		this.connectDeadline = undefined;
 		this.stopHeartbeat();
 		this.rejectPending('connection lost');
 		if (this.hadOpenConnection)
 			this.ready = new Promise((resolve) => (this.resolveReady = resolve));
 		if (code === WEB_LOGIN_WS_CLOSE_CODE) {
+			this.terminalDisconnect = true;
 			setConnectionState('disconnected');
 			window.location.href = '/' + currentToken() + '/' + WEB_LOGIN_PATHS.page;
 			return;
 		}
+		if (code === 4403 || code === 1008) {
+			this.terminalDisconnect = true;
+			setConnectionState('disconnected');
+			return;
+		}
 		setConnectionState('reconnecting');
-		console.warn(
-			'[bridge] WebSocket closed (code ' + (code ?? 'unavailable') + ') - reconnecting in 1s'
-		);
-		setTimeout(() => this.connect(this.config.wsUrl), 1000);
+		console.warn('[bridge] WebSocket closed (code ' + (code ?? 'unavailable') + ')');
+		this.scheduleReconnect();
 	}
 
 	private dispatchEvent(channel: string, args: unknown[]): Promise<void> {
@@ -448,6 +510,8 @@ class BridgeClient {
 		this.connected = false;
 		setConnectionState('reconnecting');
 		clearTimeout(this.recoveryTimer);
+		this.recoveryEvents = [];
+		this.recoveryEventBytes = 0;
 		const controller = new AbortController();
 		this.recoveryController = controller;
 		const work: Promise<void>[] = [];
@@ -460,13 +524,20 @@ class BridgeClient {
 				},
 			})
 		);
+		const deadline = setTimeout(() => controller.abort(), BRIDGE_RECOVERY_TIMEOUT_MS);
+		const interrupted = Promise.withResolvers<void>();
+		controller.signal.addEventListener(
+			'abort',
+			() => interrupted.reject(new Error('Host state restoration timed out')),
+			{ once: true }
+		);
 		void (async () => {
 			try {
 				if (!work.length) throw new Error('Host state restoration is not mounted yet');
-				await Promise.all(work);
+				await Promise.race([Promise.all(work), interrupted.promise]);
 				while (!controller.signal.aborted && this.recoveryEvents.length) {
 					const event = this.recoveryEvents.shift()!;
-					await this.dispatchEvent(event.channel, event.args);
+					await Promise.race([this.dispatchEvent(event.channel, event.args), interrupted.promise]);
 				}
 				if (!controller.signal.aborted) {
 					this.recoveryEventBytes = 0;
@@ -476,14 +547,22 @@ class BridgeClient {
 				if (!controller.signal.aborted)
 					console.warn('[bridge] In-place host recovery failed; retrying', error);
 			} finally {
+				clearTimeout(deadline);
 				if (this.recoveryController === controller) this.recoveryController = undefined;
 				if (this.invalidState && this.ws?.readyState === WebSocket.OPEN) {
-					this.recoveryTimer = setTimeout(() => this.recoverState(), 1000);
+					const ceiling = Math.min(
+						BRIDGE_RECONNECT_MAX_MS,
+						BRIDGE_RECONNECT_BASE_MS * 2 ** this.reconnectAttempt
+					);
+					this.reconnectAttempt++;
+					this.recoveryTimer = setTimeout(
+						() => this.recoverState(),
+						Math.floor(Math.random() * (ceiling + 1))
+					);
 				}
 			}
 		})();
 	}
-
 	private notifyListener(
 		channel: string,
 		listener: Listener,

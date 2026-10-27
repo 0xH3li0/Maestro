@@ -93,6 +93,10 @@ const fixture = {
 	node: 'client-node',
 	remoteIdentity: 'aster-id',
 	backendPort: 56036,
+	holdRecoveryWrite: false,
+	recoveryWriteFinished: 0,
+	recoveryWriteStarted: 0,
+	releaseRecoveryWrite: undefined,
 };
 const status = (selfIsHost = false) => ({
 	BackendState: fixture.online ? 'Running' : 'Stopped',
@@ -154,6 +158,25 @@ mocks.set('node:http', {
 			callback
 		);
 	},
+});
+const { LiteLastConnections: ProductionLastConnections } = require(
+	path.join(dist, 'main/lite/last-connection.js')
+);
+class FixtureLastConnections extends ProductionLastConnections {
+	async remember(profile, signal) {
+		if (fixture.holdRecoveryWrite) {
+			fixture.recoveryWriteStarted++;
+			await new Promise((resolve) => {
+				fixture.releaseRecoveryWrite = resolve;
+			});
+		}
+		const result = await super.remember(profile, signal);
+		fixture.recoveryWriteFinished++;
+		return result;
+	}
+}
+mocks.set(path.join(dist, 'main/lite/last-connection.js'), {
+	LiteLastConnections: FixtureLastConnections,
 });
 mocks.set(path.join(dist, 'main/lite/control-server.js'), {
 	startLiteControlServer: async () => ({ close: async () => {} }),
@@ -454,7 +477,7 @@ async function main() {
 		path.join(web, 'assets/workload.js'),
 		'window.__MAESTRO_BRIDGE_STATE__="connecting";const socket=new WebSocket(location.origin.replace("http:","ws:")+"' +
 			CONNECT +
-			'/ws");socket.onopen=()=>{window.__MAESTRO_BRIDGE_STATE__="connected";document.querySelector("#transport").textContent="Actual HTTP and WebSocket through private relay";};socket.onclose=()=>window.__MAESTRO_BRIDGE_STATE__="disconnected";'
+			'/ws");socket.onopen=()=>{window.__MAESTRO_BRIDGE_STATE__="connected";document.querySelector("#transport").textContent="Actual HTTP and WebSocket through private relay";};socket.onclose=()=>window.__MAESTRO_BRIDGE_STATE__="disconnected";const draft=document.querySelector("#draft");draft.value=localStorage.getItem("draft")||"";draft.addEventListener("input",()=>localStorage.setItem("draft",draft.value));'
 	);
 	const apiRoutes = new ApiRoutes('test-legacy', {
 		max: 100,
@@ -676,10 +699,6 @@ async function main() {
 		true
 	);
 	await capture(lite, '03-connected-lite');
-	fs.writeFileSync(
-		path.join(process.env.MAESTRO_LITE_TEST_ARTIFACTS || directory, '03-connected-workload.png'),
-		(await remote.capturePage()).toPNG()
-	);
 	check(
 		'production Lite PIN approval opens actual HTTP/WebSocket relay with a secure browser context and no account login'
 	);
@@ -734,6 +753,46 @@ async function main() {
 	assert.equal(await js(remote, 'window.__MAESTRO_BRIDGE_STATE__'), 'connected');
 	failWorkflowRead = false;
 	check('failed required qualification read retains native view, unsent draft and live bridge');
+	await js(remote, 'document.querySelector("#draft").dispatchEvent(new Event("input"))');
+	const crashedViewId = remote.id;
+	const recoveryOrigin = new URL(remote.getURL()).origin;
+	remote.emit('render-process-gone', {}, { reason: 'crashed', exitCode: 1 });
+	await until(
+		async () => {
+			const current = lite.contentView.children[0]?.webContents;
+			return (
+				current && current.id !== crashedViewId && (await state()).status.startsWith('connected')
+			);
+		},
+		'automatic renderer crash recovery',
+		3000
+	);
+	remote = lite.contentView.children[0].webContents;
+	assert.equal(new URL(remote.getURL()).origin, recoveryOrigin);
+	assert.equal(
+		await js(remote, 'document.querySelector("#draft").value'),
+		'Preserve this unsent draft'
+	);
+	assert.equal(await js(remote, 'window.__MAESTRO_BRIDGE_STATE__'), 'connected');
+	check(
+		'renderer crash automatically recovers the same origin and persistent draft without manual reconnect'
+	);
+	const recoveryWritesBefore = fixture.recoveryWriteFinished;
+	fixture.holdRecoveryWrite = true;
+	await js(lite.webContents, 'void window.__nativeProbe.invoke("lite:control", "reconnect")');
+	await until(() => fixture.recoveryWriteStarted > 0, 'held recovery metadata write');
+	await invoke(lite.webContents, 'lite:control', 'disconnect');
+	fixture.holdRecoveryWrite = false;
+	fixture.releaseRecoveryWrite();
+	await until(
+		() => fixture.recoveryWriteFinished > recoveryWritesBefore,
+		'released recovery metadata write'
+	);
+	const recoveryIntent = JSON.parse(
+		fs.readFileSync(path.join(liteDirectory, 'lite-last-connection.json'), 'utf8')
+	);
+	assert.equal(recoveryIntent.enabled, false);
+	check('disconnect during a held recovery write cannot restore stale recovery intent');
 	const credentialPath = path.join(liteDirectory, 'lite-device-credentials.json');
 	const credentialBytes = fs.readFileSync(credentialPath, 'utf8');
 	assert(!credentialBytes.includes('"credential":'));

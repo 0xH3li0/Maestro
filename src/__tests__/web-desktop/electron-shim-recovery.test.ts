@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 class Socket {
+	static CONNECTING = 0;
 	static OPEN = 1;
 	static instances: Socket[] = [];
 	readyState = 0;
@@ -41,8 +42,13 @@ function duringRecovery(work: () => Promise<void>) {
 	recoveryHandlers.push(listener);
 	window.addEventListener('maestro:webBridgeReconcile', listener);
 }
-
 const originalLocation = window.location;
+const originalAddEventListener = window.addEventListener;
+const windowListeners: Array<{
+	type: string;
+	listener: EventListenerOrEventListenerObject;
+	options?: boolean | AddEventListenerOptions;
+}> = [];
 beforeEach(() => {
 	vi.resetModules();
 	vi.useFakeTimers();
@@ -52,15 +58,22 @@ beforeEach(() => {
 		configurable: true,
 		value: { ...originalLocation, reload: vi.fn() },
 	});
+	vi.spyOn(window, 'addEventListener').mockImplementation((type, listener, options) => {
+		windowListeners.push({ type, listener, options });
+		originalAddEventListener.call(window, type, listener, options);
+	});
 	sessionStorage.clear();
 	document.body.replaceChildren();
 });
 afterEach(() => {
 	for (const listener of recoveryHandlers.splice(0))
 		window.removeEventListener('maestro:webBridgeReconcile', listener);
+	for (const { type, listener, options } of windowListeners.splice(0))
+		window.removeEventListener(type, listener, options);
 	vi.clearAllTimers();
 	vi.useRealTimers();
 	vi.unstubAllGlobals();
+	vi.restoreAllMocks();
 	Object.defineProperty(window, 'location', { configurable: true, value: originalLocation });
 });
 
@@ -277,5 +290,80 @@ describe('bounded bridge requests and failed application recovery', () => {
 		socket.frame({ type: 'pong' });
 		await aliveFor(socket, 16000);
 		expect((window as any).__MAESTRO_BRIDGE_STATE__).toBe('connected');
+	});
+
+	it('replaces a socket whose opening handshake never completes', async () => {
+		await import('../../web-desktop/electron-shim');
+		const first = Socket.instances[0];
+		await vi.advanceTimersByTimeAsync(11000);
+		expect(first.readyState).toBe(3);
+		expect(Socket.instances).toHaveLength(2);
+		expect(Socket.instances[1]).not.toBe(first);
+	});
+
+	it('replaces a stale opening handshake immediately on wake', async () => {
+		await import('../../web-desktop/electron-shim');
+		const first = Socket.instances[0];
+		window.dispatchEvent(new Event('pageshow'));
+		expect(first.readyState).toBe(3);
+		await vi.advanceTimersByTimeAsync(1000);
+		expect(Socket.instances.at(-1)).not.toBe(first);
+	});
+
+	it('aborts a hung authoritative recovery and retries without staying fenced', async () => {
+		const { ipcRenderer } = await import('../../web-desktop/electron-shim');
+		const random = vi.spyOn(Math, 'random').mockReturnValue(0);
+		const first = Socket.instances[0];
+		first.open();
+		let attempts = 0;
+		const reconcile = (event: Event) => {
+			const detail = (event as CustomEvent).detail;
+			if (!detail?.authoritative) return;
+			attempts++;
+			detail.waitUntil(attempts === 1 ? new Promise<void>(() => {}) : Promise.resolve());
+		};
+		window.addEventListener('maestro:webBridgeReconcile', reconcile);
+		try {
+			first.close();
+			await vi.advanceTimersByTimeAsync(1000);
+			Socket.instances[1].open();
+			expect(attempts).toBe(1);
+			await aliveFor(Socket.instances[1], 31001);
+			expect(attempts).toBe(2);
+			await vi.advanceTimersByTimeAsync(0);
+			expect((window as unknown as Record<string, unknown>).__MAESTRO_BRIDGE_STATE__).toBe(
+				'connected'
+			);
+			const read = ipcRenderer.invoke('groups:getAll');
+			await Promise.resolve();
+			const request = Socket.instances[1].sent.at(-1)!;
+			Socket.instances[1].frame({
+				type: 'bridge.response',
+				requestId: request.requestId,
+				ok: true,
+				result: [],
+			});
+			await expect(read).resolves.toEqual([]);
+		} finally {
+			window.removeEventListener('maestro:webBridgeReconcile', reconcile);
+			random.mockRestore();
+		}
+	});
+	it.each([4403, 1008])('does not retry terminal policy close %i', async (code) => {
+		await import('../../web-desktop/electron-shim');
+		const socket = Socket.instances[0];
+		socket.open();
+		socket.emit('close', { code });
+		expect((window as unknown as Record<string, unknown>).__MAESTRO_BRIDGE_STATE__).toBe(
+			'disconnected'
+		);
+		expect(Socket.instances).toHaveLength(1);
+		window.dispatchEvent(new Event('online'));
+		window.dispatchEvent(new Event('pageshow'));
+		await vi.advanceTimersByTimeAsync(60000);
+		expect(Socket.instances).toHaveLength(1);
+		expect((window as unknown as Record<string, unknown>).__MAESTRO_BRIDGE_STATE__).toBe(
+			'disconnected'
+		);
 	});
 });

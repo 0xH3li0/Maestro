@@ -11,6 +11,7 @@ import {
 	hostPartition,
 	validateProfile,
 } from '../../../main/lite/profiles';
+import { LiteLastConnections } from '../../../main/lite/last-connection';
 import type { LiteProfile } from '../../../shared/lite-control';
 import { tunnelArgs, OwnedTunnel } from '../../../main/lite/tunnel';
 import { validateHandshake } from '../../../main/lite/handshake';
@@ -230,5 +231,44 @@ describe('Lite SSH ownership and argument safety', () => {
 			owned.kill();
 			unrelated.kill();
 		}
+	});
+});
+
+describe('Lite last-connection recovery intent', () => {
+	it('restores validated manual and discovered targets and honors explicit disable', async () => {
+		const directory = await mkdtemp(path.join(os.tmpdir(), 'maestro-lite-recovery-'));
+		directories.push(directory);
+		const store = new LiteLastConnections(directory);
+		await store.load();
+		await store.remember({ ...profile, instanceId: 'instance-a' });
+		const manual = new LiteLastConnections(directory);
+		await manual.load();
+		expect(manual.get()).toEqual({
+			profile: { ...validateProfile(profile), instanceId: 'instance-a' },
+			enabled: true,
+		});
+		await manual.disable();
+		const disabled = new LiteLastConnections(directory);
+		await disabled.load();
+		expect(disabled.get()?.enabled).toBe(false);
+		await disabled.remember({
+			id: 'discovered-1',
+			name: 'Work computer',
+			transport: 'lan',
+			url: 'http://192.168.1.20:56036/.well-known/maestro/connect',
+			instanceId: 'instance-a',
+		});
+		const direct = new LiteLastConnections(directory);
+		await direct.load();
+		expect(direct.get()).toEqual({
+			profile: {
+				id: 'discovered-1',
+				name: 'Work computer',
+				transport: 'lan',
+				url: 'http://192.168.1.20:56036/.well-known/maestro/connect',
+				instanceId: 'instance-a',
+			},
+			enabled: true,
+		});
 	});
 });

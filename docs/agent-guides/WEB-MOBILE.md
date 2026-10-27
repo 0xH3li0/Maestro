@@ -126,6 +126,15 @@ acknowledged session-save rejection does not itself block a later distinct save.
 A lost save acknowledgement fences further saves until authoritative in-place
 recovery completes; reconnect never replays the uncertain mutation.
 
+Opening WebSocket handshakes have deadlines, wake/network events accelerate recovery,
+and sustained failures use capped jittered backoff. Terminal policy closes do not
+retry. Native Lite separately supervises SSH/direct transports and renderer crashes;
+automatic reconnects reuse the validated loopback port to preserve client-origin
+drafts. Last-connection metadata enables startup reattachment without persisting
+device credentials. Explicit disconnect, revocation, changed identity and trust
+failures disable that intent. Authoritative reconciliation has an overall deadline;
+each retry takes a fresh snapshot before applying newer queued events.
+
 New AI composer submissions keep their draft and attachments while
 authoritative process readiness is pending. A failed remote readiness read
 returns before creating user rows or execution-queue entries and raises a
