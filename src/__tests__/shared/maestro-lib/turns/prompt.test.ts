@@ -5,6 +5,10 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
+	RECENT_TIMELINE_POINTER,
+	RECENT_TIMELINE_SECTION_HEADING,
+} from '../../../../shared/maestroSystemPrompt';
+import {
 	appendNudgeMessage,
 	buildAgentSystemPrompt,
 	buildMessagePrompt,
@@ -16,6 +20,8 @@ import {
 } from '../../../../shared/maestro-lib/turns/prompt';
 
 const SEP = '\n\n---\n\n';
+// What `{{RECENT_TIMELINE}}` reads as in place, then the timeline section the assembler appends last.
+const TIMELINE_TAIL = `${RECENT_TIMELINE_POINTER}${SEP}${RECENT_TIMELINE_SECTION_HEADING}\n\n`;
 
 describe('appendNudgeMessage', () => {
 	it('puts the nudge behind the text, after a rule', () => {
@@ -237,12 +243,12 @@ describe('buildAgentSystemPrompt', () => {
 			],
 			now,
 		};
-		expect(buildAgentSystemPrompt(agent, undefined, context)).toMatch(
-			/^\[\/j\/a-1\.jsonl\] - .+ journey user deleted \/x\.ts$/
-		);
-		expect(buildAgentSystemPrompt(ssh, undefined, context)).toMatch(
-			/^\[\] - .+ journey user deleted \/x\.ts$/
-		);
+		const local = buildAgentSystemPrompt(agent, undefined, context) ?? '';
+		expect(local.startsWith(`[/j/a-1.jsonl] ${TIMELINE_TAIL}- `)).toBe(true);
+		expect(local).toMatch(/ journey user deleted \/x\.ts$/);
+		const remote = buildAgentSystemPrompt(ssh, undefined, context) ?? '';
+		expect(remote.startsWith(`[] ${TIMELINE_TAIL}- `)).toBe(true);
+		expect(remote).toMatch(/ journey user deleted \/x\.ts$/);
 	});
 
 	it('leaves out what is read from this machine for an SSH agent', () => {

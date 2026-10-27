@@ -79,6 +79,14 @@ import {
 import { execFileNoThrow } from '../../../main/utils/execFile';
 import { readAgentTimeline } from '../../../main/agent-timeline';
 import { RECENT_TIMELINE_MAX_EVENTS, RECENT_TIMELINE_SOURCES } from '../../../shared/timeline';
+import {
+	MAESTRO_SYSTEM_PROMPT_SECTION_SEPARATOR,
+	RECENT_TIMELINE_POINTER,
+	RECENT_TIMELINE_SECTION_HEADING,
+} from '../../../shared/maestroSystemPrompt';
+
+// What `{{RECENT_TIMELINE}}` reads as in place, then the timeline section the assembler appends last.
+const TIMELINE_TAIL = `${RECENT_TIMELINE_POINTER}${MAESTRO_SYSTEM_PROMPT_SECTION_SEPARATOR}${RECENT_TIMELINE_SECTION_HEADING}\n\n`;
 import { logger } from '../../../main/utils/logger';
 
 const agent = (overrides: Record<string, any> = {}) => ({
@@ -140,9 +148,8 @@ describe('buildMaestroSystemPromptForSession', () => {
 			{ ts: Date.now(), source: 'journey', agentId: 'agent-1', text: 'user opened src/a.ts' },
 		];
 		const result = await buildMaestroSystemPromptForSession('agent-1');
-		expect(result).toMatch(
-			/^\/data\/journey\/agent-1\.jsonl\|- .+ journey user opened src\/a\.ts$/
-		);
+		expect(result?.startsWith(`/data/journey/agent-1.jsonl|${TIMELINE_TAIL}- `)).toBe(true);
+		expect(result).toMatch(/ journey user opened src\/a\.ts$/);
 		expect(readAgentTimeline).toHaveBeenCalledWith(
 			{ id: 'agent-1', cwd: '/proj', gitCwd: '/proj' },
 			expect.objectContaining({
@@ -156,15 +163,15 @@ describe('buildMaestroSystemPromptForSession', () => {
 	it('reads the empty text with no events, and keeps the timeline but not git or the path over SSH', async () => {
 		prompts['maestro-system-prompt'] = '{{AGENT_JOURNEY_PATH}}|{{RECENT_TIMELINE}}';
 		expect(await buildMaestroSystemPromptForSession('agent-1')).toBe(
-			'/data/journey/agent-1.jsonl|Nothing in the last 2 hours.'
+			`/data/journey/agent-1.jsonl|${TIMELINE_TAIL}Nothing in the last 2 hours.`
 		);
 		storedSessions = [agent({ sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' } })];
 		timelineEvents = [
 			{ ts: Date.now(), source: 'history', agentId: 'agent-1', text: 'USER: did it', ref: 'abc' },
 		];
-		expect(await buildMaestroSystemPromptForSession('agent-1')).toMatch(
-			/^\|- .+ history USER: did it \[entry abc\]$/
-		);
+		const remote = await buildMaestroSystemPromptForSession('agent-1');
+		expect(remote?.startsWith(`|${TIMELINE_TAIL}- `)).toBe(true);
+		expect(remote).toMatch(/ history USER: did it \[entry abc\]$/);
 		expect(vi.mocked(readAgentTimeline).mock.calls.at(-1)?.[0]).toEqual({
 			id: 'agent-1',
 			cwd: '/proj',

@@ -39,6 +39,14 @@ vi.mock('../../../cli/services/git-utils', () => ({
 }));
 
 import { prepareMaestroSystemPromptCli } from '../../../cli/services/system-prompt';
+import {
+	MAESTRO_SYSTEM_PROMPT_SECTION_SEPARATOR,
+	RECENT_TIMELINE_POINTER,
+	RECENT_TIMELINE_SECTION_HEADING,
+} from '../../../shared/maestroSystemPrompt';
+
+// The timeline section the assembler appends after everything else; `{{RECENT_TIMELINE}}` reads as the pointer.
+const TIMELINE_SECTION = `${MAESTRO_SYSTEM_PROMPT_SECTION_SEPARATOR}${RECENT_TIMELINE_SECTION_HEADING}\n\n`;
 import { getCliPrompt } from '../../../cli/services/prompt-loader';
 import { readSettingValue, resolveSessionHistoryFilePath } from '../../../cli/services/storage';
 import { readTimeline } from '../../../shared/maestro-lib/store/read-timeline';
@@ -89,7 +97,7 @@ describe('prepareMaestroSystemPromptCli', () => {
 		const result = await prepareMaestroSystemPromptCli(mockSession({ id: 'sess-1' }));
 
 		expect(result).toBe(
-			'journey=[/mock/config/journey/sess-1.jsonl] recent=[Nothing in the last 2 hours.]'
+			`journey=[/mock/config/journey/sess-1.jsonl] recent=[${RECENT_TIMELINE_POINTER}]${TIMELINE_SECTION}Nothing in the last 2 hours.`
 		);
 		const input = vi.mocked(readTimeline).mock.calls[0][0];
 		expect(input.paths).toEqual({
@@ -120,7 +128,10 @@ describe('prepareMaestroSystemPromptCli', () => {
 			mockSession({ id: 'sess-1', sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' } })
 		);
 
-		expect(result).toMatch(/^journey=\[\] recent=\[- .+ journey user saved src\/a\.ts\]$/);
+		expect(
+			result?.startsWith(`journey=[] recent=[${RECENT_TIMELINE_POINTER}]${TIMELINE_SECTION}- `)
+		).toBe(true);
+		expect(result).toMatch(/ journey user saved src\/a\.ts$/);
 		expect(vi.mocked(readTimeline).mock.calls[0][0].agents[0].gitCwd).toBeUndefined();
 	});
 
