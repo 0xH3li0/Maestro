@@ -17,7 +17,12 @@ const acquire = vi.hoisted(() =>
  * `cue_event_queue` as one table every engine in the process writes, the way
  * cue.db is shared by every engine on a data directory.
  */
-const queueTable = vi.hoisted(() => new Map<string, { id: string; sessionId: string }>());
+const queueTable = vi.hoisted(
+	() => new Map<string, { id: string; sessionId: string; eventJson?: string }>()
+);
+const receiptTable = vi.hoisted(
+	() => new Map<string, { pluginId: string; eventKey: string; receiptId: string }>()
+);
 let loadedConfig: CueConfig | null = null;
 
 vi.mock('../../../main/cue/cue-yaml-loader', () => ({
@@ -54,25 +59,51 @@ vi.mock('../../../main/cue/cue-db', () => ({
 	safeUpdateCueEventStatus: vi.fn(),
 	updateHeartbeat: vi.fn(),
 	getLastHeartbeat: vi.fn(() => null),
-	persistQueuedEvent: vi.fn(),
-	removeQueuedEvent: vi.fn(),
-	getQueuedEvents: vi.fn(() => [...queueTable.values()]),
+	persistQueuedEvent: vi.fn((row: { id: string; sessionId: string; eventJson?: string }) => {
+		queueTable.set(row.id, row);
+	}),
+	removeQueuedEvent: vi.fn((id: string) => {
+		queueTable.delete(id);
+	}),
+	getQueuedEvents: vi.fn((sessionId?: string) => {
+		const all = [...queueTable.values()];
+		return sessionId ? all.filter((r) => r.sessionId === sessionId) : all;
+	}),
 	clearPersistedQueue: vi.fn((sessionId?: string) => {
 		for (const [id, row] of queueTable) {
 			if (sessionId === undefined || row.sessionId === sessionId) queueTable.delete(id);
 		}
 	}),
-	safePersistQueuedEvent: vi.fn((row: { id: string; sessionId: string }) => {
+	safePersistQueuedEvent: vi.fn((row: { id: string; sessionId: string; eventJson?: string }) => {
 		queueTable.set(row.id, row);
 	}),
 	safeRemoveQueuedEvent: vi.fn((id: string) => {
 		queueTable.delete(id);
 	}),
+	writePluginEventReceipt: vi.fn(
+		(pluginId: string, eventKey: string, receipt: { receiptId: string }) => {
+			receiptTable.set(`${pluginId}:${eventKey}`, {
+				pluginId,
+				eventKey,
+				receiptId: receipt.receiptId,
+			});
+		}
+	),
+	getPluginEventReceipt: vi.fn((pluginId: string, eventKey: string) => {
+		return receiptTable.get(`${pluginId}:${eventKey}`) ?? null;
+	}),
+	purgePluginEventReceipts: vi.fn((pluginId: string) => {
+		for (const [k, v] of receiptTable) {
+			if (v.pluginId === pluginId) receiptTable.delete(k);
+		}
+	}),
 	clearGitHubSeenForSubscription: vi.fn(),
 }));
 
 import { CueEngine } from '../../../main/cue/cue-engine';
-import type { CueConfig, CueRunResult } from '../../../main/cue/cue-types';
+import type { CueConfig, CueEvent, CueRunResult } from '../../../main/cue/cue-types';
+import * as cueDb from '../../../main/cue/cue-db';
+import { configurePluginCueHost } from '../../../main/cue/triggers/cue-plugin-trigger-source';
 import { createMockConfig, createMockDeps } from './cue-test-helpers';
 
 describe('CueEngine lock heartbeat', () => {
@@ -161,6 +192,7 @@ describe('CueEngine lock loss and the shared persisted queue', () => {
 	beforeEach(() => {
 		vi.useFakeTimers();
 		queueTable.clear();
+		receiptTable.clear();
 		touch.mockReset();
 		touch.mockReturnValue('held');
 		acquire.mockReset();
@@ -177,6 +209,8 @@ describe('CueEngine lock loss and the shared persisted queue', () => {
 
 	afterEach(() => {
 		for (const engine of engines.splice(0)) engine.stop();
+		configurePluginCueHost(undefined);
+		receiptTable.clear();
 		loadedConfig = null;
 		vi.useRealTimers();
 	});
@@ -217,6 +251,97 @@ describe('CueEngine lock loss and the shared persisted queue', () => {
 
 		expect(rowsOf(holderRows)).toEqual([...holderRows]);
 		expect(rowsOf(oldRows)).toEqual([]);
+		expect(holder.getQueueStatus().get('session-1')).toBe(holderRows.size);
+	});
+
+	it('leaves the new holder queue rows and receipts alone when old holder loses lock', () => {
+		let emit: ((event: CueEvent) => number | void) | undefined;
+		configurePluginCueHost({
+			register(ctx) {
+				emit = ctx.emit;
+				return () => {};
+			},
+			authorize: () => true,
+			prepare: async () => true,
+		});
+
+		loadedConfig = createMockConfig({
+			subscriptions: [
+				{ name: 'first', event: 'cli.trigger', enabled: true, prompt: 'run first' },
+				{ name: 'second', event: 'cli.trigger', enabled: true, prompt: 'run second' },
+				{ name: 'third', event: 'cli.trigger', enabled: true, prompt: 'run third' },
+				{
+					name: 'plugin-sub',
+					event: 'plugin.event',
+					enabled: true,
+					prompt: 'run plugin',
+					plugin: { pluginId: 'example.plugin', topic: 'mail', config: {} },
+				},
+			],
+		});
+
+		// 1. Old engine starts, takes slot with first, queues second
+		const old = startEngine();
+		expect(old.triggerSubscription('first')).toBe(true);
+		expect(old.triggerSubscription('second')).toBe(true);
+		expect(queueTable.size).toBe(1);
+
+		// 2. New holder takes over lock
+		vi.advanceTimersByTime(10_000);
+		const holder = startEngine();
+		// Holder takes its own slot with first
+		expect(holder.triggerSubscription('first')).toBe(true);
+		// Holder queues second
+		expect(holder.triggerSubscription('second')).toBe(true);
+
+		// Holder enqueues a durable plugin event
+		const durableEvent: CueEvent = {
+			id: 'durable-holder-1',
+			type: 'plugin.event',
+			timestamp: new Date().toISOString(),
+			triggerName: 'plugin-sub',
+			payload: { metadata: 'test' },
+			pluginSource: {
+				pluginId: 'example.plugin',
+				topic: 'mail',
+				consumerId: 'c1',
+				ownerAgentId: 'session-1',
+				receiptKey: 'k1',
+				receiptId: 'r1',
+				proof: '0'.repeat(64),
+				sourceGeneration: 'live',
+			},
+		};
+		expect(emit!(durableEvent)).toBe(1);
+
+		// Holder records a plugin receipt
+		cueDb.writePluginEventReceipt('example.plugin', 'k1', { receiptId: 'r1' });
+
+		const holderRows = new Set(queueTable.keys());
+		expect(holderRows.size).toBeGreaterThanOrEqual(2);
+		expect(receiptTable.size).toBe(1);
+
+		// 3. Before old engine notices lock loss, it queues one more ordinary event
+		old.triggerSubscription('third');
+		const oldRows = [...queueTable.keys()].filter((id) => !holderRows.has(id));
+		expect(oldRows).toHaveLength(1);
+
+		// 4. Old engine's heartbeat checks lock and discovers it was lost
+		touch.mockReturnValue('lost');
+		vi.advanceTimersByTime(20_000);
+		touch.mockReturnValue('held');
+
+		expect(old.isEnabled()).toBe(false);
+		expect(holder.isEnabled()).toBe(true);
+
+		// 5. Old engine's row is dropped, while all holder rows and receipts remain
+		expect(rowsOf(holderRows)).toEqual([...holderRows]);
+		expect(rowsOf(oldRows)).toEqual([]);
+		expect(receiptTable.get('example.plugin:k1')).toEqual({
+			pluginId: 'example.plugin',
+			eventKey: 'k1',
+			receiptId: 'r1',
+		});
 		expect(holder.getQueueStatus().get('session-1')).toBe(holderRows.size);
 	});
 });
