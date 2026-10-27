@@ -85,16 +85,22 @@ function stripImagePlaceholderLines(text: string): string {
 
 /**
  * One transcript line as a displayable message, or null when the line is not a
- * user/assistant turn, has nothing to show, or is not valid JSON.
+ * user/assistant turn, has nothing to show, or is malformed.
  */
 function parseClaudeTranscriptMessage(line: string): SessionMessage | null {
-	let entry;
 	try {
-		entry = JSON.parse(line);
+		return claudeTranscriptEntryToMessage(JSON.parse(line));
 	} catch {
-		// Skip malformed lines
+		// Skip malformed lines: invalid JSON, or valid JSON whose shape breaks
+		// the conversion (a null content block). One damaged record must not
+		// fail the whole read and lock the user out of the conversation.
 		return null;
 	}
+}
+
+function claudeTranscriptEntryToMessage(
+	entry: ReturnType<typeof JSON.parse>
+): SessionMessage | null {
 	if (entry?.type !== 'user' && entry?.type !== 'assistant') return null;
 
 	let msgContent = '';
