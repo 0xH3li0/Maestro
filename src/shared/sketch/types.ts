@@ -172,8 +172,9 @@ export interface SketchBotScreenRequest {
 }
 
 /**
- * One share link. The cap secret itself is never stored here: the server
- * returns it once, and the record keeps only what the Room panel shows.
+ * One share link. The cap secret itself is never stored here: main seals it
+ * beside the room key (`cap:<capId>` in the sketch store) so Copy link can
+ * rebuild the URL, and the record keeps only what the Collaborate panel shows.
  */
 export interface SketchLink {
 	capId: string;

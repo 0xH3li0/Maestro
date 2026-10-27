@@ -701,8 +701,10 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			sketchBookAvailable,
 			activeSession,
 			newSketchBook: (sessionId) => void createSketchInSession(sessionId),
+			showSketchBooks: () => useModalStore.getState().openModal('sketchBooks'),
 			setQuickActionOpen,
 			newSketchBookShortcut: shortcuts.newSketchBook,
+			showSketchBooksShortcut: shortcuts.showSketchBooks,
 		}),
 		...buildSessionManagementCommands({
 			activeSession,

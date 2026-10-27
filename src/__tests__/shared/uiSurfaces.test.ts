@@ -67,6 +67,23 @@ describe('resolveUiSurface', () => {
 		expect(DEFAULT_SHORTCUTS[cleanup!.shortcutId!].keys).toEqual([]);
 	});
 
+	it('resolves the Sketch Books list so `open sketch-books` works, behind its Encore Feature', () => {
+		const books = resolveUiSurface('sketch-books');
+		expect(books?.modal).toBe('sketchBooks');
+		expect(resolveUiSurface('sketches')?.id).toBe('sketch-books');
+		expect(books?.encore).toBe('sketchBook');
+		expect(DEFAULT_SHORTCUTS[books!.shortcutId!].keys).toEqual(['Alt', 'Meta', 'Shift', 'k']);
+		expect(uiSurfaceRefusal(books!, undefined, { sketchBook: false })).not.toBeNull();
+		expect(uiSurfaceRefusal(books!, undefined, { sketchBook: true })).toBeNull();
+	});
+
+	it('opens Sketch Books on every agent, or on one with an optional --agent', () => {
+		const books = resolveUiSurface('sketch-books')!;
+		expect(books.agentOptional).toBe(true);
+		expect(resolveUiSurfaceTarget(books, {})).toEqual({});
+		expect(resolveUiSurfaceTarget(books, { agent: 'agent-1' })).toEqual({ agent: 'agent-1' });
+	});
+
 	it('resolves the Delegation Graph so `open delegation-graph` works', () => {
 		const graph = resolveUiSurface('delegation-graph');
 		expect(graph?.modal).toBe('delegationGraph');
@@ -397,6 +414,7 @@ describe("a surface that is one agent's", () => {
 		expect(DEFAULT_SHORTCUTS[editAgent.shortcutId!].keys.length).toBeGreaterThan(0);
 		expect(UI_SURFACES.filter((entry) => entry.agentClick).map((entry) => entry.id)).toEqual([
 			'agent-settings',
+			'sketch-books',
 		]);
 	});
 

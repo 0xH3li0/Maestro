@@ -50,6 +50,12 @@
  * replaces it. A relay with no runner ends every approved request as
  * `bot.failed`.
  *
+ * Conductor chat. The Sketch tab's composer and `maestro-cli sketch chat`
+ * send through {@link SketchBotRelay.sendConductorChat}: a message that starts
+ * with `@bot` is a conductor message (above); anything else goes to the live
+ * room as plain chat (`toBot: false`). On a sketch with no live room every
+ * message asks the agent, since nobody else would read it.
+ *
  * The relay also mirrors the room's chat into the session's chat pane: every
  * message except the conductor's own, which the pane already shows from the
  * moment it was sent.
@@ -60,7 +66,8 @@ import {
 	describeSketchActor,
 	localConductorActor,
 } from '../../shared/sketch/attribution';
-import { visibleSketchApprovals } from '../../shared/sketch/bot-requests';
+import { sketchChatAsksBot, visibleSketchApprovals } from '../../shared/sketch/bot-requests';
+import type { SketchChatSent } from '../../shared/sketch/commands';
 import type { SealedField } from '../../shared/sketch/crypto';
 import {
 	CHAT_MAX_CHARS,
@@ -179,6 +186,12 @@ export interface SketchBotRelay {
 		text: string,
 		options?: { escalated?: boolean }
 	): Promise<string>;
+	/**
+	 * Send the conductor's chat from the composer: `@bot` (or any message with
+	 * no live room) asks the agent; anything else goes to the room. Throws
+	 * when a room message cannot be sent, so the draft stays.
+	 */
+	sendConductorChat(sketchId: string, text: string): Promise<SketchChatSent>;
 	setTurnRunner(runner: SketchBotTurnRunner | null): void;
 	/** Forget every room and request. */
 	dispose(): void;
@@ -241,6 +254,16 @@ async function defaultNotifyApproval(sketchId: string, request: SketchBotRequest
 				}
 			: {}),
 	});
+}
+
+/** The conductor's chat, trimmed; throws when it is empty or over the cap. */
+function conductorChatBody(text: string): string {
+	const body = text.trim();
+	if (!body) throw new Error('Sketch Book: the message is empty.');
+	if (payloadCharCount(body) > CHAT_MAX_CHARS) {
+		throw new Error(`Sketch Book: a message holds at most ${CHAT_MAX_CHARS} characters.`);
+	}
+	return body;
 }
 
 /** The verdict the relay acts on when the gate itself cannot answer: fail closed. */
@@ -530,7 +553,7 @@ export function createSketchBotRelay(deps: SketchBotRelayDeps = {}): SketchBotRe
 
 	// ------------------------------------------------------------ the relay
 
-	return {
+	const api: SketchBotRelay = {
 		attach(sketchId, room) {
 			rooms.get(sketchId)?.unsubscribe();
 			const unsubscribe = room.subscribe((frame) => onFrame(sketchId, room, frame));
@@ -597,11 +620,7 @@ export function createSketchBotRelay(deps: SketchBotRelayDeps = {}): SketchBotRe
 		async sendConductorMessage(sketchId, text, options = {}) {
 			const session = store().sessions[sketchId];
 			if (!session) throw new Error('Sketch Book: the sketch is not open.');
-			const body = text.trim();
-			if (!body) throw new Error('Sketch Book: the message is empty.');
-			if (payloadCharCount(body) > CHAT_MAX_CHARS) {
-				throw new Error(`Sketch Book: a message holds at most ${CHAT_MAX_CHARS} characters.`);
-			}
+			const body = conductorChatBody(text);
 			const escalated = options.escalated === true;
 			const posture: SketchTurnPosture =
 				sketchGuestEdited(session) && !escalated ? 'restricted' : 'full';
@@ -644,6 +663,33 @@ export function createSketchBotRelay(deps: SketchBotRelayDeps = {}): SketchBotRe
 			return replyTo;
 		},
 
+		async sendConductorChat(sketchId, text) {
+			const session = store().sessions[sketchId];
+			if (!session) throw new Error('Sketch Book: the sketch is not open.');
+			const body = conductorChatBody(text);
+			const room = rooms.get(sketchId)?.room;
+			// With no room at all the agent is the only reader; a shared sketch whose
+			// room is down refuses below instead, so room chat never turns into a request.
+			if (sketchChatAsksBot(body) || (!room && !session.room)) {
+				return { toBot: true, replyTo: await api.sendConductorMessage(sketchId, body) };
+			}
+			const sealed = room ? await room.sealPayload('chat', { v: 1, text: body }) : null;
+			if (
+				!room ||
+				!sealed ||
+				!room.send({ t: 'chat', id: newId(), iv: sealed.iv, ct: sealed.ct, toBot: false })
+			) {
+				throw new Error('Sketch Book: the room is not connected, so the message was not sent.');
+			}
+			// The server's echo of the conductor's own chat is ignored, so the pane shows it now.
+			store().postSketchChat(sketchId, {
+				actor: session.room?.actor ?? localConductorActor(),
+				text: body,
+				ts: now(),
+			});
+			return { toBot: false };
+		},
+
 		setTurnRunner(runner) {
 			runTurn = runner;
 		},
@@ -655,6 +701,7 @@ export function createSketchBotRelay(deps: SketchBotRelayDeps = {}): SketchBotRe
 			outbox.clear();
 		},
 	};
+	return api;
 }
 
 // ---------------------------------------------------------------- the app's relay
@@ -698,6 +745,11 @@ export function sendSketchConductorMessage(
 	options?: { escalated?: boolean }
 ): Promise<string> {
 	return relay().sendConductorMessage(sketchId, text, options);
+}
+
+/** The Sketch tab's composer and `sketch chat`: `@bot` asks the agent, anything else goes to the room. */
+export function sendSketchConductorChat(sketchId: string, text: string): Promise<SketchChatSent> {
+	return relay().sendConductorChat(sketchId, text);
 }
 
 /** Replace the turn delivery (default `runSketchBotTurn`). Null to remove it. */

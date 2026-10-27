@@ -484,6 +484,99 @@ describe('Sketch Book sharing', () => {
 				['capid0000001', true],
 				['capid0000002', false],
 			]);
+			const secrets = await store.readSketchSecrets(sketchId);
+			expect(secrets['cap:capid0000001']).toBeUndefined();
+			expect(secrets['cap:capid0000002']).toBe('2'.repeat(43));
+		});
+
+		it('unshare forgets every link cap', async () => {
+			await service().shareSketch(sketchId);
+			await service().shareSketch(sketchId);
+
+			await service().unshareSketch(sketchId);
+
+			expect(Object.keys(await store.readSketchSecrets(sketchId))).toEqual([]);
+		});
+	});
+
+	describe('link and reset-link', () => {
+		it('seals each minted cap so the link can be copied again', async () => {
+			const { link: minted } = await service().shareSketch(sketchId, { label: 'Review' });
+			events = [];
+
+			const again = await service().sketchLink(sketchId, minted.capId);
+
+			expect(events).toEqual([]);
+			expect(again).toEqual(minted);
+			expect((await store.readSketchSecrets(sketchId))[`cap:${minted.capId}`]).toBe('1'.repeat(43));
+		});
+
+		it('refuses a revoked link, an unknown one, and one minted before caps were kept', async () => {
+			await service().shareSketch(sketchId);
+			await service().shareSketch(sketchId);
+			await service().revokeSketchLink(sketchId, 'capid0000001');
+			await store.setSketchSecrets(sketchId, { 'cap:capid0000002': null });
+
+			await expect(service().sketchLink(sketchId, 'capid0000001')).rejects.toThrow('is revoked');
+			await expect(service().sketchLink(sketchId, 'capid9999999')).rejects.toThrow(
+				'has no link "capid9999999"'
+			);
+			await expect(service().sketchLink(sketchId, 'capid0000002')).rejects.toThrow(
+				'Reset the link to get a new one'
+			);
+		});
+
+		it('reset-link revokes the link, then mints one with the same role and label', async () => {
+			await service().shareSketch(sketchId, { role: 'ro', expiresInDays: 3, label: 'Review' });
+			events = [];
+
+			const result = await service().resetSketchLink(sketchId, 'capid0000001');
+
+			expect(roomEvents()).toEqual([
+				{ kind: 'revokeLink', roomId: ROOM_ID, capId: 'capid0000001' },
+				{
+					kind: 'createLink',
+					roomId: ROOM_ID,
+					input: { role: 'ro', expiresInDays: 30, label: 'Review' },
+				},
+			]);
+			expect(result.createdRoom).toBe(false);
+			expect(result.link).toMatchObject({ capId: 'capid0000002', role: 'ro', label: 'Review' });
+			expect(result.link.url).toBe(sketchShareLinkUrl(SERVER, ROOM_ID, keys[0], '2'.repeat(43)));
+			expect(result.record.share?.links.map((link) => [link.capId, link.revoked])).toEqual([
+				['capid0000001', true],
+				['capid0000002', false],
+			]);
+			const secrets = await store.readSketchSecrets(sketchId);
+			expect(secrets['cap:capid0000001']).toBeUndefined();
+			expect(secrets['cap:capid0000002']).toBe('2'.repeat(43));
+		});
+
+		it('rotate forgets every link cap', async () => {
+			await service().shareSketch(sketchId);
+			await service().shareSketch(sketchId);
+
+			await service().rotateSketch(sketchId);
+
+			expect(Object.keys(await store.readSketchSecrets(sketchId))).toEqual(['roomKey']);
+		});
+
+		it('asks the conductor before an agent gets a link back or resets one', async () => {
+			await service().shareSketch(sketchId);
+			confirm.mockResolvedValue(false);
+
+			await expect(
+				service().sketchLink(sketchId, 'capid0000001', { requestedBy: 'Planner' })
+			).rejects.toThrow('the conductor chose Deny');
+			await expect(
+				service().resetSketchLink(sketchId, 'capid0000001', { requestedBy: 'Planner' })
+			).rejects.toThrow('the conductor chose Deny');
+
+			expect(confirm.mock.calls.map(([prompt]) => prompt.title)).toEqual([
+				'Give the agent a sketch link?',
+				'Reset a sketch link?',
+			]);
+			expect((await store.getSketch(sketchId))?.share?.links[0].revoked).toBe(false);
 		});
 	});
 

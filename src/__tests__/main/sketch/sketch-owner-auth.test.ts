@@ -383,6 +383,27 @@ describe('sketch owner auth', () => {
 			});
 		});
 
+		it('shares one poll between callers without a signal, then starts a fresh one', async () => {
+			const h = harness();
+			await h.auth.register(EMAIL);
+			h.respond
+				.mockResolvedValueOnce(json({ status: 'pending' }))
+				.mockResolvedValueOnce(json({ status: 'confirmed', authToken: OWNER_TOKEN }));
+
+			const first = h.auth.pollStatus();
+			const second = h.auth.pollStatus();
+			expect(second).toBe(first);
+			expect((await first).state).toBe('confirmed');
+			const polls = () => h.requestTimes.filter(({ url }) => url.includes('/api/owners/status'));
+			expect(polls()).toHaveLength(2);
+
+			// The shared poll is over: the next call reads the confirmed state on its own.
+			const third = h.auth.pollStatus();
+			expect(third).not.toBe(first);
+			expect((await third).state).toBe('confirmed');
+			expect(polls()).toHaveLength(2);
+		});
+
 		it('returns at once when nothing is pending', async () => {
 			const h = harness();
 

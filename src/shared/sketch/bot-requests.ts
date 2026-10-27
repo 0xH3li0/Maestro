@@ -116,3 +116,15 @@ export function visibleSketchApprovals<
 	}
 	return { visible, waiting };
 }
+
+/** A chat message that starts with `@bot` asks the agent; the rest of it is the request. */
+const BOT_MENTION = /^\s*@bot(?=$|[\s,.:;!?])/i;
+
+/**
+ * Whether the conductor's chat asks the agent (spec section 5): it starts
+ * with `@bot`. A guest's client sets `toBot` the same way; the desktop never
+ * reads a guest's text for it (D8).
+ */
+export function sketchChatAsksBot(text: string): boolean {
+	return BOT_MENTION.test(text);
+}

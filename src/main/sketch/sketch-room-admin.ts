@@ -1,8 +1,8 @@
 /**
- * Sketch Book Room panel (spec sections 6, 8.8 and 9, hosted spec §8): what
+ * Sketch Book Collaborate panel (spec sections 6, 8.8 and 9, hosted spec §8): what
  * the conductor sees of a shared sketch's room and does to it.
  *
- * One implementation for the Room panel in the Sketch tab and
+ * One implementation for the Collaborate panel in the Sketch tab and
  * `maestro-cli sketch stats|kick|unlock|unsuspend|audit`:
  *
  * - `stats` reads the room's newest `room.stats` from the window that runs
@@ -15,7 +15,7 @@
  *   `flagged`, which the panel offers to delete.
  *
  * Revoke link and Reset all access are the Collaborate panel's own verbs
- * (`SketchService.revokeSketchLink` / `rotateSketch`); the Room panel calls
+ * (`SketchService.revokeSketchLink` / `rotateSketch`); the Collaborate panel calls
  * those, so a link is revoked by one code path wherever it is clicked.
  */
 
@@ -61,7 +61,7 @@ export interface SketchRoomAdminDeps {
 	readAudit?: (filePath: string) => Promise<string | null>;
 }
 
-/** One Room panel action as IPC and the WS bridge hand it over. */
+/** One Collaborate panel action as IPC and the WS bridge hand it over. */
 export interface SketchRoomActionInput {
 	actorId?: unknown;
 	capId?: unknown;
@@ -235,7 +235,7 @@ export function createSketchRoomAdminService(
 
 let defaultService: SketchRoomAdminService | null = null;
 
-/** The app's Room panel service. */
+/** The app's Collaborate panel service. */
 export function getSketchRoomAdmin(): SketchRoomAdminService {
 	defaultService ??= createSketchRoomAdminService();
 	return defaultService;

@@ -82,6 +82,7 @@ const FILE_MENU_COMMANDS: MenuEntry[] = [
 	{ label: 'New File Tab', shortcutId: 'newFileTab' },
 	{ label: 'New Browser Tab', shortcutId: 'newBrowserTab' },
 	{ label: 'New Sketch Book', shortcutId: 'newSketchBook', encoreFlag: 'sketchBook' },
+	{ label: 'Sketch Books...', shortcutId: 'showSketchBooks', encoreFlag: 'sketchBook' },
 	'separator',
 	{ label: 'Find File...', shortcutId: 'fuzzyFileSearch' },
 	{ label: 'Rename Tab', shortcutId: 'renameTab' },

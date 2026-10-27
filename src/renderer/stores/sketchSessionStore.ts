@@ -332,7 +332,7 @@ interface SketchSessionState {
 		agent: SketchAgentIdentity
 	) => SketchWireElement[];
 	/**
-	 * Fold a change the conductor made outside the canvas (the Room panel's
+	 * Fold a change the conductor made outside the canvas (the Collaborate panel's
 	 * delete of a flagged element): `elements` is the whole next scene,
 	 * stamped as the conductor, saved, and pushed to mounted views the way an
 	 * agent's change is. Returns the stamped copies.

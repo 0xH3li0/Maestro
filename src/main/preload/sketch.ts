@@ -13,6 +13,8 @@
 import { ipcRenderer } from 'electron';
 import type { SaveToProjectOptions } from '../sketch/sketch-store';
 import type {
+	OpenedSketch,
+	SketchMintedLink,
 	SketchPresenceChange,
 	SketchRendererRequest,
 	SketchRendererResult,
@@ -80,7 +82,10 @@ export function createSketchApi() {
 			ipcRenderer.invoke('sketch:writeScene', sketchId, scene),
 		rename: (sketchId: string, name: string): Promise<SketchRecord> =>
 			ipcRenderer.invoke('sketch:rename', sketchId, name),
+		/** Close its tabs too. Refused while the sketch is shared. */
 		delete: (sketchId: string): Promise<void> => ipcRenderer.invoke('sketch:delete', sketchId),
+		/** Show it in a tab on the agent that owns it, in whichever window holds that agent. */
+		open: (sketchId: string): Promise<OpenedSketch> => ipcRenderer.invoke('sketch:open', sketchId),
 		/** Copy the scene into a project folder. Resolves with the path written. */
 		saveToProject: (
 			sketchId: string,
@@ -97,7 +102,7 @@ export function createSketchApi() {
 		waitForOwner: (options?: { timeoutMs?: number }): Promise<SketchOwnerStatus> =>
 			ipcRenderer.invoke('sketch:waitForOwner', options ?? {}),
 		signOutOwner: (): Promise<SketchOwnerStatus> => ipcRenderer.invoke('sketch:signOutOwner'),
-		/** Share: the room on the first share, then a new link. The link URL is shown once. */
+		/** Share: the room on the first share, then a new link. */
 		share: (sketchId: string, options?: SketchShareOptions): Promise<SketchShareResult> =>
 			ipcRenderer.invoke('sketch:share', sketchId, options ?? {}),
 		/** Archive the room; the sketch stays here. */
@@ -105,6 +110,12 @@ export function createSketchApi() {
 			ipcRenderer.invoke('sketch:unshare', sketchId),
 		revokeLink: (sketchId: string, capId: string): Promise<SketchRecord> =>
 			ipcRenderer.invoke('sketch:revokeLink', sketchId, capId),
+		/** A live link's URL again, rebuilt from its sealed cap. */
+		link: (sketchId: string, capId: string): Promise<SketchMintedLink> =>
+			ipcRenderer.invoke('sketch:link', sketchId, capId),
+		/** Revoke one link and mint its replacement with the same access. */
+		resetLink: (sketchId: string, capId: string): Promise<SketchShareResult> =>
+			ipcRenderer.invoke('sketch:resetLink', sketchId, capId),
 		/** Reset all access: links revoked, a new key, a new snapshot. */
 		rotate: (sketchId: string): Promise<SketchRecord> =>
 			ipcRenderer.invoke('sketch:rotate', sketchId),
@@ -200,7 +211,7 @@ export function createSketchApi() {
 		/** Point the screen back at a local classifier (downloading Prompt Guard 2 when none is installed). */
 		switchScreenToLocal: (): Promise<SketchScreenInstallResult> =>
 			ipcRenderer.invoke('sketch:switchScreenToLocal'),
-		/** The room's newest `room.stats`, asked of the server first (the Room panel). */
+		/** The room's newest `room.stats`, asked of the server first (the Collaborate panel). */
 		roomStats: (sketchId: string): Promise<SketchRoomStatsReading> =>
 			ipcRenderer.invoke('sketch:roomStats', sketchId),
 		/** Kick, Unlock or Unsuspend on the room. Resolves with the room as it stands after. */

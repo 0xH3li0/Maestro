@@ -295,7 +295,7 @@ async function deleteElements(
 }
 
 /**
- * The Room panel's one-click delete of a flagged element (spec section 8.3,
+ * The Collaborate panel's one-click delete of a flagged element (spec section 8.3,
  * rule 5): the same tombstone as T7, stamped as the conductor. Returns the ids
  * deleted, bound text included.
  */

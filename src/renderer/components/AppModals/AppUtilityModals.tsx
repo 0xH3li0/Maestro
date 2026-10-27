@@ -36,6 +36,8 @@ import { SnoozeTabModal } from '../SnoozeTabModal';
 import { ModelEffortModal } from '../ModelEffortModal';
 import { SnoozedTabsModal } from '../SnoozedTabsModal';
 import { TabCleanupModal } from '../TabCleanupModal';
+import { SketchBooksModal } from '../SketchBook/SketchBooksModal';
+import { canUseSketchBook } from '../../utils/sketchBookAvailability';
 import { snoozeTabWithMirror } from '../../services/snoozeActions';
 import { PromptComposerModal } from '../PromptComposerModal';
 import { ExecutionQueueBrowser } from '../ExecutionQueueBrowser';
@@ -564,6 +566,15 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	// Tab Cleanup Suggestions asks main for its list itself; it needs the theme.
 	const tabCleanupOpen = useModalStore(selectModalOpen('tabCleanup'));
 	const closeTabCleanup = useCallback(() => useModalStore.getState().closeModal('tabCleanup'), []);
+	// Sketch Books reads the sketch store itself; switching the Encore Feature
+	// off unmounts it, since every `sketch:*` call would be refused.
+	const sketchBooksOpen = useModalStore(selectModalOpen('sketchBooks'));
+	const sketchBooksData = useModalStore(selectModalData('sketchBooks'));
+	const sketchBookAvailable = useSettingsStore((state) => canUseSketchBook(state.encoreFeatures));
+	const closeSketchBooks = useCallback(
+		() => useModalStore.getState().closeModal('sketchBooks'),
+		[]
+	);
 	// Model & effort picker (Opt+Cmd+.) - same deal: it resolves the tab, agent,
 	// and option lists itself, so all it needs from here is the theme.
 	// Voice Setup walkthrough. Same deal: it reads the model catalog itself, so
@@ -942,6 +953,14 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 			)}
 			{/* --- TAB CLEANUP SUGGESTIONS (Local Models, across all agents) --- */}
 			{tabCleanupOpen && <TabCleanupModal theme={theme} onClose={closeTabCleanup} />}
+			{/* --- SKETCH BOOKS (every sketch across all agents) --- */}
+			{sketchBooksOpen && sketchBookAvailable && (
+				<SketchBooksModal
+					theme={theme}
+					agentId={sketchBooksData?.agentId}
+					onClose={closeSketchBooks}
+				/>
+			)}
 			{voiceSetupOpen && (
 				<VoiceSetupModal
 					theme={theme}

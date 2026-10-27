@@ -218,6 +218,7 @@ describe('keyboard shortcut registry wiring', () => {
 			'toggleCadenzas',
 			'toggleThroughputGauge',
 			'newSketchBook',
+			'showSketchBooks',
 		] as const) {
 			const keys = DEFAULT_SHORTCUTS[id].keys.map((k) => k.toLowerCase());
 			expect(keys, `${id} must hold Alt`).toContain('alt');

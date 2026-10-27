@@ -373,7 +373,7 @@ export interface SketchGuardrail {
 
 /**
  * Where a sketch's audit log lives: beside the scene, under the owning agent.
- * Null when the sketch is unknown. The gate writes it; the Room panel and
+ * Null when the sketch is unknown. The gate writes it; the Collaborate panel and
  * `maestro-cli sketch audit` read it (`sketch-room-admin.ts`).
  */
 export async function sketchAuditPath(sketchId: string): Promise<string | null> {

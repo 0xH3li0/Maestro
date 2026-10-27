@@ -21,33 +21,40 @@
 	display: none;
 }
 
-/* Maestro's canvas buttons (`SketchCanvasChrome.tsx`): Excalidraw's button
- * styles, sized to an icon and a label like its Library button. */
+/* Maestro's canvas buttons (`SketchCanvasChrome.tsx`) take Excalidraw's
+ * `sidebar-trigger` styles; these only fill in what a <button> needs that
+ * the Library trigger's <div> did not, and keep the label on one line. */
 .excalidraw .sketch-chrome-button {
-	width: auto;
-	height: var(--lg-button-size);
-	gap: 0.5rem;
-	font-size: 0.75rem;
-	letter-spacing: 0.4px;
-	line-height: 0;
-}
-
-.excalidraw .sketch-chrome-button svg {
-	width: var(--lg-icon-size);
-	height: var(--lg-icon-size);
+	font-family: var(--ui-font);
 }
 
 .excalidraw .sketch-chrome-button .sidebar-trigger__label {
+	display: block;
 	white-space: nowrap;
 }
 
-.excalidraw .sketch-chrome-badge {
-	display: flex;
-	align-items: center;
+/* A live room: icon and label in Excalidraw's own green. */
+.excalidraw .sketch-chrome-button--live {
+	color: var(--icon-green-fill-color);
 }
 
-/* Pushes Library to the right end of the footer, beside Help. */
+/* The footer's middle zone, split in three: an empty start, the screening
+ * badge at the center, and Library at the end beside Help. */
 .excalidraw .sketch-chrome-footer {
+	display: grid;
+	grid-template-columns: 1fr auto 1fr;
+	align-items: center;
+	flex: 1;
+}
+
+/* Library's trigger, whatever root element Excalidraw draws it with. */
+.excalidraw .sketch-chrome-footer > :last-child {
+	grid-column: 3;
+	justify-self: end;
+}
+
+.excalidraw .sketch-chrome-badge {
+	grid-column: 2;
 	display: flex;
-	margin-inline-start: auto;
+	align-items: center;
 }

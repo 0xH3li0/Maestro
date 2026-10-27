@@ -21,11 +21,16 @@ const service = {
 	newSketch: vi.fn(),
 	listSketches: vi.fn(),
 	openSketch: vi.fn(),
+	renameSketch: vi.fn(),
+	deleteSketch: vi.fn(),
 	readSketch: vi.fn(),
 	exportSketch: vi.fn(),
 	shareSketch: vi.fn(),
 	unshareSketch: vi.fn(),
 	revokeSketchLink: vi.fn(),
+	sketchLink: vi.fn(),
+	resetSketchLink: vi.fn(),
+	sketchChat: vi.fn(),
 	rotateSketch: vi.fn(),
 	ownerStatus: vi.fn(),
 	registerOwner: vi.fn(),
@@ -116,6 +121,18 @@ describe('sketch_command handler', () => {
 	it('reads only a literal true as background', async () => {
 		await send({ action: 'open', sketchId: SKETCH_ID, background: 'true' });
 		expect(service.openSketch).toHaveBeenCalledWith(SKETCH_ID, { background: false });
+	});
+
+	it('renames with the new name, and deletes naming the agent caller (A1)', async () => {
+		service.renameSketch.mockResolvedValue({ sketchId: SKETCH_ID, name: 'Plan' });
+		service.deleteSketch.mockResolvedValue(undefined);
+		await send({ action: 'rename', sketchId: SKETCH_ID, name: 'Plan' });
+		expect(service.renameSketch).toHaveBeenCalledWith(SKETCH_ID, 'Plan');
+		await send({ action: 'delete', sketchId: SKETCH_ID });
+		expect(service.deleteSketch).toHaveBeenLastCalledWith(SKETCH_ID, {});
+		const reply = await send({ action: 'delete', sketchId: SKETCH_ID, fromSessionId: 'agent-1' });
+		expect(service.deleteSketch).toHaveBeenLastCalledWith(SKETCH_ID, { requestedBy: 'Builder' });
+		expect(reply).toMatchObject({ type: 'sketch_result', success: true, requestId: 'r1' });
 	});
 
 	it('lists every sketch, or one owner', async () => {
@@ -210,11 +227,17 @@ describe('sketch_command handler', () => {
 		);
 	});
 
-	it('passes unshare, revoke-link and rotate through with the caller', async () => {
+	it('passes unshare, revoke-link, link, reset-link and rotate through with the caller', async () => {
 		await send({ action: 'unshare', sketchId: SKETCH_ID, fromSessionId: 'agent-1' });
 		expect(service.unshareSketch).toHaveBeenCalledWith(SKETCH_ID, { requestedBy: 'Builder' });
 		await send({ action: 'revoke-link', sketchId: SKETCH_ID, capId: 'cap-1' });
 		expect(service.revokeSketchLink).toHaveBeenCalledWith(SKETCH_ID, 'cap-1', {});
+		await send({ action: 'link', sketchId: SKETCH_ID, capId: 'cap-1', fromSessionId: 'agent-1' });
+		expect(service.sketchLink).toHaveBeenCalledWith(SKETCH_ID, 'cap-1', { requestedBy: 'Builder' });
+		await send({ action: 'reset-link', sketchId: SKETCH_ID, capId: 'cap-1' });
+		expect(service.resetSketchLink).toHaveBeenCalledWith(SKETCH_ID, 'cap-1', {});
+		await send({ action: 'chat', sketchId: SKETCH_ID, text: 'hi', fromSessionId: 'agent-1' });
+		expect(service.sketchChat).toHaveBeenCalledWith(SKETCH_ID, 'hi', { requestedBy: 'Builder' });
 		await send({ action: 'rotate', sketchId: SKETCH_ID, fromSessionId: 'gone-agent' });
 		// An agent no longer in the list is named by its id.
 		expect(service.rotateSketch).toHaveBeenCalledWith(SKETCH_ID, { requestedBy: 'gone-agent' });

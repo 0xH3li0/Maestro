@@ -241,6 +241,13 @@ export const DEFAULT_SHORTCUTS = {
 		label: 'New Sketch Book',
 		keys: ['Alt', 'Meta', 'k'],
 	},
+	// The list of every sketch takes the Shift sibling of New Sketch Book, the
+	// way the Throughput Gauge sits beside the Tab Switcher.
+	showSketchBooks: {
+		id: 'showSketchBooks',
+		label: 'Show Sketch Books',
+		keys: ['Alt', 'Meta', 'Shift', 'k'],
+	},
 	filterUnreadAgents: {
 		id: 'filterUnreadAgents',
 		label: 'Filter Unread Agents',
@@ -553,6 +560,21 @@ export const FIXED_SHORTCUTS: Record<string, Shortcut> = {
 		id: 'sketchBookCollaborate',
 		label: 'Sketch Book: Collaborate',
 		keys: ['Meta', 'Shift', 'c'],
+	},
+	// Excalidraw's Add link (Cmd+K) and Open (Cmd+O) chords stay Quick Actions
+	// and Switch Agent on the canvas, so the two actions move here
+	// (`sketchKeyboard.ts` replays Excalidraw's chord to it). Canvas only, like
+	// Collaborate; neither chord is bound anywhere else, nor by Excalidraw.
+	// Opt+Cmd, never a bare Opt+letter, which types a character on macOS.
+	sketchBookAddLink: {
+		id: 'sketchBookAddLink',
+		label: 'Sketch Book: Add Link',
+		keys: ['Alt', 'Meta', 'b'],
+	},
+	sketchBookOpenFile: {
+		id: 'sketchBookOpenFile',
+		label: 'Sketch Book: Open File',
+		keys: ['Alt', 'Meta', 'o'],
 	},
 	renameAgentSession: {
 		id: 'renameAgentSession',

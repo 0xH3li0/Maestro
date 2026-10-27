@@ -11,6 +11,7 @@ import {
 	isSketchBotDecisionOp,
 	isSketchBotRequestOp,
 	sketchBotOpNeedsConfirmation,
+	sketchChatAsksBot,
 	sketchRequestCapKey,
 	visibleSketchApprovals,
 } from '../../../shared/sketch/bot-requests';
@@ -94,5 +95,19 @@ describe('ops', () => {
 		expect(sketchBotOpNeedsConfirmation('publish')).toBe(true);
 		expect(sketchBotOpNeedsConfirmation('deny')).toBe(false);
 		expect(sketchBotOpNeedsConfirmation('discard')).toBe(false);
+	});
+});
+
+describe('sketchChatAsksBot', () => {
+	it('is true for a message that starts with @bot, in any case', () => {
+		for (const text of ['@bot tidy', '  @Bot, tidy', '@BOT', '@bot: label it', '@bot\nnext line']) {
+			expect(sketchChatAsksBot(text), text).toBe(true);
+		}
+	});
+
+	it('is false for @bot later in the message or a longer name', () => {
+		for (const text of ['hi @bot', '@botany is fun', 'email@bot.com', '']) {
+			expect(sketchChatAsksBot(text), text).toBe(false);
+		}
 	});
 });

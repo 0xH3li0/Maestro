@@ -3,7 +3,8 @@
  * publish|discard`: `list` reports the bot relay's open requests (with the
  * per-link waiting flag) and the conductor messages offered "Run with full
  * access", and each op presses the same function the Sketch tab's button
- * does, refusing a request it does not apply to.
+ * does, refusing a request it does not apply to. `chat` sends through the
+ * composer's function, after joining the room, and reads the pane.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -16,6 +17,8 @@ const h = vi.hoisted(() => {
 		escalate: decision(),
 		publish: decision(),
 		discard: decision(),
+		sendChat: vi.fn(async (_sketchId: string, _text: string) => ({ toBot: false })),
+		ensureRoom: vi.fn(async (_sketchId: string) => undefined),
 	};
 });
 
@@ -23,6 +26,10 @@ vi.mock('../../../renderer/services/sketchBotRelay', () => ({
 	approveSketchBotRequest: h.approve,
 	denySketchBotRequest: h.deny,
 	escalateSketchBotRequest: h.escalate,
+	sendSketchConductorChat: h.sendChat,
+}));
+vi.mock('../../../renderer/services/sketchSharing', () => ({
+	ensureSketchRoomConnected: h.ensureRoom,
 }));
 vi.mock('../../../renderer/services/sketchBotTurns', () => ({
 	publishHeldSketchReply: h.publish,
@@ -31,6 +38,7 @@ vi.mock('../../../renderer/services/sketchBotTurns', () => ({
 
 import {
 	listSketchBotRequests,
+	runRemoteSketchChat,
 	runSketchBotRequestOp,
 } from '../../../renderer/services/sketchBotRequestCommands';
 import {
@@ -181,5 +189,43 @@ describe('runSketchBotRequestOp', () => {
 		);
 		h.publish.mockReturnValueOnce(false);
 		expect(() => runSketchBotRequestOp('publish', SKETCH_ID, 'm1')).toThrow('has no held reply');
+	});
+});
+
+describe('runRemoteSketchChat', () => {
+	const scene = { type: 'excalidraw', version: 2, elements: [], appState: {}, files: {} };
+
+	beforeEach(() => {
+		seed({
+			scene: scene as SketchSession['scene'],
+			chat: [
+				{ id: 'm1', actor: guest, text: 'hi', ts: 1 },
+				{
+					id: 'm2',
+					actor: conductor,
+					text: '@bot tidy',
+					ts: 2,
+					request: { replyTo: 'r1', posture: 'full', shared: true },
+				},
+			],
+		});
+	});
+
+	it('reads the pane, naming the request a message started', async () => {
+		await expect(runRemoteSketchChat(SKETCH_ID)).resolves.toEqual({
+			sketchId: SKETCH_ID,
+			messages: [
+				{ id: 'm1', actor: guest, ts: 1, text: 'hi' },
+				{ id: 'm2', actor: conductor, ts: 2, text: '@bot tidy', replyTo: 'r1' },
+			],
+		});
+		expect(h.sendChat).not.toHaveBeenCalled();
+	});
+
+	it('joins the room, then sends through the composer path', async () => {
+		const reading = await runRemoteSketchChat(SKETCH_ID, 'hello');
+		expect(h.ensureRoom).toHaveBeenCalledWith(SKETCH_ID);
+		expect(h.sendChat).toHaveBeenCalledWith(SKETCH_ID, 'hello');
+		expect(reading.sent).toEqual({ toBot: false });
 	});
 });

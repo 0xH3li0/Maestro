@@ -19,8 +19,10 @@
  * discard`) list and act on the bot relay's requests, which live in the
  * window that owns the sketch (`botRequest`). `sketch bot-policy` sends
  * `policy.set` through the room client that window runs (`botPolicy`), and
- * the Room panel verbs (`sketch stats|kick|unlock|unsuspend`) read
+ * the Collaborate panel verbs (`sketch stats|kick|unlock|unsuspend`) read
  * `room.stats` and send the conductor frames through it too (`roomAdmin`).
+ * `sketch chat` reads the chat pane and sends the conductor's chat through
+ * the same composer path the Sketch tab uses (`chat`).
  *
  * Also here: `summarizeSketchScene()`, the `read --format summary` view of a
  * saved scene. Bundled into the renderer and the CLI, so it imports nothing
@@ -46,12 +48,16 @@ export const SKETCH_COMMAND_ACTIONS = [
 	'new',
 	'list',
 	'open',
+	'rename',
+	'delete',
 	'read',
 	'export',
 	'screening-consent',
 	'share',
 	'unshare',
 	'revoke-link',
+	'link',
+	'reset-link',
 	'rotate',
 	'owner',
 	'requests',
@@ -66,6 +72,7 @@ export const SKETCH_COMMAND_ACTIONS = [
 	'unlock',
 	'unsuspend',
 	'audit',
+	'chat',
 ] as const;
 export type SketchCommandAction = (typeof SKETCH_COMMAND_ACTIONS)[number];
 
@@ -73,7 +80,14 @@ export type SketchCommandAction = (typeof SKETCH_COMMAND_ACTIONS)[number];
  * The verbs that change who can reach a room (spec section 9, A1). From an
  * agent caller each raises a desktop confirmation and runs only on Allow.
  */
-export const SKETCH_SHARING_ACTIONS = ['share', 'unshare', 'revoke-link', 'rotate'] as const;
+export const SKETCH_SHARING_ACTIONS = [
+	'share',
+	'unshare',
+	'revoke-link',
+	'link',
+	'reset-link',
+	'rotate',
+] as const;
 export type SketchSharingAction = (typeof SKETCH_SHARING_ACTIONS)[number];
 
 /** `maestro-cli sketch owner <op>`: this device's RunMaestro.ai owner sign-in (spec section 6, M1). */
@@ -176,13 +190,16 @@ export interface SketchOwnerCommandResult {
 	email?: 'sent' | 'already-confirmed';
 }
 
-/** A link as `share` mints it. `url` holds the key and the cap: shown once, never stored. */
+/**
+ * A link as `share` and `reset-link` mint it, or `link` reads it back. `url`
+ * holds the key and the cap: the cap is sealed on the desktop, never in a record.
+ */
 export interface SketchMintedLink {
 	capId: string;
 	role: SketchLinkRole;
 	label: string;
-	/** Server expiry, ms since the epoch. */
-	expiresAt: number;
+	/** Server expiry, ms since the epoch, or null for a link that never expires. */
+	expiresAt: number | null;
 	url: string;
 }
 
@@ -256,6 +273,14 @@ export type SketchRendererRequest =
 	  }
 	| { action: 'export'; format: SketchImageFormat; scene: SketchScene }
 	| {
+			/**
+			 * The sketch was deleted: close every tab pointing at it and drop its
+			 * live session, so no view autosaves into a record that is gone.
+			 */
+			action: 'forget';
+			sketchId: string;
+	  }
+	| {
 			action: 'readSession';
 			sketchId: string;
 			/**
@@ -320,7 +345,7 @@ export type SketchRendererRequest =
 	  }
 	| {
 			/**
-			 * The Room panel on the sketch's live room (spec section 6): `stats`
+			 * The Collaborate panel on the sketch's live room (spec section 6): `stats`
 			 * reads the newest `room.stats` (asking the server again first), and
 			 * `kick`, `unlock` and `unsuspend` send the conductor frame, then read
 			 * it again. Main has already raised the desktop confirmation an agent
@@ -332,6 +357,16 @@ export type SketchRendererRequest =
 			actorId?: string;
 			capId?: string;
 			minutes?: number;
+	  }
+	| {
+			/**
+			 * Read the chat pane, and first send `text` as the conductor when it
+			 * is set (`sketch chat`). Main has already raised the desktop
+			 * confirmation an agent caller needs (A1).
+			 */
+			action: 'chat';
+			sketchId: string;
+			text?: string;
 	  }
 	| {
 			/**
@@ -425,6 +460,8 @@ export type SketchRendererResult =
 			botRequests?: SketchBotRequestInfo[];
 			/** `roomAdmin`: the room as it stands after the op. */
 			roomStats?: SketchRoomStatsReading;
+			/** `chat`: the pane after the call. */
+			chat?: SketchChatReading;
 	  }
 	| { success: false; error: string };
 
@@ -539,13 +576,83 @@ export function normalizeSketchRendererResult(raw: unknown): SketchRendererResul
 		...(snapshot ? { snapshot } : {}),
 		...(botRequests ? { botRequests } : {}),
 		...(isRoomStatsReading(reply.roomStats) ? { roomStats: reply.roomStats } : {}),
+		...(isChatReading(reply.chat) ? { chat: reply.chat } : {}),
+	};
+}
+
+/** One chat pane message as `sketch chat` reads it. */
+export interface SketchChatEntry {
+	id: string;
+	/** The server-stamped actor (A2), or the local conductor. */
+	actor: SketchActor;
+	ts: number;
+	/** Null when withheld from an agent caller. */
+	text: string | null;
+	/**
+	 * A guest's chat is not screened, so an agent caller never reads it (spec
+	 * section 8): its text is null and this says why.
+	 */
+	withheld?: 'unscreened';
+	/** The `@bot` request the message started (the conductor's own). */
+	replyTo?: string;
+}
+
+/** What a send did: asked the agent (with the request id), or posted to the room. */
+export interface SketchChatSent {
+	toBot: boolean;
+	replyTo?: string;
+}
+
+/** `chat`: the pane after the call, oldest first, and what a send did. */
+export interface SketchChatReading {
+	sketchId: string;
+	messages: SketchChatEntry[];
+	sent?: SketchChatSent;
+}
+
+function isChatEntry(value: unknown): value is SketchChatEntry {
+	return (
+		isObjectRecord(value) &&
+		typeof value.id === 'string' &&
+		isRequestActor(value.actor) &&
+		typeof value.ts === 'number' &&
+		(typeof value.text === 'string' || value.text === null) &&
+		(value.replyTo === undefined || typeof value.replyTo === 'string')
+	);
+}
+
+/** A `chat` reply as main may trust it. */
+function isChatReading(value: unknown): value is SketchChatReading {
+	if (!isObjectRecord(value) || typeof value.sketchId !== 'string') return false;
+	if (!Array.isArray(value.messages) || !value.messages.every(isChatEntry)) return false;
+	const sent = value.sent;
+	return (
+		sent === undefined ||
+		(isObjectRecord(sent) &&
+			typeof sent.toBot === 'boolean' &&
+			(sent.replyTo === undefined || typeof sent.replyTo === 'string'))
+	);
+}
+
+/**
+ * The chat as an agent caller may read it: a guest's text is withheld, since
+ * nothing screened it (spec section 8). The conductor's and the bot's stay.
+ */
+export function withholdGuestChat(reading: SketchChatReading): SketchChatReading {
+	return {
+		...reading,
+		messages: reading.messages.map((message) =>
+			message.actor.kind === 'guest'
+				? { ...message, text: null, withheld: 'unscreened' as const }
+				: message
+		),
 	};
 }
 
 const ROOM_CONNECTIONS = ['connecting', 'catching-up', 'live', 'reconnecting', 'stopped'];
 
 /**
- * A `roomAdmin` reply as main may trust it: the shape the Room panel reads.
+ * A `roomAdmin` reply as main may trust it: the shape the Collaborate panel reads.
  * The stats are the server's frame, already parsed by the room client.
  */
 function isRoomStatsReading(value: unknown): value is SketchRoomStatsReading {

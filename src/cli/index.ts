@@ -267,8 +267,13 @@ import {
 	sketchNew,
 	sketchOpen,
 	sketchRead,
+	sketchRename,
 	sketchOwner,
 	sketchRevokeLink,
+	sketchChat,
+	sketchDelete,
+	sketchLink,
+	sketchResetLink,
 	sketchRotate,
 	sketchScreeningConsent,
 	sketchRequests,
@@ -1157,7 +1162,7 @@ program
 		'-g, --group <id>',
 		'Open the surface on one agent group (Delegation Graph, Group Settings)'
 	)
-	.option('-a, --agent <id>', "Open one agent's surface for this agent (Edit Agent)")
+	.option('-a, --agent <id>', "Open one agent's surface for this agent (Edit Agent, Sketch Books)")
 	.option('--list', 'List every openable surface, its tabs, and its shortcut')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(openModal);
@@ -4636,7 +4641,7 @@ dataviewCmd
 // Sketch Book commands - the verbs that need no room (spec section 9). Each
 // rides `sketch_command` to the SketchService the Sketch tab uses.
 const sketchCmd = encoreCommand(program, 'sketch', 'sketchBook', encoreFlags).description(
-	'Sketch Book: create, list, open, read, export and share Excalidraw whiteboards owned by an agent, answer @bot requests, run the shared room (stats, kick, unlock, unsuspend, audit), and manage cloud screening consent'
+	'Sketch Book: create, list, open, rename, delete, read, export and share Excalidraw whiteboards owned by an agent, answer @bot requests, run the shared room (stats, kick, unlock, unsuspend, audit), and manage cloud screening consent'
 );
 
 sketchCmd
@@ -4663,6 +4668,21 @@ sketchCmd
 	.option('--focus', 'Switch to the agent and tab (the default)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((sketchId, options) => sketchOpen(sketchId, options));
+
+sketchCmd
+	.command('rename <sketchId> <name>')
+	.description('Rename a sketch (its tabs keep their own labels)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((sketchId, name, options) => sketchRename(sketchId, name, options));
+
+sketchCmd
+	.command('delete <sketchId>')
+	.description(
+		'Delete a sketch and close its tabs. Refused while it is shared. An agent caller gets a desktop confirmation'
+	)
+	.option('--yes', 'Delete without the terminal prompt')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((sketchId, options) => sketchDelete(sketchId, options));
 
 sketchCmd
 	.command('read <sketchId>')
@@ -4717,6 +4737,22 @@ sketchCmd
 	.action((sketchId, capId, options) => sketchRevokeLink(sketchId, capId, options));
 
 sketchCmd
+	.command('link <sketchId> <capId>')
+	.description(
+		"Print a live share link again (the Collaborate panel's Copy link). An agent caller gets a desktop confirmation"
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((sketchId, capId, options) => sketchLink(sketchId, capId, options));
+
+sketchCmd
+	.command('reset-link <sketchId> <capId>')
+	.description(
+		'Revoke one share link and print its replacement with the same access. An agent caller gets a desktop confirmation'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((sketchId, capId, options) => sketchResetLink(sketchId, capId, options));
+
+sketchCmd
 	.command('rotate <sketchId>')
 	.description(
 		'Reset all access: revoke every link, clear the room, re-upload under a new key. An agent caller gets a desktop confirmation'
@@ -4731,6 +4767,15 @@ sketchCmd
 	.option('--wait', 'Wait for the confirmation link to be clicked (register, up to 15 minutes)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((op, options) => sketchOwner(op, options));
+
+sketchCmd
+	.command('chat <sketchId> [message...]')
+	.description(
+		"Read a sketch's chat, or post a message as you first. A message that starts with @bot asks the agent; anything else goes to the room. An agent caller's post gets a desktop confirmation, and an agent caller never reads a guest's text"
+	)
+	.option('--last <n>', 'How many of the newest messages to print (default 20)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((sketchId, message, options) => sketchChat(sketchId, message ?? [], options));
 
 sketchCmd
 	.command('requests')
@@ -4791,7 +4836,7 @@ sketchCmd
 sketchCmd
 	.command('stats <sketchId>')
 	.description(
-		"Print the shared sketch's room (the Room panel): screening, members with their counters and lock state, links with expiry and @bot suspension"
+		"Print the shared sketch's room (the Collaborate panel): screening, members with their counters and lock state, links with expiry and @bot suspension"
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((sketchId, options) => sketchStats(sketchId, options));

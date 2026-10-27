@@ -1140,7 +1140,7 @@ Open a Maestro modal or dashboard (use --list to see every surface)
 | `-t, --tab <tab>`     | Deep-link to a tab within the surface                                  | -       |
 | `--sub-tab <sub-tab>` | Deep-link to a tab inside that tab (needs --tab)                       | -       |
 | `-g, --group <id>`    | Open the surface on one agent group (Delegation Graph, Group Settings) | -       |
-| `-a, --agent <id>`    | Open one agent's surface for this agent (Edit Agent)                   | -       |
+| `-a, --agent <id>`    | Open one agent's surface for this agent (Edit Agent, Sketch Books)     | -       |
 | `--list`              | List every openable surface, its tabs, and its shortcut                | -       |
 | `--json`              | Output as JSON (for scripting)                                         | -       |
 
@@ -1149,6 +1149,7 @@ maestro-cli open --list
 maestro-cli open settings --tab models --sub-tab library
 maestro-cli open delegation-graph --group <group-id>
 maestro-cli open agent-settings --agent <agent-id> --tab peers
+maestro-cli open sketch-books --agent <agent-id>
 ```
 
 ## `maestro-cli image`
@@ -5606,6 +5607,32 @@ Show a sketch in a tab on the agent that owns it
 
 ```bash
 maestro-cli sketch open <sketch-id> --background
+```
+
+## `maestro-cli sketch rename <sketchId> <name>`
+
+Rename a sketch (its tabs keep their own labels)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+```bash
+maestro-cli sketch rename <sketch-id> "Release plan"
+```
+
+## `maestro-cli sketch delete <sketchId>`
+
+Delete a sketch and close its tabs. Refused while it is shared. An agent caller gets a desktop confirmation
+
+| Option   | Description                        | Default |
+| -------- | ---------------------------------- | ------- |
+| `--yes`  | Delete without the terminal prompt | -       |
+| `--json` | Output as JSON (for scripting)     | -       |
+
+```bash
+maestro-cli sketch delete <sketch-id>
+maestro-cli sketch delete <sketch-id> --yes --json
 ```
 
 ## `maestro-cli sketch read <sketchId>`

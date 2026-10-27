@@ -7,6 +7,7 @@ function build(overrides: Partial<Parameters<typeof buildSketchBookCommands>[0]>
 		sketchBookAvailable: true,
 		activeSession: createMockSession({ id: 'agent-1', name: 'Planner' }),
 		newSketchBook: vi.fn(),
+		showSketchBooks: vi.fn(),
 		setQuickActionOpen: vi.fn(),
 		...overrides,
 	});
@@ -17,8 +18,32 @@ describe('buildSketchBookCommands', () => {
 		expect(build({ sketchBookAvailable: false })).toEqual([]);
 	});
 
-	it('offers nothing without an active agent to own the sketch', () => {
-		expect(build({ activeSession: undefined })).toEqual([]);
+	it('offers only the Sketch Books list without an active agent to own a new sketch', () => {
+		expect(build({ activeSession: undefined }).map((command) => command.id)).toEqual([
+			'showSketchBooks',
+		]);
+	});
+
+	it('offers "Sketch Books" with its chord, opening the list and dismissing the palette', () => {
+		const showSketchBooks = vi.fn();
+		const setQuickActionOpen = vi.fn();
+		const shortcut = {
+			id: 'showSketchBooks',
+			label: 'Show Sketch Books',
+			keys: ['Alt', 'Meta', 'Shift', 'k'],
+		};
+		const command = build({
+			showSketchBooks,
+			setQuickActionOpen,
+			showSketchBooksShortcut: shortcut,
+		}).find((candidate) => candidate.id === 'showSketchBooks')!;
+		expect(command.label).toBe('Sketch Books');
+		expect(command.shortcut).toBe(shortcut);
+
+		command.action();
+
+		expect(showSketchBooks).toHaveBeenCalled();
+		expect(setQuickActionOpen).toHaveBeenCalledWith(false);
 	});
 
 	it('offers "New Sketch Book" with its chord and the owning agent', () => {

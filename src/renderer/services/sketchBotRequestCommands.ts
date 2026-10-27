@@ -1,7 +1,8 @@
 /**
  * The window half of `maestro-cli sketch requests|approve|deny|escalate|
- * publish|discard` (spec sections 5 and 9): the bot relay's `@bot` requests
- * live in the window that owns the sketch, so main asks it (`botRequest`).
+ * publish|discard|chat` (spec sections 5 and 9): the bot relay's `@bot`
+ * requests and the chat pane live in the window that owns the sketch, so main
+ * asks it (`botRequest`, `chat`).
  *
  * Every op calls the function the Sketch tab's button calls (the approval
  * chip, "Run with full access", the held reply chip), so the CLI and the UI
@@ -14,8 +15,10 @@ import {
 	type SketchBotDecisionOp,
 	type SketchBotRequestInfo,
 } from '../../shared/sketch/bot-requests';
+import type { SketchChatReading, SketchChatSent } from '../../shared/sketch/commands';
 import {
 	canEscalateSketchMessage,
+	openReadySketchSession,
 	useSketchSessionStore,
 	type SketchSession,
 } from '../stores/sketchSessionStore';
@@ -23,7 +26,9 @@ import {
 	approveSketchBotRequest,
 	denySketchBotRequest,
 	escalateSketchBotRequest,
+	sendSketchConductorChat,
 } from './sketchBotRelay';
+import { ensureSketchRoomConnected } from './sketchSharing';
 import { discardHeldSketchReply, publishHeldSketchReply } from './sketchBotTurns';
 
 /** One session's open requests, and its conductor messages offered "Run with full access". */
@@ -124,4 +129,31 @@ export function runSketchBotRequestOp(
 			canEscalate: false,
 		}
 	);
+}
+
+/**
+ * `sketch chat`: send `text` as the conductor when it is set, through the
+ * Sketch tab's composer path, then read the pane. Opens the session, and joins
+ * the room of a shared sketch, so a send reaches the room it belongs to.
+ */
+export async function runRemoteSketchChat(
+	sketchId: string,
+	text?: string
+): Promise<SketchChatReading> {
+	await openReadySketchSession(sketchId);
+	await ensureSketchRoomConnected(sketchId);
+	let sent: SketchChatSent | undefined;
+	if (text !== undefined) sent = await sendSketchConductorChat(sketchId, text);
+	const chat = useSketchSessionStore.getState().sessions[sketchId]?.chat ?? [];
+	return {
+		sketchId,
+		messages: chat.map((message) => ({
+			id: message.id,
+			actor: message.actor,
+			ts: message.ts,
+			text: message.text,
+			...(message.request ? { replyTo: message.request.replyTo } : {}),
+		})),
+		...(sent ? { sent } : {}),
+	};
 }

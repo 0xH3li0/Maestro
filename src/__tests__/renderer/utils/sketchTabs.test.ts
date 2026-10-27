@@ -14,6 +14,7 @@ import {
 	closeFileTab,
 	closeSketchTab,
 	createSketchTab,
+	forgetSketchInSession,
 	getRepairedUnifiedTabOrder,
 	getSketchTabLabel,
 	navigateToUnifiedTabByIndex,
@@ -285,6 +286,41 @@ describe('closeSketchTab', () => {
 		expect(result?.session.activeFileTabId).toBeNull();
 		expect(result?.session.activeSketchTabId).toBe(sketch.id);
 		expect(resolveSingleViewTabRef(result!.session)).toEqual({ type: 'sketch', id: sketch.id });
+	});
+});
+
+describe('forgetSketchInSession (the sketch was deleted)', () => {
+	it('closes the tab and leaves no closed-tab entry to reopen onto a missing record', () => {
+		const session = sessionWithSketch({ activeSketchTabId: sketch.id });
+		const next = forgetSketchInSession(session, sketch.sketchId);
+
+		expect(next.sketchTabs).toEqual([]);
+		expect(next.activeSketchTabId).toBeNull();
+		expect(next.activeTabId).toBe(ai.id);
+		expect(next.unifiedClosedTabHistory).toEqual([]);
+		expect(reopenUnifiedClosedTab(next)).toBeNull();
+	});
+
+	it('purges an earlier close of the sketch, keeping every other closed tab', () => {
+		const other = createMockSketchTab({ id: 'sk-2', sketchId: 'sketch-b', name: 'Other' });
+		const closedOnce = closeSketchTab(sessionWithSketch(), sketch.id)!.session;
+		const withOther = closeSketchTab(
+			{
+				...closedOnce,
+				sketchTabs: [other],
+				unifiedTabOrder: [...closedOnce.unifiedTabOrder, { type: 'sketch', id: other.id }],
+			},
+			other.id
+		)!.session;
+
+		const next = forgetSketchInSession(withOther, sketch.sketchId);
+		expect(next.unifiedClosedTabHistory).toHaveLength(1);
+		expect(next.unifiedClosedTabHistory[0]).toMatchObject({ type: 'sketch', tab: other });
+	});
+
+	it('returns the same session when nothing points at the sketch', () => {
+		const session = sessionWithSketch();
+		expect(forgetSketchInSession(session, 'sketch-z')).toBe(session);
 	});
 });
 

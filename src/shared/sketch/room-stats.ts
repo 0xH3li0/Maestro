@@ -1,7 +1,7 @@
 /**
  * What the conductor is told about a shared sketch's room: the screening badge
  * (wire contract X10, spec section 8.10) and the Y4 outage banner (spec
- * section 8.9). One copy, so the Sketch tab header, the Room panel and
+ * section 8.9). One copy, so the Sketch tab header, the Collaborate panel and
  * `maestro-cli sketch stats` say the same words.
  *
  * Bundled into the renderer and the CLI, so it imports nothing from Electron

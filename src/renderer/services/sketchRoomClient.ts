@@ -467,7 +467,7 @@ export class SketchRoomClient {
 	}
 
 	/**
-	 * Send one frame for another module (the bot relay, the Room panel).
+	 * Send one frame for another module (the bot relay, the Collaborate panel).
 	 * Only once `welcome` and the first `screening.set` are done (D4).
 	 */
 	send(frame: ClientFrame): boolean {

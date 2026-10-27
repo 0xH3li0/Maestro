@@ -11,13 +11,15 @@
  * (`sketchBotRelay.ts`) and the bot policy sync (`sketchBotPolicy.ts`), and
  * leaving detaches both.
  *
- * A minted link holds the room key and the cap, so it is copied to the
- * clipboard and acknowledged with `flashCopiedToClipboard()`; the flash names
- * the link, never shows it.
+ * A link holds the room key and the cap, so it is copied to the clipboard and
+ * acknowledged with `flashCopiedToClipboard()`; the flash names the link,
+ * never shows it. Main keeps each live link's cap sealed, so any live link
+ * can be copied again ({@link copyExistingSketchLink}).
  */
 
 import type {
 	SketchElementVersion,
+	SketchMintedLink,
 	SketchRoomJoin,
 	SketchShareOptions,
 	SketchShareResult,
@@ -94,18 +96,40 @@ export function sketchLinkLabel(role: SketchLinkRole, label?: string): string {
 	return label ? `${kind} "${label}"` : kind;
 }
 
+/** Copy a minted link and name it in the flash. False when the clipboard refused it. */
+export async function copySketchLink(link: SketchMintedLink): Promise<boolean> {
+	const copied = await safeClipboardWrite(link.url);
+	if (copied) flashCopiedToClipboard(sketchLinkLabel(link.role, link.label));
+	return copied;
+}
+
 /**
  * Share (the room on the first share, then a new link) and copy the link.
- * Resolves with the result and whether the clipboard took the link: the
- * server returns a link's cap once, so a failed copy leaves `link.url` as the
- * only copy for the caller to show.
+ * Resolves with the result and whether the clipboard took the link, so the
+ * caller can show `link.url` when it did not.
  */
 export async function shareSketchAndCopyLink(
 	sketchId: string,
 	options: SketchShareOptions
 ): Promise<{ result: SketchShareResult; copied: boolean }> {
 	const result = await window.maestro.sketch.share(sketchId, options);
-	const copied = await safeClipboardWrite(result.link.url);
-	if (copied) flashCopiedToClipboard(sketchLinkLabel(result.link.role, result.link.label));
-	return { result, copied };
+	return { result, copied: await copySketchLink(result.link) };
+}
+
+/** Copy a live link again; main rebuilds it from the sealed cap. */
+export async function copyExistingSketchLink(
+	sketchId: string,
+	capId: string
+): Promise<{ url: string; copied: boolean }> {
+	const link = await window.maestro.sketch.link(sketchId, capId);
+	return { url: link.url, copied: await copySketchLink(link) };
+}
+
+/** Revoke one link, mint its replacement with the same access, and copy it. */
+export async function resetSketchLinkAndCopy(
+	sketchId: string,
+	capId: string
+): Promise<{ result: SketchShareResult; copied: boolean }> {
+	const result = await window.maestro.sketch.resetLink(sketchId, capId);
+	return { result, copied: await copySketchLink(result.link) };
 }

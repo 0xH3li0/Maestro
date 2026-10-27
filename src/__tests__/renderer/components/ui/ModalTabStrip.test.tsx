@@ -62,6 +62,17 @@ describe('ModalTabStrip', () => {
 		]);
 	});
 
+	it('shows a dim count after a label only when the tab has one', () => {
+		renderStrip('general', vi.fn(), [
+			{ id: 'general', label: 'General', count: 3 },
+			{ id: 'provider', label: 'Provider', count: 0 },
+			{ id: 'ssh', label: 'SSH' },
+		]);
+		expect(screen.getByTestId('edit-agent-tab-general-count').textContent).toBe('3');
+		expect(screen.getByTestId('edit-agent-tab-provider-count').textContent).toBe('0');
+		expect(screen.queryByTestId('edit-agent-tab-ssh-count')).toBeNull();
+	});
+
 	it('can pin the strip above scrolling content with an opaque themed background', () => {
 		const props = {
 			theme: mockTheme,

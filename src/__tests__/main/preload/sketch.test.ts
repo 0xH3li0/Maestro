@@ -65,6 +65,8 @@ describe('Sketch Book Preload API', () => {
 		expect(mockInvoke).toHaveBeenLastCalledWith('sketch:rename', SKETCH_ID, 'Renamed');
 		await api.delete(SKETCH_ID);
 		expect(mockInvoke).toHaveBeenLastCalledWith('sketch:delete', SKETCH_ID);
+		await api.open(SKETCH_ID);
+		expect(mockInvoke).toHaveBeenLastCalledWith('sketch:open', SKETCH_ID);
 	});
 
 	it('saves to a project with or without options', async () => {
@@ -103,6 +105,10 @@ describe('Sketch Book Preload API', () => {
 		expect(mockInvoke).toHaveBeenLastCalledWith('sketch:unshare', SKETCH_ID);
 		await api.revokeLink(SKETCH_ID, 'cap-1');
 		expect(mockInvoke).toHaveBeenLastCalledWith('sketch:revokeLink', SKETCH_ID, 'cap-1');
+		await api.link(SKETCH_ID, 'cap-1');
+		expect(mockInvoke).toHaveBeenLastCalledWith('sketch:link', SKETCH_ID, 'cap-1');
+		await api.resetLink(SKETCH_ID, 'cap-1');
+		expect(mockInvoke).toHaveBeenLastCalledWith('sketch:resetLink', SKETCH_ID, 'cap-1');
 		await api.rotate(SKETCH_ID);
 		expect(mockInvoke).toHaveBeenLastCalledWith('sketch:rotate', SKETCH_ID);
 		await api.uploadSnapshot(SKETCH_ID, { scene, baseSeq: 4 });

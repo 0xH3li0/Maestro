@@ -1,9 +1,10 @@
 /**
- * The Room panel (SketchRoomPanel, spec sections 6, 8.8 and 8.9): members and
- * links from the live `room.stats`, Kick (said to be temporary), Unlock and
- * Unsuspend through `roomAction`, Revoke and Reset all access through the
- * Collaborate panel's verbs, the Y4 banner, and flagged elements from the audit log
- * with a one-click delete of the ones the board still holds.
+ * The room parts of the Collaborate panel's tabs (SketchRoomSections, spec
+ * sections 6, 8.8 and 8.9): People lists members from the live `room.stats`
+ * with Kick (said to be temporary) and Unlock through `roomAction`; Safety
+ * lists flagged elements from the audit log with a one-click delete of the
+ * ones the board still holds. The links are the Share tab's own rows
+ * (SketchSharePanel.test.tsx).
  */
 
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -12,7 +13,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const writes = vi.hoisted(() => ({ deleteSketchElementsAsConductor: vi.fn() }));
 vi.mock('../../../../renderer/services/sketchAgentWrites', () => writes);
 
-import { SketchRoomPanel } from '../../../../renderer/components/SketchBook/SketchRoomPanel';
+import {
+	findRoomStatsCap,
+	SketchFlaggedElements,
+	SketchRoomMembers,
+} from '../../../../renderer/components/SketchBook/SketchRoomSections';
 import {
 	useSketchSessionStore,
 	type SketchRoomState,
@@ -136,9 +141,40 @@ const flagged: SketchFlaggedElement[] = [
 	},
 ];
 
-function renderPanel(onClose = vi.fn()) {
-	render(<SketchRoomPanel sketchId={SKETCH_ID} theme={mockTheme} onClose={onClose} />);
-	return { onClose };
+function runner() {
+	return vi.fn(async (action: () => Promise<unknown>) => {
+		await action();
+	});
+}
+
+function renderMembers(stats: SketchRoomStats | null = makeStats()) {
+	const run = runner();
+	render(
+		<SketchRoomMembers
+			sketchId={SKETCH_ID}
+			theme={mockTheme}
+			stats={stats}
+			busy={false}
+			run={run}
+		/>
+	);
+	return { run };
+}
+
+function renderFlagged(stats: SketchRoomStats | null = makeStats()) {
+	const run = runner();
+	const onError = vi.fn();
+	render(
+		<SketchFlaggedElements
+			sketchId={SKETCH_ID}
+			theme={mockTheme}
+			stats={stats}
+			busy={false}
+			run={run}
+			onError={onError}
+		/>
+	);
+	return { run, onError };
 }
 
 function row(selector: string): HTMLElement {
@@ -167,35 +203,40 @@ beforeEach(async () => {
 	setRoom(makeStats());
 });
 
-describe('SketchRoomPanel', () => {
-	it('asks the server for fresh stats once on open', async () => {
-		renderPanel();
-		await waitFor(() => expect(sketchApi.roomStats).toHaveBeenCalledWith(SKETCH_ID));
-	});
-
-	it('shows each member with role, counters and lock state', () => {
-		renderPanel();
+describe('SketchRoomMembers', () => {
+	it('shows each member with role, the counters that are not zero, and lock state', () => {
+		renderMembers();
 		const sam = row('[data-sketch-room-actor="guest-1"]');
-		expect(within(sam).getByText('"Sam" · guest, read-write link #3, not verified')).toBeTruthy();
+		expect(within(sam).getByText('"Sam"')).toBeTruthy();
+		expect(within(sam).getByText('guest, read-write link #3, not verified')).toBeTruthy();
 		expect(within(sam).getByText('Locked out')).toBeTruthy();
 		expect(sam.textContent).toContain('Online');
-		expect(sam.textContent).toContain('4 ops');
 		expect(sam.textContent).toContain('3 @bot');
 		expect(sam.textContent).toContain('deny streak 3');
 		expect(sam.textContent).toContain('rejected 3');
 		expect(sam.textContent).toContain('screen failed 2');
+		expect(sam.textContent).not.toContain('ops');
 		const ana = row('[data-sketch-room-actor="guest-2"]');
-		expect(ana.textContent).toContain('Last seen');
 		expect(within(ana).queryByText('Unlock')).toBeNull();
 	});
 
-	it('says that kick is temporary and revoke is the real fix', () => {
-		renderPanel();
+	it('shows only presence for a member whose counters are all zero', () => {
+		renderMembers();
+		const ana = row('[data-sketch-room-actor="guest-2"]');
+		const facts = Array.from(
+			ana.querySelectorAll('[data-sketch-meta-line] > span.whitespace-nowrap')
+		).map((fact) => fact.textContent);
+		expect(facts).toEqual([expect.stringMatching(/^Seen /)]);
+	});
+
+	it('says once, under the list, that kick is temporary and revoke is the real fix', () => {
+		renderMembers();
+		expect(screen.getAllByText(/Kick is temporary/)).toHaveLength(1);
 		expect(screen.getByText(/Kick is temporary/).textContent).toMatch(/Revoke the link/);
 	});
 
-	it('kicks and unlocks through roomAction', async () => {
-		renderPanel();
+	it('kicks and unlocks through roomAction, by the panel runner', async () => {
+		const { run } = renderMembers();
 		const sam = row('[data-sketch-room-actor="guest-1"]');
 		fireEvent.click(within(sam).getByText('Kick'));
 		await waitFor(() =>
@@ -207,80 +248,44 @@ describe('SketchRoomPanel', () => {
 				actorId: 'guest-1',
 			})
 		);
+		expect(run).toHaveBeenCalledTimes(2);
 	});
 
-	it('shows each link with expiry and suspension, and unsuspends or revokes it', async () => {
-		renderPanel();
-		const review = row('[data-sketch-room-cap="Cap000000001"]');
-		expect(within(review).getByText('@bot suspended')).toBeTruthy();
-		expect(review.textContent).toContain(' · expires ');
-		fireEvent.click(within(review).getByText('Unsuspend'));
-		await waitFor(() =>
-			expect(sketchApi.roomAction).toHaveBeenCalledWith(SKETCH_ID, 'unsuspend', {
-				capId: 'Cap000000001',
-			})
-		);
-		fireEvent.click(within(review).getByText('Revoke'));
-		await waitFor(() =>
-			expect(sketchApi.revokeLink).toHaveBeenCalledWith(SKETCH_ID, 'Cap000000001')
-		);
-		const old = row('[data-sketch-room-cap="Cap000000002"]');
-		expect(old.textContent).toContain('revoked');
-		expect(within(old).queryByText('Revoke')).toBeNull();
+	it('says why there are no members before the server reports', () => {
+		setRoom(null);
+		renderMembers(null);
+		expect(screen.getByText('Waiting for the room to report who is in it.')).toBeTruthy();
+		expect(document.querySelector('[data-sketch-room-actor]')).toBeNull();
 	});
+});
 
-	it('shows the Y4 banner while a screen outage is counted', () => {
-		renderPanel();
-		expect(row('[data-sketch-screen-outage]').textContent).toBe(
-			'Your screen failed 2 guest requests'
-		);
-	});
-
+describe('SketchFlaggedElements', () => {
 	it('lists the flagged elements the board still holds, and deletes one as the conductor', async () => {
-		renderPanel();
+		const { run } = renderFlagged();
 		await waitFor(() =>
 			expect(document.querySelector('[data-sketch-flagged-element="el-live"]')).toBeTruthy()
 		);
 		expect(document.querySelector('[data-sketch-flagged-element="el-gone"]')).toBeNull();
 		const live = row('[data-sketch-flagged-element="el-live"]');
 		expect(live.textContent).toContain('Flagged by Prompt Guard 2 22M, 0.97 (on this computer)');
-		fireEvent.click(within(live).getByText('Delete'));
+		fireEvent.click(within(live).getByRole('button', { name: 'Delete the flagged text' }));
 		await waitFor(() =>
 			expect(writes.deleteSketchElementsAsConductor).toHaveBeenCalledWith(SKETCH_ID, ['el-live'])
 		);
+		expect(run).toHaveBeenCalledTimes(1);
 	});
 
-	it('asks again in place before Reset all access', async () => {
-		renderPanel();
-		fireEvent.click(screen.getByText('Reset all access'));
-		expect(sketchApi.rotate).not.toHaveBeenCalled();
-		expect(screen.getByText(/Every link stops working/)).toBeTruthy();
-		fireEvent.click(screen.getByText('Cancel'));
-		fireEvent.click(screen.getByText('Reset all access'));
-		const buttons = screen.getAllByText('Reset all access');
-		fireEvent.click(buttons[buttons.length - 1]);
-		await waitFor(() => expect(sketchApi.rotate).toHaveBeenCalledWith(SKETCH_ID));
+	it('hands an unreadable audit log to the panel error line', async () => {
+		sketchApi.roomAudit.mockRejectedValueOnce(new Error('Sketch Book: no room.'));
+		const { onError } = renderFlagged();
+		await waitFor(() => expect(onError).toHaveBeenCalledWith('Sketch Book: no room.'));
 	});
+});
 
-	it('shows an action error', async () => {
-		sketchApi.roomAction.mockRejectedValueOnce(
-			new Error('Sketch Book: the room is not connected yet.')
-		);
-		renderPanel();
-		fireEvent.click(within(row('[data-sketch-room-actor="guest-1"]')).getByText('Kick'));
-		expect((await screen.findByRole('alert')).textContent).toContain('not connected');
-	});
-
-	it('says why there are no members before the server reports', () => {
-		setRoom(null);
-		renderPanel();
-		expect(screen.getByText('Waiting for the room to report who is in it.')).toBeTruthy();
-		expect(document.querySelector('[data-sketch-room-actor]')).toBeNull();
-	});
-
-	it('closes on its close button', () => {
-		const { onClose } = renderPanel();
-		fireEvent.click(screen.getByRole('button', { name: 'Close the Room panel' }));
-		expect(onClose).toHaveBeenCalled();
+describe('findRoomStatsCap', () => {
+	it('finds a link by id in the stats, and nothing without stats', () => {
+		expect(findRoomStatsCap(makeStats(), 'Cap000000001')?.label).toBe('Review');
+		expect(findRoomStatsCap(makeStats(), 'nope')).toBeUndefined();
+		expect(findRoomStatsCap(null, 'Cap000000001')).toBeUndefined();
 	});
 });

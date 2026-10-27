@@ -24,17 +24,40 @@ A sketch belongs to the agent you open it on. Only that agent can read or draw o
 
 A Sketch tab behaves like any other tab: you can rename, tile, snooze, or move it to another window. Closing the tab does not stop a shared room.
 
+## Finding a sketch again
+
+Closing a Sketch tab never deletes the drawing. **Reopen Closed Tab** (`Cmd+Shift+T`) brings back a recent one. For any sketch, open the **Sketch Books** list:
+
+| Way in          | How                                                                                       |
+| --------------- | ----------------------------------------------------------------------------------------- |
+| Keyboard        | `Opt+Cmd+Shift+K` (macOS) or `Alt+Ctrl+Shift+K` (Windows and Linux)                       |
+| Command palette | **Sketch Books**                                                                          |
+| Menu            | **Sketch Books** in the hamburger menu of the Left Bar, or **File** > **Sketch Books...** |
+| Tab bar         | The search (magnifier) menu, then **See Sketches (this agent)**                           |
+
+The keyboard, palette and menus list every sketch on this computer across all agents, newest first. The tab bar entry lists only the current agent's sketches, both the ones open in its tabs and the closed ones. Type to search by sketch name, agent name, or id. Each row shows the owning agent, when the sketch was made, and whether it is **Open** in a tab or **Shared**.
+
+| Action | How                                       | Notes                                                                                      |
+| ------ | ----------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Open   | `Enter`, double-click, or the open button | Opens the sketch in a tab on the agent that owns it. Not possible when that agent is gone. |
+| Rename | `F2` or the pencil button                 | Renames the sketch. Tab labels are the tabs' own and do not change.                        |
+| Delete | The trash button, then **Delete**         | Removes the drawing and closes its tabs. Stop sharing a shared sketch first.               |
+
 From a terminal:
 
 ```bash
 maestro-cli sketch new --agent <agent-id> --name "Architecture"   # opens in a background tab
 maestro-cli sketch list
 maestro-cli sketch open <sketchId>
+maestro-cli sketch rename <sketchId> "Release plan"
+maestro-cli sketch delete <sketchId>                               # asks first; --yes skips it
 maestro-cli sketch read <sketchId>                                 # a summary of shapes and connections
 maestro-cli sketch export <sketchId> --format png --output board.png
 ```
 
 Sketches are saved on this computer, in Maestro's data folder under `sketches/<agentId>/`. Use **Save to project** in the Sketch tab to put a copy in the agent's working directory. Deleting an agent does not delete its sketches.
+
+On the canvas, Excalidraw's shortcuts win over Maestro's, except tab switching, Quick Actions (`Cmd+K`) and Switch Agent (`Cmd+O`), which always leave the sketch. Excalidraw's Add link is `Cmd+Opt+B` there, Open is `Cmd+Opt+O`, and Reset zoom is `Shift+0`. See [Keyboard Shortcuts](./keyboard-shortcuts#sketch-book) for the full list.
 
 ### What the agent can do
 
@@ -48,26 +71,44 @@ Sharing puts the sketch in a room on RunMaestro.ai and gives you a link. The boa
 
 Open the **Collaborate** panel with the **Collaborate** button at the top right of the canvas, **Collaborate...** in the canvas menu, or `Cmd+Shift+C` (`Ctrl+Shift+C` on Windows and Linux) while the Sketch tab has focus. The button turns green while the room is live, and a **Room** button appears beside it once the sketch has a room. Excalidraw's **Library** sits at the bottom right, beside **Help**.
 
-The first time you share, the Collaborate panel asks for your email address and sends a confirmation link. After you confirm, this computer holds the sign-in. No browser can act as the room owner: the owner is this desktop.
+The first time you share, the Collaborate panel asks for your email address and sends a confirmation link. Any address works. Click the link and the panel turns to **Share and copy link** on its own, also if you closed it and opened it again meanwhile. Confirming also subscribes the address to occasional Maestro news, with an unsubscribe link in every issue. After you confirm, this computer holds the sign-in. No browser can act as the room owner: the owner is this desktop.
 
 | Link role         | A guest with this link can       | Default expiry |
 | ----------------- | -------------------------------- | -------------- |
 | Read-write (`rw`) | View, edit, chat, and ask `@bot` | 7 days         |
 | Read-only (`ro`)  | View and chat                    | 30 days        |
 
-Each share mints a new link. Give each person or group their own link, so you can revoke one without the others. The link is copied to the clipboard; it is not shown in a notification.
+Each share mints a new link. Give each person or group their own link, so you can revoke one without the others. The link is copied to the clipboard; it is not shown in a notification. Every live link is listed under **Links** in the panel:
+
+- **Copy** copies that link again, for example into a meeting chat.
+- **Reset** replaces that link with a new one with the same access, and copies it. Guests on the old link are disconnected.
+- **Revoke** ends that link for good.
+
+Maestro keeps each link's secret encrypted on this computer, beside the room key, so it can copy the link again later. A link made before this change cannot be copied; reset it to get one that can.
 
 ```bash
 maestro-cli sketch owner register --email you@example.com --wait
 maestro-cli sketch share <sketchId> --role rw --expires-days 3 --label "Design review"
-maestro-cli sketch unshare <sketchId>         # delete the room; the sketch stays
+maestro-cli sketch link <sketchId> <capId>        # print a live link again
+maestro-cli sketch reset-link <sketchId> <capId>  # replace one link
+maestro-cli sketch unshare <sketchId>             # delete the room; the sketch stays
 ```
 
-When an agent runs `share`, `unshare`, `revoke-link`, or `rotate`, Maestro shows a confirmation on the desktop instead of running it.
+When an agent runs `share`, `unshare`, `link`, `reset-link`, `revoke-link`, or `rotate`, Maestro shows a confirmation on the desktop instead of running it.
 
 ## Asking the agent: @bot
 
 Type `@bot` (or `@` and the agent's name) in the room chat to ask the agent for something. The agent answers in the chat and draws on the board.
+
+You chat from the **Chat** pane beside the canvas. It shows whenever the sketch is shared, and ends in a message box: **Enter** sends, **Shift+Enter** starts a new line. A message that starts with `@bot` asks the agent; anything else goes to the room for everyone to read. On a sketch you have not shared, every message asks the agent.
+
+```bash
+maestro-cli sketch chat <sketchId> --last 10            # read the chat
+maestro-cli sketch chat <sketchId> "Looks good to me"   # post to the room as you
+maestro-cli sketch chat <sketchId> "@bot label every box"
+```
+
+When an agent posts with `sketch chat`, Maestro asks you on the desktop first, since the message goes out under your name. An agent that reads the chat never sees a guest's message: nothing screened it, so the text is withheld.
 
 **Your own requests** run as soon as you send them, in a separate conversation that belongs to the sketch, never the agent's other tabs. Until a guest has edited the board, they run with the agent's normal permissions. After a guest edit, your requests run **restricted** (read-only, plus the sketch tools), because the board now holds text you did not write. Under a restricted reply, **Run with full access** runs that one message again with full access. It never carries over to the next message.
 
@@ -129,11 +170,11 @@ A guest opens the link in any modern browser, picks a display name, and sees the
 - When your computer is asleep, offline, or Maestro is closed, the agent shows as offline and `@bot` is refused at once. Requests are never queued for later.
 - The room's screening badge reads **Local screening** or **Screened by a cloud service**, marked "reported by the room owner", since the server cannot check it.
 
-The Sketch tab header shows the same screening badge. If your screen failed any guest requests, a banner above the board says how many.
+The same screening badge shows at the bottom center of the canvas. If your screen failed any guest requests, a banner above the board says how many.
 
-## Room panel: Kick vs Revoke
+## Running the room: Kick vs Revoke
 
-The **Room** button at the top right of the canvas opens the Room panel while the sketch is shared. It lists who is in the room, each link with its expiry, and the elements the screen flagged, with a one-click delete for each.
+Once the sketch is shared, the Collaborate panel splits into three tabs. **Share** makes new links and lists the live ones, each with Copy, Reset, and Revoke. **People** lists who is in the room, with Kick and Unlock. **Safety** holds **Let collaborators ask the agent**, how guest text is screened, the elements the screen flagged (with a one-click delete for each), and **Reset all access**. **Stop sharing** sits at the bottom of the panel.
 
 | Action               | What it does                                                                                     | Use it when                                  |
 | -------------------- | ------------------------------------------------------------------------------------------------ | -------------------------------------------- |

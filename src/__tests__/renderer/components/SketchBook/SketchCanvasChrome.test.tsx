@@ -1,28 +1,21 @@
 /**
  * Maestro's controls inside the Sketch Book canvas (SketchCanvasChrome):
- * Collaborate and Room at the top right, Library in the footer beside Help.
+ * Collaborate at the top right; the screening badge at the footer center and
+ * Library in the footer beside Help.
  */
 
 import type { ComponentProps, ReactNode } from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import {
-	SketchLibraryTrigger,
+	SketchFooter,
 	SketchTopRightUI,
 	type SketchCanvasChrome,
 } from '../../../../renderer/components/SketchBook/SketchCanvasChrome';
 
-type ButtonProps = { onSelect: () => void; children?: ReactNode; className?: string };
-
-const FakeButton = (({ onSelect, children, className, ...rest }: ButtonProps) => (
-	<button type="button" className={className} onClick={onSelect} {...rest}>
-		{children}
-	</button>
-)) as unknown as ComponentProps<typeof SketchTopRightUI>['Button'];
-
 const FakeFooter = (({ children }: { children?: ReactNode }) => (
 	<footer data-testid="excalidraw-footer">{children}</footer>
-)) as unknown as ComponentProps<typeof SketchLibraryTrigger>['Footer'];
+)) as unknown as ComponentProps<typeof SketchFooter>['Footer'];
 
 const FakeSidebar = {
 	Trigger: ({
@@ -48,28 +41,27 @@ const FakeSidebar = {
 			{children}
 		</label>
 	),
-} as unknown as ComponentProps<typeof SketchLibraryTrigger>['Sidebar'];
+} as unknown as ComponentProps<typeof SketchFooter>['Sidebar'];
 
 function chromeWith(overrides: Partial<SketchCanvasChrome> = {}): SketchCanvasChrome {
 	return {
 		collaborate: { open: false, live: false, shortcut: '⌘ ⇧ C', onToggle: vi.fn() },
-		room: null,
-		badge: null,
 		...overrides,
 	};
 }
 
 describe('SketchTopRightUI', () => {
-	it('shows only Collaborate while the sketch has no room, with its chord in the title', () => {
+	it('shows Collaborate with its chord in the title', () => {
 		const chrome = chromeWith();
-		render(<SketchTopRightUI Button={FakeButton} chrome={chrome} />);
+		render(<SketchTopRightUI chrome={chrome} />);
 
 		const collaborate = screen.getByTestId('sketch-collaborate-button');
 		expect(collaborate.textContent).toBe('Collaborate');
 		expect(collaborate.getAttribute('title')).toBe('Collaborate (⌘ ⇧ C)');
 		expect(collaborate.getAttribute('aria-pressed')).toBe('false');
 		expect(collaborate.className).not.toMatch(/\bactive\b/);
-		expect(screen.queryByLabelText('Show the room')).toBeNull();
+		expect(collaborate.className).not.toMatch(/\bsketch-chrome-button--live\b/);
+		expect(screen.getAllByRole('button')).toHaveLength(1);
 
 		fireEvent.click(collaborate);
 		expect(chrome.collaborate.onToggle).toHaveBeenCalledTimes(1);
@@ -78,7 +70,6 @@ describe('SketchTopRightUI', () => {
 	it('titles Collaborate without a chord when it is unbound', () => {
 		render(
 			<SketchTopRightUI
-				Button={FakeButton}
 				chrome={chromeWith({
 					collaborate: { open: false, live: false, shortcut: '', onToggle: vi.fn() },
 				})}
@@ -90,15 +81,26 @@ describe('SketchTopRightUI', () => {
 		);
 	});
 
-	it('marks Collaborate active while the room is live and shows Room and the badge', () => {
-		const onRoom = vi.fn();
+	it('marks a live room green without pressing Collaborate while its panel is shut', () => {
 		render(
 			<SketchTopRightUI
-				Button={FakeButton}
+				chrome={chromeWith({
+					collaborate: { open: false, live: true, shortcut: '', onToggle: vi.fn() },
+				})}
+			/>
+		);
+
+		const collaborate = screen.getByTestId('sketch-collaborate-button');
+		expect(collaborate.className).toMatch(/\bsketch-chrome-button--live\b/);
+		expect(collaborate.className).not.toMatch(/\bactive\b/);
+		expect(collaborate.getAttribute('aria-pressed')).toBe('false');
+	});
+
+	it('marks Collaborate active while its panel is open', () => {
+		render(
+			<SketchTopRightUI
 				chrome={chromeWith({
 					collaborate: { open: true, live: true, shortcut: '⌘ ⇧ C', onToggle: vi.fn() },
-					room: { open: true, onToggle: onRoom },
-					badge: <span data-testid="screening-badge">Local screening</span>,
 				})}
 			/>
 		);
@@ -106,23 +108,33 @@ describe('SketchTopRightUI', () => {
 		const collaborate = screen.getByTestId('sketch-collaborate-button');
 		expect(collaborate.className).toMatch(/\bactive\b/);
 		expect(collaborate.getAttribute('aria-pressed')).toBe('true');
-		expect(screen.getByTestId('screening-badge')).toBeTruthy();
-
-		const room = screen.getByLabelText('Show the room');
-		expect(room.className).toMatch(/\bactive\b/);
-		fireEvent.click(room);
-		expect(onRoom).toHaveBeenCalledTimes(1);
 	});
 });
 
-describe('SketchLibraryTrigger', () => {
+describe('SketchFooter', () => {
 	it('puts a Library trigger for the default sidebar into the footer', () => {
-		render(<SketchLibraryTrigger Footer={FakeFooter} Sidebar={FakeSidebar} />);
+		render(<SketchFooter Footer={FakeFooter} Sidebar={FakeSidebar} badge={null} />);
 
 		const trigger = screen.getByTestId('sidebar-trigger');
 		expect(screen.getByTestId('excalidraw-footer').contains(trigger)).toBe(true);
 		expect(trigger.dataset.name).toBe('default');
 		expect(trigger.dataset.tab).toBe('library');
 		expect(trigger.textContent).toBe('Library');
+	});
+
+	it('puts the screening badge in the footer center, before Library', () => {
+		render(
+			<SketchFooter
+				Footer={FakeFooter}
+				Sidebar={FakeSidebar}
+				badge={<span data-testid="screening-badge">Local screening</span>}
+			/>
+		);
+
+		const badge = screen.getByTestId('screening-badge');
+		const center = badge.closest('.sketch-chrome-badge');
+		expect(center).toBeTruthy();
+		expect(center?.parentElement?.className).toBe('sketch-chrome-footer');
+		expect(center?.nextElementSibling).toBe(screen.getByTestId('sidebar-trigger'));
 	});
 });

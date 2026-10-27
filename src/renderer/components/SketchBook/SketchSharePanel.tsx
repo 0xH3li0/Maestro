@@ -1,30 +1,62 @@
 /**
- * The Sketch tab's Collaborate panel (spec section 6): sign in to RunMaestro.ai,
- * share the sketch, copy a new link, revoke one, let collaborators ask the
- * agent (B2, `SketchBotPolicyToggle`), reset all access, or stop sharing.
+ * The Sketch tab's Collaborate panel (spec section 6).
+ *
+ * Signed out, it is the RunMaestro.ai sign-in. Signed in on a sketch that is
+ * not shared, it is one step: pick Can edit or Can view, then Share and copy
+ * link. Once shared it splits into three tabs, so each holds one job:
+ *
+ * - Share: a new link, and each live link with Copy, Reset and Revoke (plus
+ *   Unsuspend when the room suspended `@bot` on it).
+ * - People: who is in the room, with Kick and Unlock (`SketchRoomMembers`).
+ * - Safety: who may ask the agent (B2, `SketchBotPolicyToggle`), how guest text
+ *   is screened, flagged elements (`SketchFlaggedElements`), and Reset all
+ *   access.
+ *
+ * The footer names the signed-in account and holds Stop sharing. Reset all
+ * access and Stop sharing ask again in place before they run.
  *
  * Every action is a `window.maestro.sketch.*` call into the one SketchService
- * that `maestro-cli sketch share|unshare|revoke-link|rotate|owner` also
- * reaches. A link holds the room key and its cap, and the server returns the
- * cap once, so a new link is copied straight to the clipboard
- * (`flashCopiedToClipboard()` names it, never shows it). Only when the
- * clipboard refuses is the link shown here, once, to copy by hand.
+ * that `maestro-cli sketch share|unshare|link|reset-link|revoke-link|rotate|
+ * owner` also reaches. A link holds the room key and its cap; main keeps the
+ * cap sealed beside the key, so Copy rebuilds any live link. A link is copied
+ * straight to the clipboard (`flashCopiedToClipboard()` names it, never shows
+ * it); only when the clipboard refuses is it shown here, to copy by hand.
  *
- * Reset all access and Stop sharing ask again in place before they run.
+ * While the email confirmation is pending, the panel waits on main's poll
+ * whenever it is open, so it turns to the signed-in state on its own once the
+ * link in the email is clicked, also after it was closed and opened again.
  */
 
 import React from 'react';
-import { Link2, RotateCcw, Share2, X } from 'lucide-react';
+import { Copy, Link2, RefreshCw, RotateCcw, Share2, Trash2, X } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { SketchOwnerStatus } from '../../../shared/sketch/server';
 import type { SketchLinkRole, SketchRecord } from '../../../shared/sketch/types';
-import { formatFutureTime, formatRelativeTime } from '../../../shared/formatters';
+import { formatFutureTime } from '../../../shared/formatters';
+import { GhostIconButton } from '../ui/GhostIconButton';
 import { HeaderActionButton } from '../ui/HeaderActionButton';
+import { MiniBadge } from '../ui/MiniBadge';
+import { ModalTabStrip, tabPanelProps, useModalTabs, type ModalTab } from '../ui/ModalTabStrip';
 import { SegmentedControl } from '../ui/SegmentedControl';
 import { Spinner } from '../ui/Spinner';
 import { ipcErrorMessage } from '../../utils/ipcErrorMessage';
-import { shareSketchAndCopyLink, sketchLinkLabel } from '../../services/sketchSharing';
+import { useSketchSessionStore } from '../../stores/sketchSessionStore';
+import {
+	copyExistingSketchLink,
+	resetSketchLinkAndCopy,
+	shareSketchAndCopyLink,
+	sketchLinkLabel,
+} from '../../services/sketchSharing';
 import { SketchBotPolicyToggle } from './SketchBotPolicyToggle';
+import { SketchScreeningBadge } from './SketchRoomScreening';
+import {
+	findRoomStatsCap,
+	SketchFlaggedElements,
+	SketchMetaLine,
+	SketchPanelSection,
+	SketchRoomMembers,
+	useSketchRoomStats,
+} from './SketchRoomSections';
 
 export interface SketchSharePanelProps {
 	sketchId: string;
@@ -37,7 +69,66 @@ const ROLE_OPTIONS = [
 	{ value: 'ro' as const, label: 'Can view' },
 ];
 
-type Armed = 'unshare' | 'rotate' | null;
+type CollaborateTab = 'share' | 'people' | 'safety';
+const TAB_IDS: readonly CollaborateTab[] = ['share', 'people', 'safety'];
+const TAB_PREFIX = 'sketch-collaborate';
+
+const ROTATE_WARNING =
+	'Every link stops working and every guest is disconnected. The room history is cleared and the sketch is uploaded again under a new key.';
+const UNSHARE_WARNING =
+	'The room is deleted on RunMaestro.ai and every guest is disconnected. The sketch stays on this computer.';
+
+/** A button that asks again in place, with the consequence, before it runs. */
+function ConfirmInPlace({
+	theme,
+	label,
+	warning,
+	icon,
+	busy,
+	onConfirm,
+}: {
+	theme: Theme;
+	label: string;
+	warning: string;
+	icon?: React.ReactNode;
+	busy: boolean;
+	onConfirm: () => void;
+}) {
+	const [armed, setArmed] = React.useState(false);
+	if (!armed) {
+		return (
+			<HeaderActionButton
+				theme={theme}
+				variant="ghost"
+				icon={icon}
+				disabled={busy}
+				onClick={() => setArmed(true)}
+			>
+				{label}
+			</HeaderActionButton>
+		);
+	}
+	return (
+		<div className="basis-full flex flex-col gap-2">
+			<div style={{ color: theme.colors.warning }}>{warning}</div>
+			<div className="flex gap-2">
+				<HeaderActionButton
+					theme={theme}
+					disabled={busy}
+					onClick={() => {
+						setArmed(false);
+						onConfirm();
+					}}
+				>
+					{label}
+				</HeaderActionButton>
+				<HeaderActionButton theme={theme} variant="ghost" onClick={() => setArmed(false)}>
+					Cancel
+				</HeaderActionButton>
+			</div>
+		</div>
+	);
+}
 
 export function SketchSharePanel({ sketchId, theme, onClose }: SketchSharePanelProps) {
 	const [record, setRecord] = React.useState<SketchRecord | null>(null);
@@ -46,10 +137,23 @@ export function SketchSharePanel({ sketchId, theme, onClose }: SketchSharePanelP
 	const [role, setRole] = React.useState<SketchLinkRole>('rw');
 	const [busy, setBusy] = React.useState(false);
 	const [error, setError] = React.useState<string | null>(null);
-	/** A link the clipboard refused: shown once, to copy by hand. */
+	/** A link the clipboard refused, to copy by hand. */
 	const [uncopied, setUncopied] = React.useState<string | null>(null);
-	const [armed, setArmed] = React.useState<Armed>(null);
+	const stats = useSketchRoomStats(sketchId);
+	const screening = useSketchSessionStore((s) => {
+		const room = s.sessions[sketchId]?.room;
+		return room && room.connection !== 'stopped' ? room.screening.server : null;
+	});
+	const { activeTab, setActiveTab } = useModalTabs<CollaborateTab>({
+		tabs: TAB_IDS,
+		initialTab: 'share',
+		rememberKey: TAB_PREFIX,
+		// Cmd+Shift+[ / ] belongs to Maestro's own tab cycling here, not this panel.
+		enabled: false,
+	});
 	const mounted = React.useRef(true);
+	/** True while this panel waits on main's confirmation poll. */
+	const waiting = React.useRef(false);
 
 	React.useEffect(() => {
 		mounted.current = true;
@@ -72,12 +176,39 @@ export function SketchSharePanel({ sketchId, theme, onClose }: SketchSharePanelP
 		refresh().catch((err) => setError(ipcErrorMessage(err)));
 	}, [refresh]);
 
+	const shared = record?.share ?? null;
+
+	// Ask the server for fresh stats once the panel shows a shared sketch;
+	// pushes keep them current after.
+	React.useEffect(() => {
+		if (shared) window.maestro.sketch.roomStats(sketchId).catch(() => undefined);
+	}, [sketchId, shared]);
+
+	// Wait for the click whenever a confirmation is pending: after Send, and when
+	// the panel opens on a pending one. Main polls (15 minutes at most per wait,
+	// one poll shared by every caller); a wait that ends still pending sets a new
+	// status, which starts the next one. Not part of the busy state: the panel
+	// stays usable, to send the email again.
+	React.useEffect(() => {
+		if (owner?.state !== 'pending' || owner.otherServer || waiting.current) return;
+		waiting.current = true;
+		window.maestro.sketch
+			.waitForOwner()
+			.then((status) => {
+				waiting.current = false;
+				if (mounted.current) setOwner(status);
+			})
+			.catch((err) => {
+				waiting.current = false;
+				if (mounted.current) setError(ipcErrorMessage(err));
+			});
+	}, [owner]);
+
 	/** Run one action: busy while it runs, its error shown, the state read again after. */
 	const run = React.useCallback(
-		async (action: () => Promise<void>) => {
+		async (action: () => Promise<unknown>) => {
 			setBusy(true);
 			setError(null);
-			setArmed(null);
 			try {
 				await action();
 			} catch (err) {
@@ -94,44 +225,161 @@ export function SketchSharePanel({ sketchId, theme, onClose }: SketchSharePanelP
 		run(async () => {
 			await window.maestro.sketch.registerOwner(email);
 			if (mounted.current) setOwner(await window.maestro.sketch.ownerStatus());
-			// Main polls until the link in the email is clicked (15 minutes at most).
-			// Not part of the busy state: the panel stays usable, to send the email again.
-			void window.maestro.sketch
-				.waitForOwner()
-				.then((status) => {
-					if (mounted.current) setOwner(status);
-				})
-				.catch((err) => {
-					if (mounted.current) setError(ipcErrorMessage(err));
-				});
+		});
+
+	/** Run a link action that copies a link; a refused clipboard shows the link instead. */
+	const runCopy = (action: () => Promise<{ url: string; copied: boolean }>) =>
+		run(async () => {
+			setUncopied(null);
+			const { url, copied } = await action();
+			if (!copied && mounted.current) setUncopied(url);
 		});
 
 	const share = () =>
-		run(async () => {
-			setUncopied(null);
+		runCopy(async () => {
 			const { result, copied } = await shareSketchAndCopyLink(sketchId, { role });
-			if (!copied && mounted.current) setUncopied(result.link.url);
+			return { url: result.link.url, copied };
 		});
 
-	const panelStyle = {
-		borderLeft: `1px solid ${theme.colors.border}`,
-		backgroundColor: theme.colors.bgSidebar,
-	};
 	const dim = { color: theme.colors.textDim };
-	const shared = record?.share ?? null;
 	const liveLinks = shared?.links.filter((link) => !link.revoked) ?? [];
 	const signedIn = owner?.state === 'confirmed' && !owner.otherServer;
+	const tabbed = Boolean(shared && signedIn);
+	const tab: CollaborateTab = tabbed ? activeTab : 'share';
+	const tabs: ModalTab<CollaborateTab>[] = [
+		{ id: 'share', label: 'Share' },
+		{ id: 'people', label: 'People', count: stats?.actors.length },
+		{ id: 'safety', label: 'Safety' },
+	];
+
+	const newLink = (
+		<div className="flex flex-col gap-2">
+			<SegmentedControl
+				value={role}
+				onChange={setRole}
+				options={ROLE_OPTIONS}
+				theme={theme}
+				ariaLabel="What the link allows"
+				appearance="pills"
+				stretch
+			/>
+			<HeaderActionButton
+				theme={theme}
+				onClick={() => void share()}
+				disabled={busy}
+				icon={shared ? <Link2 /> : <Share2 />}
+				className="w-full justify-center py-1.5"
+			>
+				{shared ? 'Copy a new link' : 'Share and copy link'}
+			</HeaderActionButton>
+			<div className="text-center" style={dim}>
+				{role === 'rw'
+					? 'Anyone with it can view and edit for 7 days.'
+					: 'Anyone with it can view for 30 days.'}
+			</div>
+		</div>
+	);
+
+	const linkRows = (
+		<SketchPanelSection title="Live links" theme={theme}>
+			{liveLinks.length === 0 && <div style={dim}>No live links.</div>}
+			{liveLinks.map((link) => {
+				const cap = findRoomStatsCap(stats, link.capId);
+				const label = sketchLinkLabel(link.role, link.label);
+				return (
+					<div key={link.capId} className="flex flex-col gap-1 py-1" data-sketch-link={link.capId}>
+						<div className="flex items-center gap-1">
+							<div className="min-w-0 flex-1 flex flex-col gap-0.5">
+								<span className="break-words" style={{ color: theme.colors.textMain }}>
+									{label}
+								</span>
+								<SketchMetaLine
+									theme={theme}
+									items={[
+										link.expiresAt !== null
+											? `Expires ${formatFutureTime(link.expiresAt)}`
+											: 'Never expires',
+										cap && cap.online > 0 && `${cap.online} online`,
+										cap && cap.guardrailTotal > 0 && `rejected ${cap.guardrailTotal}`,
+									]}
+								/>
+							</div>
+							<GhostIconButton
+								ariaLabel={`Copy ${label}`}
+								title="Copy this link"
+								color={theme.colors.textDim}
+								padding="p-1.5"
+								disabled={busy}
+								onClick={() => void runCopy(() => copyExistingSketchLink(sketchId, link.capId))}
+							>
+								<Copy className="w-3.5 h-3.5" />
+							</GhostIconButton>
+							<GhostIconButton
+								ariaLabel={`Reset ${label}`}
+								title="Replace it with a new link: guests on this one are disconnected"
+								color={theme.colors.textDim}
+								padding="p-1.5"
+								disabled={busy}
+								onClick={() =>
+									void runCopy(async () => {
+										const { result, copied } = await resetSketchLinkAndCopy(sketchId, link.capId);
+										return { url: result.link.url, copied };
+									})
+								}
+							>
+								<RefreshCw className="w-3.5 h-3.5" />
+							</GhostIconButton>
+							<GhostIconButton
+								ariaLabel={`Revoke ${label}`}
+								title="Revoke: the link stops working and guests on it are disconnected"
+								color={theme.colors.textDim}
+								padding="p-1.5"
+								disabled={busy}
+								onClick={() =>
+									void run(() => window.maestro.sketch.revokeLink(sketchId, link.capId))
+								}
+							>
+								<Trash2 className="w-3.5 h-3.5" />
+							</GhostIconButton>
+						</div>
+						{cap?.botSuspended && (
+							<div className="flex items-center gap-2">
+								<MiniBadge label="@bot suspended" theme={theme} color={theme.colors.warning} />
+								<HeaderActionButton
+									theme={theme}
+									variant="ghost"
+									disabled={busy}
+									onClick={() =>
+										void run(() =>
+											window.maestro.sketch.roomAction(sketchId, 'unsuspend', {
+												capId: link.capId,
+											})
+										)
+									}
+								>
+									Unsuspend
+								</HeaderActionButton>
+							</div>
+						)}
+					</div>
+				);
+			})}
+		</SketchPanelSection>
+	);
 
 	return (
 		<aside
 			className="w-80 shrink-0 flex flex-col min-h-0 select-none"
 			aria-label="Collaborate on this sketch"
 			data-sketch-share-panel=""
-			style={panelStyle}
+			style={{
+				borderLeft: `1px solid ${theme.colors.border}`,
+				backgroundColor: theme.colors.bgSidebar,
+			}}
 		>
 			<div
 				className="px-3 py-2 flex items-center justify-between text-xs font-medium"
-				style={{ ...dim, borderBottom: `1px solid ${theme.colors.border}` }}
+				style={{ ...dim, borderBottom: tabbed ? undefined : `1px solid ${theme.colors.border}` }}
 			>
 				<span>{shared ? 'Shared on RunMaestro.ai' : 'Collaborate'}</span>
 				<button
@@ -143,8 +391,22 @@ export function SketchSharePanel({ sketchId, theme, onClose }: SketchSharePanelP
 					<X className="w-3.5 h-3.5" />
 				</button>
 			</div>
+			{tabbed && (
+				<ModalTabStrip
+					theme={theme}
+					tabs={tabs}
+					activeTab={tab}
+					onChange={setActiveTab}
+					label="Collaborate"
+					idPrefix={TAB_PREFIX}
+					className="px-2"
+				/>
+			)}
 
-			<div className="flex-1 min-h-0 overflow-y-auto px-3 py-3 flex flex-col gap-3 text-xs">
+			<div
+				className="flex-1 min-h-0 overflow-y-auto px-3 py-3 flex flex-col gap-3 text-xs"
+				{...(tabbed ? tabPanelProps(TAB_PREFIX, tab) : {})}
+			>
 				{owner === null && <Spinner size={16} color={theme.colors.accent} />}
 
 				{owner !== null && !signedIn && (
@@ -182,39 +444,12 @@ export function SketchSharePanel({ sketchId, theme, onClose }: SketchSharePanelP
 					</div>
 				)}
 
-				{signedIn && (
-					<>
-						<div style={dim}>Signed in as {owner?.email}.</div>
-						<div className="flex flex-col gap-2">
-							<SegmentedControl
-								value={role}
-								onChange={setRole}
-								options={ROLE_OPTIONS}
-								theme={theme}
-								ariaLabel="What the link allows"
-							/>
-							<HeaderActionButton
-								theme={theme}
-								onClick={() => void share()}
-								disabled={busy}
-								icon={shared ? <Link2 /> : <Share2 />}
-							>
-								{shared ? 'Copy a new link' : 'Share and copy link'}
-							</HeaderActionButton>
-							<div style={dim}>
-								{role === 'rw'
-									? 'Anyone with the link can view and edit, for 7 days.'
-									: 'Anyone with the link can view, for 30 days.'}{' '}
-								The link holds the key, so it is copied once and not kept here.
-							</div>
-						</div>
-					</>
-				)}
+				{signedIn && tab === 'share' && newLink}
 
 				{uncopied && (
 					<div className="flex flex-col gap-1">
 						<div style={{ color: theme.colors.warning }}>
-							The clipboard refused the link. Copy it now; it is not shown again.
+							The clipboard refused the link. Copy it from here.
 						</div>
 						<textarea
 							readOnly
@@ -231,103 +466,51 @@ export function SketchSharePanel({ sketchId, theme, onClose }: SketchSharePanelP
 					</div>
 				)}
 
-				{shared && (
-					<div className="flex flex-col gap-1">
-						<div className="font-medium" style={dim}>
-							Links
-						</div>
-						{liveLinks.length === 0 && <div style={dim}>No live links.</div>}
-						{liveLinks.map((link) => (
-							<div
-								key={link.capId}
-								className="flex items-center justify-between gap-2 py-1"
-								data-sketch-link={link.capId}
-							>
-								<div className="min-w-0">
-									<div style={{ color: theme.colors.textMain }}>
-										{sketchLinkLabel(link.role, link.label)}
-									</div>
-									<div style={dim}>
-										Made {formatRelativeTime(link.createdAt)}
-										{link.expiresAt !== null ? `, expires ${formatFutureTime(link.expiresAt)}` : ''}
-									</div>
-								</div>
-								<HeaderActionButton
-									theme={theme}
-									variant="ghost"
-									disabled={busy}
-									onClick={() =>
-										void run(async () => {
-											await window.maestro.sketch.revokeLink(sketchId, link.capId);
-										})
-									}
-								>
-									Revoke
-								</HeaderActionButton>
-							</div>
-						))}
-					</div>
+				{shared && tab === 'share' && linkRows}
+
+				{tabbed && tab === 'people' && (
+					<SketchRoomMembers
+						sketchId={sketchId}
+						theme={theme}
+						stats={stats}
+						busy={busy}
+						run={run}
+					/>
 				)}
 
-				{shared && signedIn && record && (
-					<div className="pt-2" style={{ borderTop: `1px solid ${theme.colors.border}` }}>
+				{tabbed && tab === 'safety' && record && (
+					<>
 						<SketchBotPolicyToggle sketchId={sketchId} sketchName={record.name} theme={theme} />
-					</div>
-				)}
-
-				{shared && signedIn && (
-					<div
-						className="flex flex-col gap-2 pt-2"
-						style={{ borderTop: `1px solid ${theme.colors.border}` }}
-					>
-						{armed === null && (
-							<>
-								<HeaderActionButton
-									theme={theme}
-									variant="ghost"
-									icon={<RotateCcw />}
-									disabled={busy}
-									onClick={() => setArmed('rotate')}
-								>
-									Reset all access
-								</HeaderActionButton>
-								<HeaderActionButton
-									theme={theme}
-									variant="ghost"
-									disabled={busy}
-									onClick={() => setArmed('unshare')}
-								>
-									Stop sharing
-								</HeaderActionButton>
-							</>
-						)}
-						{armed !== null && (
-							<div className="flex flex-col gap-2">
-								<div style={{ color: theme.colors.warning }}>
-									{armed === 'rotate'
-										? 'Every link stops working and every guest is disconnected. The room history is cleared and the sketch is uploaded again under a new key.'
-										: 'The room is deleted on RunMaestro.ai and every guest is disconnected. The sketch stays on this computer.'}
-								</div>
-								<div className="flex gap-2">
-									<HeaderActionButton
-										theme={theme}
-										disabled={busy}
-										onClick={() =>
-											void run(async () => {
-												if (armed === 'rotate') await window.maestro.sketch.rotate(sketchId);
-												else await window.maestro.sketch.unshare(sketchId);
-											})
-										}
-									>
-										{armed === 'rotate' ? 'Reset all access' : 'Stop sharing'}
-									</HeaderActionButton>
-									<HeaderActionButton theme={theme} variant="ghost" onClick={() => setArmed(null)}>
-										Cancel
-									</HeaderActionButton>
-								</div>
+						{stats?.guestEdited && (
+							<div style={dim}>
+								A guest has edited the board, so your @bot turns run restricted.
 							</div>
 						)}
-					</div>
+						<SketchPanelSection title="Guest text" theme={theme}>
+							<div className="flex items-center justify-between gap-2">
+								<span style={dim}>Screened for prompt injection</span>
+								<SketchScreeningBadge screening={screening} theme={theme} />
+							</div>
+						</SketchPanelSection>
+						<SketchFlaggedElements
+							sketchId={sketchId}
+							theme={theme}
+							stats={stats}
+							busy={busy}
+							run={run}
+							onError={setError}
+						/>
+						<SketchPanelSection title="Access" theme={theme}>
+							<ConfirmInPlace
+								theme={theme}
+								label="Reset all access"
+								warning={ROTATE_WARNING}
+								icon={<RotateCcw />}
+								busy={busy}
+								onConfirm={() => void run(() => window.maestro.sketch.rotate(sketchId))}
+							/>
+						</SketchPanelSection>
+					</>
 				)}
 
 				{busy && <Spinner size={16} color={theme.colors.accent} />}
@@ -337,6 +520,31 @@ export function SketchSharePanel({ sketchId, theme, onClose }: SketchSharePanelP
 					</div>
 				)}
 			</div>
+
+			{signedIn && (
+				<div
+					className="px-3 py-2 flex flex-wrap items-center justify-between gap-2 text-xs"
+					data-sketch-collaborate-footer=""
+					style={{ borderTop: `1px solid ${theme.colors.border}` }}
+				>
+					<span
+						className="min-w-0 flex-1 truncate"
+						style={dim}
+						title={owner?.email ? `Signed in as ${owner.email}` : undefined}
+					>
+						{owner?.email}
+					</span>
+					{shared && (
+						<ConfirmInPlace
+							theme={theme}
+							label="Stop sharing"
+							warning={UNSHARE_WARNING}
+							busy={busy}
+							onConfirm={() => void run(() => window.maestro.sketch.unshare(sketchId))}
+						/>
+					)}
+				</div>
+			)}
 		</aside>
 	);
 }

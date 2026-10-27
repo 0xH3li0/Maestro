@@ -58,6 +58,8 @@ import {
 	isSketchReadFormat,
 	sketchSceneJsonFile,
 	summarizeSketchScene,
+	withholdGuestChat,
+	type SketchChatReading,
 	type ExportedSketch,
 	type OpenedSketch,
 	type SketchExportFormat,
@@ -75,6 +77,7 @@ import { describeSketchActor } from '../../shared/sketch/attribution';
 import {
 	describeSketchVerdict,
 	isSketchBotDecisionOp,
+	sketchChatAsksBot,
 	sketchBotOpNeedsConfirmation,
 	type SketchBotDecisionOp,
 	type SketchBotRequestInfo,
@@ -100,6 +103,7 @@ import {
 } from '../../shared/sketch/types';
 import type {
 	SketchElementVersion,
+	SketchMintedLink,
 	SketchRoomJoin,
 	SketchSceneForSnapshot,
 	SketchShareOptions,
@@ -123,6 +127,7 @@ import { createSketchRoomApi, type SketchRoomApi, type SketchRoomAuth } from './
 import {
 	assertSketchScene,
 	getSketchStore,
+	linkCapSecretName,
 	type SaveToProjectOptions,
 	type SketchStore,
 } from './sketch-store';
@@ -175,7 +180,12 @@ export interface SketchService {
 	readScene(sketchId: string): Promise<SketchScene>;
 	writeScene(sketchId: string, scene: SketchScene): Promise<void>;
 	renameSketch(sketchId: string, name: string): Promise<SketchRecord>;
-	deleteSketch(sketchId: string): Promise<void>;
+	/**
+	 * Delete a sketch and close every tab pointing at it (`sketch delete`, the
+	 * Sketch Books list). Refused while it is shared: the room would outlive
+	 * the record that holds its key. An agent caller gets a desktop confirmation.
+	 */
+	deleteSketch(sketchId: string, caller?: SketchCaller): Promise<void>;
 	saveSketchToProject(
 		sketchId: string,
 		destDir: string,
@@ -212,6 +222,14 @@ export interface SketchService {
 	unshareSketch(sketchId: string, caller?: SketchCaller): Promise<SketchRecord>;
 	/** Revoke one link (`sketch revoke-link`). */
 	revokeSketchLink(sketchId: string, capId: string, caller?: SketchCaller): Promise<SketchRecord>;
+	/** A live link's URL again, from its sealed cap (`sketch link`). */
+	sketchLink(sketchId: string, capId: string, caller?: SketchCaller): Promise<SketchMintedLink>;
+	/** Revoke one link and mint its replacement, same role and label (`sketch reset-link`). */
+	resetSketchLink(
+		sketchId: string,
+		capId: string,
+		caller?: SketchCaller
+	): Promise<SketchShareResult>;
 	/** Reset all access: links revoked, a new key, a new snapshot (`sketch rotate`). */
 	rotateSketch(sketchId: string, caller?: SketchCaller): Promise<SketchRecord>;
 	/** The room client's periodic snapshot of the live scene. */
@@ -236,6 +254,13 @@ export interface SketchService {
 		replyTo: string,
 		caller?: SketchCaller
 	): Promise<SketchBotRequestInfo>;
+	/**
+	 * Read the chat pane, and first send `text` as the conductor when it is
+	 * set, the way the Sketch tab's composer does (`sketch chat`). An agent
+	 * caller's send waits on the desktop confirmation (A1), and an agent
+	 * caller never reads a guest's text, which nothing screened.
+	 */
+	sketchChat(sketchId: string, text?: string, caller?: SketchCaller): Promise<SketchChatReading>;
 }
 
 /** Longest stretch of a request quoted in the A1 confirmation. */
@@ -438,6 +463,99 @@ export function createSketchService(deps: SketchServiceDeps = {}): SketchService
 			);
 		}
 		return roomKey;
+	}
+
+	/** A live link of a shared sketch, by id. */
+	function requireLiveLink(record: SketchRecord, share: SketchShare, capId: unknown): SketchLink {
+		const id = requireString(capId, 'capId');
+		const link = share.links.find((candidate) => candidate.capId === id);
+		if (!link) throw new Error(`Sketch Book: "${record.name}" has no link "${id}".`);
+		if (link.revoked) throw new Error(`Sketch Book: link "${id}" on "${record.name}" is revoked.`);
+		return link;
+	}
+
+	/** How a link is named in a confirmation. */
+	function describeLink(link: Pick<SketchLink, 'role' | 'label'>): string {
+		return `${link.role === 'rw' ? 'edit' : 'view'} link${link.label ? ` "${link.label}"` : ''}`;
+	}
+
+	/** Forget the sealed caps of links that no longer work. */
+	async function forgetLinkCaps(
+		sketches: SketchStore,
+		sketchId: string,
+		capIds: string[]
+	): Promise<void> {
+		if (capIds.length === 0) return;
+		await sketches.setSketchSecrets(
+			sketchId,
+			Object.fromEntries(capIds.map((capId) => [linkCapSecretName(capId), null]))
+		);
+	}
+
+	/** Revoke a link on the server, mark it revoked, and forget its cap. */
+	async function revokeLink(
+		sketches: SketchStore,
+		record: SketchRecord,
+		auth: SketchRoomAuth,
+		capId: string
+	): Promise<SketchRecord> {
+		await roomApi.revokeLink(auth, requireShare(record).roomId, capId);
+		const updated = await sketches.updateSketchShare(record.sketchId, (prev) =>
+			prev
+				? {
+						...prev,
+						links: prev.links.map((candidate) =>
+							candidate.capId === capId ? { ...candidate, revoked: true } : candidate
+						),
+					}
+				: prev
+		);
+		await forgetLinkCaps(sketches, record.sketchId, [capId]);
+		return updated;
+	}
+
+	/**
+	 * Mint one link on a shared room, record it, and seal its cap so Copy link
+	 * can rebuild the URL later. The cap is worth less than the room key sealed
+	 * beside it, which alone decrypts the room.
+	 */
+	async function mintLink(
+		sketches: SketchStore,
+		record: SketchRecord,
+		auth: SketchRoomAuth,
+		roomKey: string,
+		link: { role: SketchLinkRole; expiresInDays: number; label: string }
+	): Promise<{ record: SketchRecord; link: SketchMintedLink }> {
+		const share = requireShare(record);
+		const minted = await roomApi.createLink(auth, share.roomId, {
+			role: link.role,
+			expiresInDays: link.expiresInDays,
+			...(link.label ? { label: link.label } : {}),
+		});
+		await sketches.setSketchSecrets(record.sketchId, {
+			[linkCapSecretName(minted.capId)]: minted.cap,
+		});
+		const stored: SketchLink = {
+			capId: minted.capId,
+			role: link.role,
+			label: link.label,
+			createdAt: now(),
+			expiresAt: minted.expiresAt,
+			revoked: false,
+		};
+		const updated = await sketches.updateSketchShare(record.sketchId, (prev) =>
+			prev ? { ...prev, links: [...prev.links, stored] } : prev
+		);
+		return {
+			record: updated,
+			link: {
+				capId: minted.capId,
+				role: link.role,
+				label: link.label,
+				expiresAt: minted.expiresAt,
+				url: sketchShareLinkUrl(auth.serverUrl, share.roomId, roomKey, minted.cap),
+			},
+		};
 	}
 
 	/**
@@ -664,8 +782,34 @@ export function createSketchService(deps: SketchServiceDeps = {}): SketchService
 			return sketches.renameSketch(requireString(sketchId, 'sketchId'), name);
 		},
 
-		async deleteSketch(sketchId) {
-			return open().deleteSketch(requireString(sketchId, 'sketchId'));
+		async deleteSketch(sketchId, caller) {
+			const sketches = open();
+			const record = await requireSketch(sketches, sketchId);
+			if (record.share) {
+				throw new Error(
+					`Sketch Book: "${record.name}" is shared. Stop sharing it first, then delete it.`
+				);
+			}
+			await confirmForAgent(caller, {
+				title: 'Delete a sketch?',
+				message: `Delete "${record.name}"?`,
+				detail:
+					'The drawing is removed from this computer and its open tab closes. This cannot be undone.',
+			});
+			await sketches.deleteSketch(record.sketchId);
+			// The record is gone either way; a window that cannot answer keeps a
+			// tab whose next autosave fails with "no sketch has the id".
+			const forgotten = await renderer(record.ownerAgentId, {
+				action: 'forget',
+				sketchId: record.sketchId,
+			});
+			if (!forgotten.success) {
+				logger.warn('A deleted sketch could not be closed in its window', LOG_CONTEXT, {
+					sketchId: record.sketchId,
+					error: forgotten.error,
+				});
+			}
+			logger.info('Sketch deleted', LOG_CONTEXT, { sketchId: record.sketchId });
 		},
 
 		async saveSketchToProject(sketchId, destDir, options) {
@@ -788,28 +932,19 @@ export function createSketchService(deps: SketchServiceDeps = {}): SketchService
 			}
 			const share = requireShare(current);
 
-			let minted;
+			let minted: SketchMintedLink;
 			try {
-				minted = await roomApi.createLink(auth, share.roomId, {
-					role: link.role,
-					expiresInDays: link.expiresInDays,
-					...(link.label ? { label: link.label } : {}),
-				});
+				({ record: current, link: minted } = await mintLink(
+					sketches,
+					current,
+					auth,
+					roomKey,
+					link
+				));
 			} catch (error) {
 				if (createdRoom) await rollbackRoom(sketches, current, auth, share.roomId);
 				throw error;
 			}
-			const stored: SketchLink = {
-				capId: minted.capId,
-				role: link.role,
-				label: link.label,
-				createdAt: now(),
-				expiresAt: minted.expiresAt,
-				revoked: false,
-			};
-			current = await sketches.updateSketchShare(record.sketchId, (prev) =>
-				prev ? { ...prev, links: [...prev.links, stored] } : prev
-			);
 			if (createdRoom) {
 				await syncRoom(current, connectionFor(current, share, auth, roomKey), baseline);
 			}
@@ -820,17 +955,7 @@ export function createSketchService(deps: SketchServiceDeps = {}): SketchService
 				role: link.role,
 				byAgent: Boolean(caller?.requestedBy),
 			});
-			return {
-				record: current,
-				createdRoom,
-				link: {
-					capId: minted.capId,
-					role: link.role,
-					label: link.label,
-					expiresAt: minted.expiresAt,
-					url: sketchShareLinkUrl(auth.serverUrl, share.roomId, roomKey, minted.cap),
-				},
-			};
+			return { record: current, createdRoom, link: minted };
 		},
 
 		async unshareSketch(sketchId, caller) {
@@ -848,6 +973,11 @@ export function createSketchService(deps: SketchServiceDeps = {}): SketchService
 			await roomApi.deleteRoom(auth, share.roomId);
 			const updated = await sketches.updateSketchShare(record.sketchId, () => null);
 			await sketches.setSketchSecrets(record.sketchId, { roomKey: null });
+			await forgetLinkCaps(
+				sketches,
+				record.sketchId,
+				share.links.map((link) => link.capId)
+			);
 			for (const key of [...uploadedFiles.keys()]) {
 				if (key.startsWith(`${share.roomId}:`)) uploadedFiles.delete(key);
 			}
@@ -867,22 +997,68 @@ export function createSketchService(deps: SketchServiceDeps = {}): SketchService
 			if (!link) throw new Error(`Sketch Book: "${record.name}" has no link "${id}".`);
 			await confirmForAgent(caller, {
 				title: 'Revoke a sketch link?',
-				message: `Revoke the ${link.role === 'rw' ? 'edit' : 'view'} link${link.label ? ` "${link.label}"` : ''} to "${record.name}"?`,
+				message: `Revoke the ${describeLink(link)} to "${record.name}"?`,
 				detail:
 					'Guests on this link are disconnected and the link stops working. Other links keep working.',
 			});
 			const auth = await requireAuth(share.serverUrl);
-			await roomApi.revokeLink(auth, share.roomId, id);
-			return sketches.updateSketchShare(record.sketchId, (prev) =>
-				prev
-					? {
-							...prev,
-							links: prev.links.map((candidate) =>
-								candidate.capId === id ? { ...candidate, revoked: true } : candidate
-							),
-						}
-					: prev
-			);
+			return revokeLink(sketches, record, auth, id);
+		},
+
+		async sketchLink(sketchId, capId, caller) {
+			const sketches = open();
+			const record = await requireSketch(sketches, sketchId);
+			const share = requireShare(record);
+			const link = requireLiveLink(record, share, capId);
+			await confirmForAgent(caller, {
+				title: 'Give the agent a sketch link?',
+				message: `Give the agent the ${describeLink(link)} to "${record.name}"?`,
+				detail: `The link holds the room key: anyone who has it can ${link.role === 'rw' ? 'view and edit' : 'view'} the sketch until it expires or is revoked.`,
+			});
+			const secrets = await sketches.readSketchSecrets(record.sketchId);
+			const cap = secrets[linkCapSecretName(link.capId)];
+			if (!cap) {
+				throw new Error(
+					`Sketch Book: the ${describeLink(link)} to "${record.name}" was made before links were kept on this desktop, so it cannot be copied again. Reset the link to get a new one.`
+				);
+			}
+			const roomKey = await requireRoomKey(sketches, record);
+			return {
+				capId: link.capId,
+				role: link.role,
+				label: link.label,
+				expiresAt: link.expiresAt,
+				url: sketchShareLinkUrl(share.serverUrl, share.roomId, roomKey, cap),
+			};
+		},
+
+		async resetSketchLink(sketchId, capId, caller) {
+			const sketches = open();
+			const record = await requireSketch(sketches, sketchId);
+			const share = requireShare(record);
+			const link = requireLiveLink(record, share, capId);
+			await confirmForAgent(caller, {
+				title: 'Reset a sketch link?',
+				message: `Reset the ${describeLink(link)} to "${record.name}"?`,
+				detail:
+					'Guests on the old link are disconnected and it stops working. A new link with the same access replaces it, and the agent receives it. Other links keep working.',
+			});
+			const auth = await requireAuth(share.serverUrl);
+			const roomKey = await requireRoomKey(sketches, record);
+			// Revoke first: a failure after this leaves no link, never two.
+			const revoked = await revokeLink(sketches, record, auth, link.capId);
+			const { record: updated, link: minted } = await mintLink(sketches, revoked, auth, roomKey, {
+				role: link.role,
+				expiresInDays: DEFAULT_LINK_EXPIRY_DAYS[link.role],
+				label: link.label,
+			});
+			logger.info('Sketch link reset', LOG_CONTEXT, {
+				sketchId: record.sketchId,
+				roomId: share.roomId,
+				role: link.role,
+				byAgent: Boolean(caller?.requestedBy),
+			});
+			return { record: updated, createdRoom: false, link: minted };
 		},
 
 		async rotateSketch(sketchId, caller) {
@@ -910,6 +1086,11 @@ export function createSketchService(deps: SketchServiceDeps = {}): SketchService
 							links: prev.links.map((candidate) => ({ ...candidate, revoked: true })),
 						}
 					: prev
+			);
+			await forgetLinkCaps(
+				sketches,
+				record.sketchId,
+				share.links.map((link) => link.capId)
 			);
 			const rotated = requireShare(updated);
 			let uploadError: unknown = null;
@@ -1057,6 +1238,47 @@ export function createSketchService(deps: SketchServiceDeps = {}): SketchService
 				byAgent: Boolean(caller?.requestedBy),
 			});
 			return after;
+		},
+
+		async sketchChat(sketchId, text, caller) {
+			const sketches = open();
+			const record = await requireSketch(sketches, sketchId);
+			if (text !== undefined && typeof text !== 'string') {
+				throw new Error('Sketch Book: text must be a string.');
+			}
+			if (text !== undefined) {
+				const quoted = JSON.stringify(
+					truncateAtWordBoundary(text.trim(), CONFIRM_REQUEST_MAX_CHARS, '…')
+				);
+				await confirmForAgent(caller, {
+					title: 'Post as you in a sketch chat?',
+					message: `Post a message as you on "${record.name}"?`,
+					detail: sketchChatAsksBot(text)
+						? `It starts with @bot, so it asks the agent as you, with your access. Guests in the room read it too. The message: ${quoted}`
+						: `Everyone in the room reads it under your name. The message: ${quoted}`,
+				});
+			}
+			const agent = findAgent(record.ownerAgentId);
+			if (!agent || agent.sshRemote) {
+				throw new Error(
+					`Sketch Book: the chat of "${record.name}" lives in its agent's window, which is not here.`
+				);
+			}
+			const result = await renderer(agent.id, {
+				action: 'chat',
+				sketchId: record.sketchId,
+				...(text !== undefined ? { text } : {}),
+			});
+			if (!result.success) throw new Error(result.error);
+			if (!result.chat) throw new Error('Sketch Book: the window did not report the chat.');
+			if (result.chat.sent) {
+				logger.info('Sketch Book conductor chat', LOG_CONTEXT, {
+					sketchId: record.sketchId,
+					toBot: result.chat.sent.toBot,
+					byAgent: Boolean(caller?.requestedBy),
+				});
+			}
+			return caller?.requestedBy ? withholdGuestChat(result.chat) : result.chat;
 		},
 	};
 	return service;

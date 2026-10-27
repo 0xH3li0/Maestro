@@ -1,7 +1,7 @@
 /**
- * The Room panel's rules (spec sections 6, 8.8 and 9, hosted spec §8): what
+ * The Collaborate panel's rules (spec sections 6, 8.8 and 9, hosted spec §8): what
  * the conductor may do to a shared sketch's room, and how its `room.stats`
- * and audit log read. One copy for the Room panel in the Sketch tab and
+ * and audit log read. One copy for the Collaborate panel in the Sketch tab and
  * `maestro-cli sketch stats|kick|unlock|unsuspend|audit`, so both say the
  * same words and refuse the same input.
  *

@@ -79,6 +79,7 @@ The two system-wide hotkeys cannot share a combo. If you set one to the other's 
 | Show/Hide All Cadenzas        | `Opt+Cmd+Shift+C`       | `Alt+Ctrl+Shift+C`        |
 | Show/Hide Throughput Gauge    | `Opt+Cmd+Shift+T`       | `Alt+Ctrl+Shift+T`        |
 | New Sketch Book               | `Opt+Cmd+K`             | `Alt+Ctrl+K`              |
+| Show Sketch Books             | `Opt+Cmd+Shift+K`       | `Alt+Ctrl+Shift+K`        |
 | Edit Image from Clipboard     | `Opt+Cmd+E`             | `Alt+Ctrl+E`              |
 | Forced Parallel Send          | `Cmd+Shift+Enter`       | `Ctrl+Shift+Enter`        |
 | Steer Running Turn            | `Opt+Cmd+Enter`         | `Alt+Ctrl+Enter`          |
@@ -467,11 +468,25 @@ The field list is focused on open, so these work without clicking first.
 | Action                   | macOS         | Windows/Linux  |
 | ------------------------ | ------------- | -------------- |
 | Open or Hide Collaborate | `Cmd+Shift+C` | `Ctrl+Shift+C` |
+| Add link                 | `Cmd+Opt+B`   | `Ctrl+Alt+B`   |
+| Open a file              | `Cmd+Opt+O`   | `Ctrl+Alt+O`   |
+| Reset zoom               | `Shift+0`     | `Shift+0`      |
+| Send to back             | `Cmd+Opt+[`   | `Ctrl+Alt+[`   |
+| Bring to front           | `Cmd+Opt+]`   | `Ctrl+Alt+]`   |
 
-It works while focus is in a Sketch tab, so it takes the chord from no other
-surface. The same action is **Collaborate...** in the canvas menu and the
-**Collaborate** button at the canvas's top right. Excalidraw's own canvas
-shortcuts are listed under **Help** (`?`) in the canvas.
+These work while focus is in a Sketch tab, so they take the chord from no
+other surface. The same Collaborate action is **Collaborate...** in the canvas
+menu and the **Collaborate** button at the canvas's top right. Excalidraw's
+own canvas shortcuts are listed under **Help** (`?`) in the canvas.
+
+On the canvas, a chord that Excalidraw and Maestro both use is Excalidraw's,
+with three exceptions that stay Maestro's: tab switching (Previous and Next
+Tab, the Tab Switcher, Go to Tab 1-9, Go to Last Tab), Quick Actions, and
+Switch Agent. They follow your own bindings. The Excalidraw actions that used
+those chords moved to the ones in the table above (Add link was `Cmd+K`, Open
+was `Cmd+O`, Reset zoom was `Cmd+0`, and on Windows and Linux, Send to back
+and Bring to front were `Ctrl+Shift+[` and `]`), and the canvas's Help dialog
+and menu show the new chords.
 
 ## Staged Images Organizer
 

@@ -10,6 +10,9 @@
  * A conductor message whose turn ran restricted because a guest edited the
  * board carries "Run with full access" once that turn is over (Q2). It runs
  * that one message again; the next message is restricted again.
+ *
+ * With `onSend`, the pane ends in the composer (`SketchChatComposer`): the
+ * conductor chats with the room, or asks the agent with `@bot`.
  */
 
 import { ShieldOff } from 'lucide-react';
@@ -20,6 +23,7 @@ import type { SketchBotRequest, SketchChatMessage } from '../../stores/sketchSes
 import { HeaderActionButton } from '../ui/HeaderActionButton';
 import { SketchApprovalChip } from './SketchApprovalChip';
 import { SketchHeldReplyChip } from './SketchHeldReplyChip';
+import { SketchChatComposer } from './SketchChatComposer';
 
 export interface SketchChatPaneProps {
 	messages: readonly SketchChatMessage[];
@@ -37,6 +41,10 @@ export interface SketchChatPaneProps {
 	/** Ids of the messages "Run with full access" is offered on (`canEscalateSketchMessage()`). */
 	escalatable?: ReadonlySet<string>;
 	onEscalate?: (replyTo: string) => void;
+	/** Send the conductor's chat; no composer without it. */
+	onSend?: (text: string) => Promise<unknown>;
+	/** The sketch has a room, so a plain message goes to it. */
+	shared?: boolean;
 }
 
 const NO_REQUESTS: readonly SketchBotRequest[] = [];
@@ -82,6 +90,8 @@ export function SketchChatPane({
 	onDenyRequest = noop,
 	escalatable = NO_IDS,
 	onEscalate = noop,
+	onSend,
+	shared = false,
 }: SketchChatPaneProps) {
 	const listRef = useStickToBottom<HTMLDivElement>(
 		messages.length + heldReplies.length + approvals.length
@@ -149,7 +159,13 @@ export function SketchChatPane({
 						onDiscard={onDiscardHeld}
 					/>
 				))}
+				{messages.length === 0 && approvals.length === 0 && heldReplies.length === 0 && (
+					<div className="text-xs select-none" style={{ color: theme.colors.textDim }}>
+						No messages yet.
+					</div>
+				)}
 			</div>
+			{onSend && <SketchChatComposer theme={theme} shared={shared} onSend={onSend} />}
 		</aside>
 	);
 }

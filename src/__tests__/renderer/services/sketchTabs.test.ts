@@ -14,9 +14,11 @@ vi.mock('../../../renderer/stores/notificationStore', async (importOriginal) => 
 
 import {
 	createSketchInSession,
+	forgetSketchInWindow,
 	newSketchBookInActiveAgent,
 	openSketchInSession,
 } from '../../../renderer/services/sketchTabs';
+import { useSketchSessionStore } from '../../../renderer/stores/sketchSessionStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import type { SketchRecord } from '../../../shared/sketch/types';
 import { createMockSession } from '../../helpers/mockSession';
@@ -163,5 +165,30 @@ describe('newSketchBookInActiveAgent', () => {
 
 		expect(await newSketchBookInActiveAgent()).toBeNull();
 		expect(create).not.toHaveBeenCalled();
+	});
+});
+
+describe('forgetSketchInWindow', () => {
+	it("closes the deleted sketch's tab on its agent and drops its live session", () => {
+		useSessionStore.setState({
+			sessions: [
+				createMockSession({
+					id: 'agent-1',
+					sketchTabs: [{ id: 'tab-a', sketchId: 'sketch-1', name: 'Plan', createdAt: 1 }],
+					unifiedTabOrder: [{ type: 'sketch', id: 'tab-a' }],
+				}),
+				createMockSession({ id: 'agent-2' }),
+			],
+		});
+		const untouched = agent('agent-2');
+		const drop = vi.spyOn(useSketchSessionStore.getState(), 'dropSketchSession');
+
+		forgetSketchInWindow('sketch-1');
+
+		expect(agent('agent-1').sketchTabs).toEqual([]);
+		expect(agent('agent-1').unifiedClosedTabHistory ?? []).toEqual([]);
+		expect(agent('agent-2')).toBe(untouched);
+		expect(drop).toHaveBeenCalledWith('sketch-1');
+		drop.mockRestore();
 	});
 });

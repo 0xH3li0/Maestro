@@ -1,10 +1,10 @@
 /**
  * Sketch Book WebSocket handler: `sketch_command`, the CLI half of Sketch Book
- * (`maestro-cli sketch new|list|open|read|export|screening-consent|share|
- * unshare|revoke-link|rotate|owner|requests|approve|deny|escalate|publish|
- * discard|bot-policy|stats|kick|unlock|unsuspend|audit`, spec section 9).
+ * (`maestro-cli sketch new|list|open|rename|delete|read|export|screening-consent|share|
+ * unshare|revoke-link|link|reset-link|rotate|owner|requests|approve|deny|escalate|publish|
+ * discard|bot-policy|stats|kick|unlock|unsuspend|audit|chat`, spec section 9).
  *
- * The sharing verbs, the `@bot` decisions, `bot-policy` and the Room panel
+ * The sharing verbs, the `@bot` decisions, `bot-policy` and the Collaborate panel
  * verbs pass the asking agent's name when an agent called (A1): the service
  * raises the desktop confirmation (sharing, approve, escalate, publish,
  * `bot-policy writers`, unlock, unsuspend) and runs only on Allow.
@@ -53,6 +53,10 @@ function run(action: SketchCommandAction, message: WebClientMessage): Promise<un
 		}
 		case 'open':
 			return service.openSketch(sketchId, { background: message.background === true });
+		case 'rename':
+			return service.renameSketch(sketchId, message.name as string);
+		case 'delete':
+			return service.deleteSketch(sketchId, callerOf(message));
 		case 'read':
 			return service.readSketch(sketchId, (message.format as 'summary' | undefined) ?? 'summary');
 		case 'export':
@@ -73,6 +77,10 @@ function run(action: SketchCommandAction, message: WebClientMessage): Promise<un
 			return service.unshareSketch(sketchId, callerOf(message));
 		case 'revoke-link':
 			return service.revokeSketchLink(sketchId, message.capId as string, callerOf(message));
+		case 'link':
+			return service.sketchLink(sketchId, message.capId as string, callerOf(message));
+		case 'reset-link':
+			return service.resetSketchLink(sketchId, message.capId as string, callerOf(message));
 		case 'rotate':
 			return service.rotateSketch(sketchId, callerOf(message));
 		case 'owner':
@@ -100,6 +108,8 @@ function run(action: SketchCommandAction, message: WebClientMessage): Promise<un
 			);
 		case 'audit':
 			return getSketchRoomAdmin().audit(sketchId);
+		case 'chat':
+			return service.sketchChat(sketchId, message.text as string | undefined, callerOf(message));
 	}
 }
 

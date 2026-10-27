@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useEffect, memo } from 'react';
 import { createPortal } from 'react-dom';
-import { Search, Clock, Layers } from 'lucide-react';
+import { Search, Clock, Layers, BookOpen } from 'lucide-react';
 import { ShortcutHint } from '../ui/ShortcutHint';
 import type { Theme } from '../../types';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -25,6 +25,11 @@ interface SearchPopoverProps {
 	onShowSnoozedTabs: () => void;
 	/** Total snoozed tabs across all agents, shown as a pill. Omitted/0 hides it. */
 	snoozedTabCount?: number;
+	/**
+	 * Open this agent's Sketch Books list (open and closed sketches). Omitted
+	 * while Sketch Book is unavailable, which hides the row.
+	 */
+	onShowSketchBooks?: () => void;
 }
 
 /**
@@ -73,6 +78,7 @@ export const SearchPopover = memo(function SearchPopover({
 	openTabCount,
 	onShowSnoozedTabs,
 	snoozedTabCount,
+	onShowSketchBooks,
 }: SearchPopoverProps) {
 	// Where the open-tab count lives. On (the default) it rides the magnifier in
 	// the tab bar, so the number is visible without opening anything; off, it
@@ -256,6 +262,16 @@ export const SearchPopover = memo(function SearchPopover({
 								/>
 							)}
 						</button>
+						{onShowSketchBooks && (
+							<button
+								className="flex items-center gap-2 w-full px-3 py-2 text-sm text-left hover:bg-white/10 transition-colors"
+								style={{ color: theme.colors.textMain }}
+								onClick={() => closeAndDo(onShowSketchBooks)}
+							>
+								<BookOpen className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+								See Sketches (this agent)
+							</button>
+						)}
 					</div>,
 					document.body
 				)}

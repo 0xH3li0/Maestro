@@ -155,6 +155,11 @@ function TabBarInner({
 	const openSnoozedTabs = useCallback(() => {
 		useModalStore.getState().openModal('snoozedTabs');
 	}, []);
+	// Unlike the palette's Sketch Books (every agent), the tab bar lists only
+	// this agent's sketches: the ones in its tab strip and the closed ones.
+	const openAgentSketchBooks = useCallback(() => {
+		if (sessionId) useModalStore.getState().openModal('sketchBooks', { agentId: sessionId });
+	}, [sessionId]);
 	const showStarredInUnreadFilter = useSettingsStore((s) => s.showStarredInUnreadFilter);
 	const showFilePreviewsInUnreadFilter = useSettingsStore((s) => s.showFilePreviewsInUnreadFilter);
 	const showTerminalTabsInUnreadFilter = useSettingsStore((s) => s.showTerminalTabsInUnreadFilter);
@@ -728,6 +733,7 @@ function TabBarInner({
 						openTabCount={unifiedTabs?.length ?? tabs.length}
 						onShowSnoozedTabs={openSnoozedTabs}
 						snoozedTabCount={snoozedTabCount}
+						onShowSketchBooks={sketchBookAvailable && sessionId ? openAgentSketchBooks : undefined}
 					/>
 				)}
 				<button

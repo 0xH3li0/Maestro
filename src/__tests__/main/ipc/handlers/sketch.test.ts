@@ -112,6 +112,7 @@ describe('sketch IPC handlers', () => {
 			writeScene: vi.fn(async () => undefined),
 			renameSketch: vi.fn(async () => ({ ...record, name: 'Renamed' })),
 			deleteSketch: vi.fn(async () => undefined),
+			openSketch: vi.fn(async () => ({ record, tabId: 'tab-1' })),
 			saveSketchToProject: vi.fn(async () => '/project/Board.excalidraw'),
 			ownerStatus: vi.fn(async () => ({ state: 'signed-out' })),
 			registerOwner: vi.fn(async () => ({ email: 'sent' })),
@@ -120,6 +121,8 @@ describe('sketch IPC handlers', () => {
 			shareSketch: vi.fn(async () => ({ record, createdRoom: true })),
 			unshareSketch: vi.fn(async () => record),
 			revokeSketchLink: vi.fn(async () => record),
+			sketchLink: vi.fn(async () => ({})),
+			resetSketchLink: vi.fn(async () => ({})),
 			rotateSketch: vi.fn(async () => record),
 			uploadSnapshot: vi.fn(async () => ({ bytes: 64 })),
 			roomConnection: vi.fn(async () => null),
@@ -206,15 +209,18 @@ describe('sketch IPC handlers', () => {
 			'sketch:get',
 			'sketch:grantScreeningConsent',
 			'sketch:installScreen',
+			'sketch:link',
 			'sketch:list',
 			'sketch:localScreenOption',
 			'sketch:noteRoomBotPolicy',
+			'sketch:open',
 			'sketch:ownerStatus',
 			'sketch:prepareBotTurn',
 			'sketch:readScene',
 			'sketch:registerOwner',
 			'sketch:rename',
 			'sketch:reportServerScreening',
+			'sketch:resetLink',
 			'sketch:revokeLink',
 			'sketch:revokeScreeningConsent',
 			'sketch:roomAction',
@@ -257,6 +263,10 @@ describe('sketch IPC handlers', () => {
 		expect(service.unshareSketch).toHaveBeenCalledWith(SKETCH_ID);
 		await invoke('sketch:revokeLink', SKETCH_ID, 'cap-1');
 		expect(service.revokeSketchLink).toHaveBeenCalledWith(SKETCH_ID, 'cap-1');
+		await invoke('sketch:link', SKETCH_ID, 'cap-1');
+		expect(service.sketchLink).toHaveBeenCalledWith(SKETCH_ID, 'cap-1');
+		await invoke('sketch:resetLink', SKETCH_ID, 'cap-1');
+		expect(service.resetSketchLink).toHaveBeenCalledWith(SKETCH_ID, 'cap-1');
 		await invoke('sketch:rotate', SKETCH_ID);
 		expect(service.rotateSketch).toHaveBeenCalledWith(SKETCH_ID);
 		await expect(
@@ -352,6 +362,9 @@ describe('sketch IPC handlers', () => {
 
 		await invoke('sketch:delete', SKETCH_ID);
 		expect(service.deleteSketch).toHaveBeenCalledWith(SKETCH_ID);
+
+		await expect(invoke('sketch:open', SKETCH_ID)).resolves.toEqual({ record, tabId: 'tab-1' });
+		expect(service.openSketch).toHaveBeenCalledWith(SKETCH_ID);
 
 		await expect(
 			invoke('sketch:saveToProject', SKETCH_ID, '/project', { overwrite: true })

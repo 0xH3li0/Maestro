@@ -25,7 +25,10 @@ export const SHORTCUT_ENCORE_FLAGS: Readonly<Record<string, keyof EncoreFeatureF
 	toggleCadenzas: 'concerto',
 	toggleThroughputGauge: 'throughputGauge',
 	newSketchBook: 'sketchBook',
+	showSketchBooks: 'sketchBook',
 	sketchBookCollaborate: 'sketchBook',
+	sketchBookAddLink: 'sketchBook',
+	sketchBookOpenFile: 'sketchBook',
 };
 
 type EncoreFlagsInput = Partial<EncoreFeatureFlags> | null | undefined;

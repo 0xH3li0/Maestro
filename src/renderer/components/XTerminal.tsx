@@ -21,6 +21,7 @@ import { readLogicalLine } from '../utils/terminalBuffer';
 import { parseOsc52 } from '../utils/terminalClipboard';
 import { copyTextWithFlash } from '../utils/inlineCodeCopy';
 import { logger } from '../utils/logger';
+import { forwardKeyToMainHandler } from '../utils/keyForwarding';
 import { URL_ROUTING_HINT_PREFIX_SOURCE, isWebUrl } from '../../shared/urlRoutingHint';
 import {
 	createCanvasMeasureAdvance,
@@ -715,18 +716,7 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 			}
 			if (action === 'passthrough' && e.type === 'keydown') {
 				e.stopPropagation();
-				window.dispatchEvent(
-					new KeyboardEvent('keydown', {
-						key: e.key,
-						code: e.code,
-						metaKey: e.metaKey,
-						ctrlKey: e.ctrlKey,
-						altKey: e.altKey,
-						shiftKey: e.shiftKey,
-						bubbles: true,
-						cancelable: true,
-					})
-				);
+				forwardKeyToMainHandler(e);
 			}
 			return action === 'handle';
 		});

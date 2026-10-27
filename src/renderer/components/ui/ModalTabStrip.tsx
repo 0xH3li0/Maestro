@@ -39,6 +39,8 @@ export interface ModalTab<Id extends string = string> {
 	icon?: ComponentType<{ className?: string }>;
 	/** Renders an error dot on the tab. */
 	hasError?: boolean;
+	/** A dim count after the label ("People 3"). Omit, or pass undefined, for none. */
+	count?: number;
 }
 
 export interface ModalTabStripProps<Id extends string> {
@@ -175,6 +177,15 @@ export function ModalTabStrip<Id extends string>({
 					>
 						{Icon && <Icon className="w-4 h-4 flex-shrink-0" />}
 						<span>{tab.label}</span>
+						{tab.count !== undefined && (
+							<span
+								className="text-xs tabular-nums"
+								style={{ color: theme.colors.textDim }}
+								data-testid={`${idPrefix}-tab-${tab.id}-count`}
+							>
+								{tab.count}
+							</span>
+						)}
 						{tab.hasError && (
 							<>
 								<span

@@ -1,13 +1,13 @@
 /**
- * Maestro's controls inside the Excalidraw canvas, drawn with Excalidraw's own
- * button styles so they read as part of the canvas:
+ * Maestro's controls inside the Excalidraw canvas, drawn with the markup and
+ * styles of Excalidraw's Library button so they read as part of the canvas:
  *
- * - Top right (`renderTopRightUI`): the room's screening badge, the Room
- *   button while the sketch has a room, and Collaborate. Collaborate takes the
- *   corner Excalidraw gives its Library button.
- * - Bottom right (`Footer`): Library, beside Excalidraw's Help button. The
- *   default Library button at the top right is hidden by
- *   `excalidrawOverrides.css`.
+ * - Top right (`renderTopRightUI`): Collaborate, in the corner Excalidraw
+ *   gives its Library button. Its panel holds sharing and the room (members,
+ *   links, flagged elements).
+ * - Footer (`Footer`): the room's screening badge at the center, and Library
+ *   at the right beside Excalidraw's Help button. The default Library button
+ *   at the top right is hidden by `excalidrawOverrides.css`.
  *
  * Excalidraw is lazy, so its components come in as props from the loaded
  * module (`loadExcalidraw()`); a static import would pull Excalidraw into the
@@ -15,9 +15,8 @@
  */
 
 import type React from 'react';
-import { BookOpen, UserPlus, Users } from 'lucide-react';
+import { BookOpen, UserPlus } from 'lucide-react';
 import type {
-	Button as ExcalidrawButton,
 	Footer as ExcalidrawFooter,
 	Sidebar as ExcalidrawSidebar,
 } from '@excalidraw/excalidraw';
@@ -27,71 +26,102 @@ export interface SketchCanvasChrome {
 	collaborate: {
 		/** The Collaborate panel is open. */
 		open: boolean;
-		/** The room is live: the button turns green, the way Excalidraw marks a live session. */
+		/** The room is live: the icon and label turn green. */
 		live: boolean;
 		/** The chord as display text, or '' when unbound. */
 		shortcut: string;
 		onToggle: () => void;
 	};
-	/** Null while the sketch has no room. */
-	room: { open: boolean; onToggle: () => void } | null;
-	/** The room's screening badge, or null. */
-	badge: React.ReactNode;
 }
 
 /** Lucide's stroke at Excalidraw's icon weight. */
 const ICON_STROKE = 1.5;
 
 export interface SketchTopRightUIProps {
-	Button: typeof ExcalidrawButton;
 	chrome: SketchCanvasChrome;
 }
 
-export function SketchTopRightUI({ Button, chrome }: SketchTopRightUIProps) {
-	const { collaborate, room, badge } = chrome;
-	const collaborateTitle = collaborate.shortcut
-		? `Collaborate (${collaborate.shortcut})`
-		: 'Collaborate';
+interface ChromeButtonProps {
+	icon: React.ReactNode;
+	label: string;
+	title: string;
+	ariaLabel: string;
+	pressed: boolean;
+	live?: boolean;
+	onClick: () => void;
+	testId?: string;
+}
+
+/**
+ * A button drawn exactly like Excalidraw's Library button (its
+ * `sidebar-trigger` markup and styles), so Maestro's controls match it.
+ */
+function ChromeButton({
+	icon,
+	label,
+	title,
+	ariaLabel,
+	pressed,
+	live = false,
+	onClick,
+	testId,
+}: ChromeButtonProps) {
+	const className = [
+		'sidebar-trigger',
+		'sketch-chrome-button',
+		pressed && 'active',
+		live && 'sketch-chrome-button--live',
+	]
+		.filter(Boolean)
+		.join(' ');
 	return (
-		<>
-			{badge && <div className="sketch-chrome-badge">{badge}</div>}
-			{room && (
-				<Button
-					className={`sidebar-trigger sketch-chrome-button${room.open ? ' active' : ''}`}
-					onSelect={room.onToggle}
-					title="Show the room"
-					aria-label="Show the room"
-					aria-pressed={room.open}
-				>
-					<Users strokeWidth={ICON_STROKE} />
-					<div className="sidebar-trigger__label">Room</div>
-				</Button>
-			)}
-			<Button
-				className={`collab-button sketch-chrome-button${collaborate.live ? ' active' : ''}`}
-				onSelect={collaborate.onToggle}
-				title={collaborateTitle}
-				aria-label="Collaborate on this sketch"
-				aria-pressed={collaborate.open}
-				data-testid="sketch-collaborate-button"
-			>
-				<UserPlus strokeWidth={ICON_STROKE} />
-				<div className="sidebar-trigger__label">Collaborate</div>
-			</Button>
-		</>
+		<button
+			type="button"
+			className={className}
+			onClick={onClick}
+			title={title}
+			aria-label={ariaLabel}
+			aria-pressed={pressed}
+			data-testid={testId}
+		>
+			<div>{icon}</div>
+			<div className="sidebar-trigger__label">{label}</div>
+		</button>
 	);
 }
 
-export interface SketchLibraryTriggerProps {
-	Footer: typeof ExcalidrawFooter;
-	Sidebar: typeof ExcalidrawSidebar;
+export function SketchTopRightUI({ chrome }: SketchTopRightUIProps) {
+	const { collaborate } = chrome;
+	return (
+		<ChromeButton
+			icon={<UserPlus strokeWidth={ICON_STROKE} />}
+			label="Collaborate"
+			title={collaborate.shortcut ? `Collaborate (${collaborate.shortcut})` : 'Collaborate'}
+			ariaLabel="Collaborate on this sketch"
+			pressed={collaborate.open}
+			live={collaborate.live}
+			onClick={collaborate.onToggle}
+			testId="sketch-collaborate-button"
+		/>
+	);
 }
 
-/** Excalidraw's Library button, moved to the footer beside Help. */
-export function SketchLibraryTrigger({ Footer, Sidebar }: SketchLibraryTriggerProps) {
+export interface SketchFooterProps {
+	Footer: typeof ExcalidrawFooter;
+	Sidebar: typeof ExcalidrawSidebar;
+	/** The room's screening badge, or null while the sketch has no live room. */
+	badge: React.ReactNode;
+}
+
+/**
+ * The canvas footer: the screening badge at the center, and Excalidraw's
+ * Library button moved to the right beside Help.
+ */
+export function SketchFooter({ Footer, Sidebar, badge }: SketchFooterProps) {
 	return (
 		<Footer>
 			<div className="sketch-chrome-footer">
+				<div className="sketch-chrome-badge">{badge}</div>
 				<Sidebar.Trigger
 					name="default"
 					tab="library"

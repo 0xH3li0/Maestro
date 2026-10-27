@@ -67,38 +67,56 @@ describe('encoreShortcuts', () => {
 		webDesktop = false;
 	});
 
-	it('binds New Sketch Book to a chord no other shortcut or reserved combo owns', () => {
-		const keys = DEFAULT_SHORTCUTS.newSketchBook.keys;
-		expect(findReservedShortcutCombo(keys)).toBeNull();
-		const all = { ...DEFAULT_SHORTCUTS, ...TAB_SHORTCUTS, ...FIXED_SHORTCUTS };
-		const clashes = Object.values(all).filter(
-			(shortcut) =>
-				shortcut.id !== 'newSketchBook' &&
-				shortcut.keys.length > 0 &&
-				shortcutKeysEqual(shortcut.keys, keys)
-		);
-		expect(clashes.map((shortcut) => shortcut.id)).toEqual([]);
-	});
-
-	it('lists Sketch Book: Collaborate only while Sketch Book is on', () => {
-		expect(availableShortcuts(FIXED_SHORTCUTS, ALL_OFF).sketchBookCollaborate).toBeUndefined();
+	it('lists Show Sketch Books only while Sketch Book is on, and never on web-desktop', () => {
+		expect(availableShortcuts(DEFAULT_SHORTCUTS, ALL_OFF).showSketchBooks).toBeUndefined();
 		expect(
-			availableShortcuts(FIXED_SHORTCUTS, { ...ALL_OFF, sketchBook: true }).sketchBookCollaborate
-		).toBe(FIXED_SHORTCUTS.sketchBookCollaborate);
+			availableShortcuts(DEFAULT_SHORTCUTS, { ...ALL_OFF, sketchBook: true }).showSketchBooks
+		).toBe(DEFAULT_SHORTCUTS.showSketchBooks);
+		webDesktop = true;
+		expect(isShortcutAvailable('showSketchBooks', ALL_ON)).toBe(false);
+		webDesktop = false;
 	});
 
-	it('binds Sketch Book: Collaborate to a chord no other shortcut or reserved combo owns', () => {
-		const keys = FIXED_SHORTCUTS.sketchBookCollaborate.keys;
-		expect(findReservedShortcutCombo(keys)).toBeNull();
-		const all = { ...DEFAULT_SHORTCUTS, ...TAB_SHORTCUTS, ...FIXED_SHORTCUTS };
-		const clashes = Object.values(all).filter(
-			(shortcut) =>
-				shortcut.id !== 'sketchBookCollaborate' &&
-				shortcut.keys.length > 0 &&
-				shortcutKeysEqual(shortcut.keys, keys)
+	it.each(['newSketchBook', 'showSketchBooks'] as const)(
+		'binds %s to a chord no other shortcut or reserved combo owns',
+		(id) => {
+			const keys = DEFAULT_SHORTCUTS[id].keys;
+			expect(findReservedShortcutCombo(keys)).toBeNull();
+			const all = { ...DEFAULT_SHORTCUTS, ...TAB_SHORTCUTS, ...FIXED_SHORTCUTS };
+			const clashes = Object.values(all).filter(
+				(shortcut) =>
+					shortcut.id !== id && shortcut.keys.length > 0 && shortcutKeysEqual(shortcut.keys, keys)
+			);
+			expect(clashes.map((shortcut) => shortcut.id)).toEqual([]);
+		}
+	);
+
+	const SKETCH_BOOK_SHORTCUT_IDS = [
+		'sketchBookCollaborate',
+		'sketchBookAddLink',
+		'sketchBookOpenFile',
+	] as const;
+
+	it.each(SKETCH_BOOK_SHORTCUT_IDS)('lists %s only while Sketch Book is on', (id) => {
+		expect(availableShortcuts(FIXED_SHORTCUTS, ALL_OFF)[id]).toBeUndefined();
+		expect(availableShortcuts(FIXED_SHORTCUTS, { ...ALL_OFF, sketchBook: true })[id]).toBe(
+			FIXED_SHORTCUTS[id]
 		);
-		expect(clashes.map((shortcut) => shortcut.id)).toEqual([]);
 	});
+
+	it.each(SKETCH_BOOK_SHORTCUT_IDS)(
+		'binds %s to a chord no other shortcut or reserved combo owns',
+		(id) => {
+			const keys = FIXED_SHORTCUTS[id].keys;
+			expect(findReservedShortcutCombo(keys)).toBeNull();
+			const all = { ...DEFAULT_SHORTCUTS, ...TAB_SHORTCUTS, ...FIXED_SHORTCUTS };
+			const clashes = Object.values(all).filter(
+				(shortcut) =>
+					shortcut.id !== id && shortcut.keys.length > 0 && shortcutKeysEqual(shortcut.keys, keys)
+			);
+			expect(clashes.map((shortcut) => shortcut.id)).toEqual([]);
+		}
+	);
 
 	it('treats a missing flag map as everything off', () => {
 		expect(isShortcutAvailable('openCue', undefined)).toBe(false);

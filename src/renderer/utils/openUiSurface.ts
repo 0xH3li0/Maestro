@@ -10,6 +10,7 @@
 
 import type { CueModalData, ModalId } from '../stores/modalStore';
 import { getModalActions, useModalStore } from '../stores/modalStore';
+import { canUseSketchBook } from './sketchBookAvailability';
 import { selectSessionById, useSessionStore } from '../stores/sessionStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useUIStore } from '../stores/uiStore';
@@ -135,6 +136,17 @@ export function openUiSurface(request: OpenUiSurfaceRequest): OpenUiSurfaceResul
 			// back to every agent, the same as a scope whose group is deleted
 			// while it is open.
 			actions.openDelegationGraph(target.group);
+			return { ok: true };
+		case 'sketch-books':
+			// The Encore check above passes in the browser build too, but the
+			// `sketch:*` channels are desktop only, so the list would mount empty.
+			if (!canUseSketchBook(useSettingsStore.getState().encoreFeatures)) {
+				return { ok: false, error: 'Sketch Books are available in the desktop app only.' };
+			}
+			// `--agent` lists that agent's sketches, as the tab bar search menu does.
+			useModalStore
+				.getState()
+				.openModal('sketchBooks', target.agent ? { agentId: target.agent } : undefined);
 			return { ok: true };
 		default:
 			// Surfaces with no data payload open generically - one line here beats

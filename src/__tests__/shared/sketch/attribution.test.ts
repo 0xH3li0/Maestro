@@ -10,6 +10,8 @@ import {
 	botEditor,
 	conductorEditor,
 	describeSketchActor,
+	sketchActorNameLabel,
+	sketchActorRoleLabel,
 	nextElementAuthorship,
 	readElementStamp,
 	sketchTextFields,
@@ -319,5 +321,23 @@ describe('describeSketchActor', () => {
 		const quoted = JSON.parse(line.slice(0, line.indexOf(' · '))) as string;
 		expect(Array.from(quoted)).toHaveLength(SKETCH_ACTOR_NAME_MAX_CHARS);
 		expect(line).toContain('read-write link team link, not verified');
+	});
+});
+
+describe('sketchActorNameLabel and sketchActorRoleLabel', () => {
+	it('are the two halves describeSketchActor joins', () => {
+		const sam: SketchActor = {
+			id: 'g1',
+			kind: 'guest',
+			name: 'Sam',
+			role: 'rw',
+			capLabel: '  #3 ',
+		};
+		expect(sketchActorNameLabel(sam)).toBe('"Sam"');
+		expect(sketchActorRoleLabel(sam)).toBe('guest, read-write link #3, not verified');
+		expect(describeSketchActor(sam)).toBe(
+			`${sketchActorNameLabel(sam)} · ${sketchActorRoleLabel(sam)}`
+		);
+		expect(sketchActorRoleLabel({ kind: 'bot', role: 'conductor' })).toBe('bot');
 	});
 });

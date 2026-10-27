@@ -1,8 +1,8 @@
 /**
- * The window half of the Room panel (spec section 6, hosted spec §8): the
+ * The window half of the Collaborate panel (spec section 6, hosted spec §8): the
  * room socket lives in this window, so main asks it (`roomAdmin`) to read
  * `room.stats` and to send the conductor frames Kick, Unlock and Unsuspend.
- * The Room panel's buttons and `maestro-cli sketch stats|kick|unlock|
+ * The Collaborate panel's buttons and `maestro-cli sketch stats|kick|unlock|
  * unsuspend` both reach these functions through main's
  * `sketch-room-admin.ts`, so the two cannot drift. Main has already raised
  * the desktop confirmation an agent caller needs (A1).
@@ -31,7 +31,7 @@ import { getSketchRoomClient } from './sketchRoomClient';
 /** How long a read waits for the server's `room.stats` before it answers with the held one. */
 export const SKETCH_ROOM_STATS_WAIT_MS = 3_000;
 
-/** The room client calls the Room panel needs. */
+/** The room client calls the Collaborate panel needs. */
 export interface SketchRoomAdminClient {
 	send(frame: ClientFrame): boolean;
 	subscribe(listener: (frame: ServerFrame) => void): () => void;

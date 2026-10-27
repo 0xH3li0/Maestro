@@ -7,6 +7,8 @@
  * - `open`: show a sketch in a tab on its agent, through the same
  *   `openSketchInSession()` the four UI ways in use. `background` leaves the
  *   active agent and tab alone.
+ * - `forget`: the sketch was deleted; close its tabs and drop its session
+ *   (`forgetSketchInWindow()`).
  * - `export`: draw a saved scene as SVG or PNG with Excalidraw's own exporters,
  *   which need a DOM to measure text. Excalidraw loads lazily, the same way the
  *   tab loads it, with the bundled fonts.
@@ -23,10 +25,11 @@
  *   with the newest op seq the room client has merged (0 without one).
  * - `syncRoom`: join or leave a shared sketch's room (`sketchSharing.ts`).
  * - `botPolicy`: send `policy.set` on the sketch's room (B2, `sketchBotPolicy.ts`).
+ * - `chat`: send the conductor's chat and read the pane (`sketchBotRequestCommands.ts`)
  * - `botRequest`: list or decide the bot relay's `@bot` requests
  *   (`sketchBotRequestCommands.ts`), through the functions the chips call.
  * - `roomAdmin`: read `room.stats`, or Kick, Unlock, Unsuspend on the room
- *   (`sketchRoomAdmin.ts`), through the functions the Room panel calls.
+ *   (`sketchRoomAdmin.ts`), through the functions the Collaborate panel calls.
  *
  * Every path answers, a thrown one included, so main never waits out its
  * timeout. Registered by `useRemoteIntegration`.
@@ -45,7 +48,7 @@ import type { SketchScene } from '../../shared/sketch/types';
 import { openReadySketchSession, useSketchSessionStore } from '../stores/sketchSessionStore';
 import { readBlobAsDataUrl } from '../utils/imageData';
 import { applySketchAgentWrite, convertMermaidToSkeletons } from './sketchAgentWrites';
-import { openSketchInSession } from './sketchTabs';
+import { forgetSketchInWindow, openSketchInSession } from './sketchTabs';
 
 /** Space around the drawing in an export, in scene pixels. */
 const EXPORT_PADDING = 16;
@@ -162,6 +165,10 @@ export async function runRemoteSketchCommand(
 				? { success: true, tabId }
 				: { success: false, error: 'The agent that owns this sketch is not in this window.' };
 		}
+		if (request.action === 'forget') {
+			forgetSketchInWindow(request.sketchId);
+			return { success: true };
+		}
 		if (request.action === 'export') {
 			return { success: true, file: await exportSketchImage(request.scene, request.format) };
 		}
@@ -212,6 +219,10 @@ export async function runRemoteSketchCommand(
 				success: true,
 				botRequests: [runSketchBotRequestOp(request.op, request.sketchId, request.replyTo)],
 			};
+		}
+		if (request.action === 'chat') {
+			const { runRemoteSketchChat } = await import('./sketchBotRequestCommands');
+			return { success: true, chat: await runRemoteSketchChat(request.sketchId, request.text) };
 		}
 		if (request.action === 'roomAdmin') {
 			const { runRemoteSketchRoomAdmin } = await import('./sketchRoomAdmin');

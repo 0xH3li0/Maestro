@@ -675,3 +675,58 @@ describe('Run with full access (Q2)', () => {
 		expect(relay.escalate(SKETCH_ID, 'nope')).toBe(false);
 	});
 });
+
+describe('conductor chat from the composer', () => {
+	it('posts plain chat to the room as toBot:false, into the pane, with no turn', async () => {
+		const turn = deferredTurn();
+		makeRelay(turn.runTurn);
+
+		const sent = await relay.sendConductorChat(SKETCH_ID, '  looks good  ');
+
+		expect(sent).toEqual({ toBot: false });
+		expect(room.sent).toEqual([
+			{ t: 'chat', id: 'id-1', toBot: false, ...sealFake({ v: 1, text: 'looks good' }) },
+		]);
+		expect(turn.runTurn).not.toHaveBeenCalled();
+		expect(session().chat.map((message) => [message.text, message.request])).toEqual([
+			['looks good', undefined],
+		]);
+	});
+
+	it('asks the agent when the message starts with @bot', async () => {
+		const turn = deferredTurn();
+		makeRelay(turn.runTurn);
+
+		const sent = await relay.sendConductorChat(SKETCH_ID, '@bot tidy the layout');
+
+		// `id-1` is the local id the room id then replaces, as in a plain conductor message.
+		expect(sent).toEqual({ toBot: true, replyTo: 'id-2' });
+		expect(room.sent[0]).toMatchObject({ t: 'chat', toBot: true });
+		expect(turn.runTurn).toHaveBeenCalledTimes(1);
+	});
+
+	it('asks the agent with every message on a sketch with no room', async () => {
+		const turn = deferredTurn();
+		relay = createSketchBotRelay({ screen, runTurn: turn.runTurn, newId: () => 'x', now: () => 1 });
+
+		const sent = await relay.sendConductorChat(SKETCH_ID, 'tidy the layout');
+
+		expect(sent).toEqual({ toBot: true, replyTo: 'local-x' });
+		expect(turn.runTurn).toHaveBeenCalledTimes(1);
+	});
+
+	it('refuses room chat while the socket is down, and posts nothing', async () => {
+		makeRelay();
+		room.online = false;
+
+		await expect(relay.sendConductorChat(SKETCH_ID, 'hello')).rejects.toThrow(
+			'the room is not connected'
+		);
+		expect(session().chat).toEqual([]);
+	});
+
+	it('refuses an empty message', async () => {
+		makeRelay();
+		await expect(relay.sendConductorChat(SKETCH_ID, '   ')).rejects.toThrow('the message is empty');
+	});
+});

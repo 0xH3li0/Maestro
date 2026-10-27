@@ -55,7 +55,12 @@ import {
 	sketchOpen,
 	sketchRead,
 	sketchRequests,
+	sketchChat,
+	sketchDelete,
+	sketchRename,
 	sketchRevokeLink,
+	sketchLink,
+	sketchResetLink,
 	sketchRotate,
 	sketchScreeningConsent,
 	sketchShare,
@@ -238,6 +243,88 @@ describe('sketch command', () => {
 
 			expect(sent).toHaveLength(0);
 			expect(exitSpy).toHaveBeenCalledWith(ExitCode.InvalidUsage);
+		});
+	});
+
+	describe('rename', () => {
+		it('sends the new name and prints the renamed record', async () => {
+			const sent = respond({ ...record, name: 'Release plan' });
+			await sketchRename(SKETCH_ID, 'Release plan', {});
+
+			expect(sent[0]).toMatchObject({
+				action: 'rename',
+				sketchId: SKETCH_ID,
+				name: 'Release plan',
+			});
+			expect(logged()).toContain(`Renamed sketch ${SKETCH_ID} to "Release plan"`);
+		});
+
+		it('refuses an empty name as a usage error before the bridge', async () => {
+			const sent = respond(record);
+			await expect(sketchRename(SKETCH_ID, '  ', {})).rejects.toThrow('__exit__');
+
+			expect(sent).toHaveLength(0);
+			expect(exitSpy).toHaveBeenCalledWith(ExitCode.InvalidUsage);
+		});
+	});
+
+	describe('delete', () => {
+		let savedCaller: string | undefined;
+
+		beforeEach(() => {
+			savedCaller = process.env[CALLER_AGENT_ID_ENV_VAR];
+			delete process.env[CALLER_AGENT_ID_ENV_VAR];
+			vi.mocked(canPrompt).mockReturnValue(true);
+			vi.mocked(confirmOnTerminal).mockResolvedValue(true);
+		});
+
+		afterEach(() => {
+			if (savedCaller === undefined) delete process.env[CALLER_AGENT_ID_ENV_VAR];
+			else process.env[CALLER_AGENT_ID_ENV_VAR] = savedCaller;
+		});
+
+		it('asks a person at the terminal, then deletes', async () => {
+			const sent = respond(undefined);
+			await sketchDelete(SKETCH_ID, {});
+
+			expect(confirmOnTerminal).toHaveBeenCalledWith(
+				`Delete sketch ${SKETCH_ID}? This cannot be undone.`
+			);
+			expect(sent[0]).toMatchObject({ action: 'delete', sketchId: SKETCH_ID });
+			expect(sent[0].fromSessionId).toBeUndefined();
+			expect(logged()).toContain(`Deleted sketch ${SKETCH_ID}.`);
+		});
+
+		it('changes nothing when the person declines', async () => {
+			vi.mocked(confirmOnTerminal).mockResolvedValue(false);
+			const sent = respond(undefined);
+			await expect(sketchDelete(SKETCH_ID, {})).rejects.toThrow('__exit__');
+
+			expect(sent).toHaveLength(0);
+			expect(errors()).toContain('Nothing was changed.');
+		});
+
+		it('refuses with no terminal and no --yes, and runs with --yes', async () => {
+			vi.mocked(canPrompt).mockReturnValue(false);
+			const sent = respond(undefined);
+			await expect(sketchDelete(SKETCH_ID, {})).rejects.toThrow('__exit__');
+			expect(sent).toHaveLength(0);
+			expect(exitSpy).toHaveBeenCalledWith(ExitCode.InvalidUsage);
+
+			await sketchDelete(SKETCH_ID, { yes: true, json: true });
+			expect(sent[0]).toMatchObject({ action: 'delete', sketchId: SKETCH_ID });
+			expect(confirmOnTerminal).not.toHaveBeenCalled();
+			expect(json()).toEqual({ success: true, sketchId: SKETCH_ID });
+		});
+
+		it('sends an agent caller to the desktop confirmation, waiting on the conductor', async () => {
+			process.env[CALLER_AGENT_ID_ENV_VAR] = 'agent-7';
+			const sent = respond(undefined);
+			await sketchDelete(SKETCH_ID, {});
+
+			expect(confirmOnTerminal).not.toHaveBeenCalled();
+			expect(sent[0]).toMatchObject({ action: 'delete', fromSessionId: 'agent-7' });
+			expect(sent[0].timeout).toBe(5 * 60_000);
 		});
 	});
 
@@ -641,26 +728,155 @@ describe('sketch command', () => {
 		});
 
 		it.each([
-			['unshare', () => sketchUnshare(SKETCH_ID, {})],
-			['revoke-link', () => sketchRevokeLink(SKETCH_ID, 'capid0000001', {})],
-			['rotate', () => sketchRotate(SKETCH_ID, {})],
-		])('%s passes an agent caller on and waits for the confirmation', async (_verb, call) => {
-			process.env[CALLER_AGENT_ID_ENV_VAR] = 'agent-7';
-			const sent = respond(shared);
-			await call();
+			['unshare', () => sketchUnshare(SKETCH_ID, {}), shared],
+			['revoke-link', () => sketchRevokeLink(SKETCH_ID, 'capid0000001', {}), shared],
+			['link', () => sketchLink(SKETCH_ID, 'capid0000001', {}), link],
+			[
+				'reset-link',
+				() => sketchResetLink(SKETCH_ID, 'capid0000001', {}),
+				{ record: shared, createdRoom: false, link },
+			],
+			['rotate', () => sketchRotate(SKETCH_ID, {}), shared],
+		] as const)(
+			'%s passes an agent caller on and waits for the confirmation',
+			async (_verb, call, reply) => {
+				process.env[CALLER_AGENT_ID_ENV_VAR] = 'agent-7';
+				const sent = respond(reply);
+				await call();
 
-			expect(sent[0]).toMatchObject({ fromSessionId: 'agent-7', timeout: AGENT_SHARE_TIMEOUT_MS });
-		});
+				expect(sent[0]).toMatchObject({
+					fromSessionId: 'agent-7',
+					timeout: AGENT_SHARE_TIMEOUT_MS,
+				});
+			}
+		);
 
-		it('revoke-link needs a link id', async () => {
+		it.each([
+			['revoke-link', () => sketchRevokeLink(SKETCH_ID, '  ', {})],
+			['link', () => sketchLink(SKETCH_ID, '  ', {})],
+			['reset-link', () => sketchResetLink(SKETCH_ID, '  ', {})],
+		])('%s needs a link id', async (_verb, call) => {
 			const sent = respond(shared);
-			await expect(sketchRevokeLink(SKETCH_ID, '  ', {})).rejects.toThrow('__exit__');
+			await expect(call()).rejects.toThrow('__exit__');
 
 			expect(sent).toHaveLength(0);
 			expect(errors()).toContain('A link id is required.');
 			expect(exitSpy).toHaveBeenCalledWith(ExitCode.InvalidUsage);
 		});
+
+		it('link prints a live link again', async () => {
+			const sent = respond({ ...link, expiresAt: null });
+			await sketchLink(SKETCH_ID, ' capid0000001 ', {});
+
+			expect(sent[0]).toMatchObject({
+				action: 'link',
+				sketchId: SKETCH_ID,
+				capId: 'capid0000001',
+				timeout: SHARE_TIMEOUT_MS,
+			});
+			const out = logged();
+			expect(out).toContain('Link capid0000001 (can edit, never expires)');
+			expect(out).toContain(`Link: ${link.url}`);
+		});
+
+		it('reset-link prints the replacement', async () => {
+			const sent = respond({
+				record: shared,
+				createdRoom: false,
+				link: { ...link, capId: 'capid0000002' },
+			});
+			await sketchResetLink(SKETCH_ID, 'capid0000001', { json: false });
+
+			expect(sent[0]).toMatchObject({ action: 'reset-link', capId: 'capid0000001' });
+			const out = logged();
+			expect(out).toContain(
+				'Reset link capid0000001 on "Architecture": it no longer works. New link (can edit, expires 2026-11-03)'
+			);
+			expect(out).toContain('Link id: capid0000002');
+		});
 	});
+	describe('chat', () => {
+		const CONFIRM_TIMEOUT_MS = 5 * 60_000;
+		const guest = { id: 'g1', kind: 'guest' as const, name: 'Sam', role: 'rw' as const };
+		const conductor = {
+			id: 'c1',
+			kind: 'conductor' as const,
+			name: 'Pedram',
+			role: 'conductor' as const,
+		};
+		const reading = {
+			sketchId: SKETCH_ID,
+			messages: [
+				{ id: 'm1', actor: guest, ts: Date.now() - 60_000, text: null, withheld: 'unscreened' },
+				{ id: 'm2', actor: conductor, ts: Date.now() - 1_000, text: 'hello' },
+			],
+		};
+		let savedCaller: string | undefined;
+
+		beforeEach(() => {
+			savedCaller = process.env[CALLER_AGENT_ID_ENV_VAR];
+			delete process.env[CALLER_AGENT_ID_ENV_VAR];
+		});
+
+		afterEach(() => {
+			if (savedCaller === undefined) delete process.env[CALLER_AGENT_ID_ENV_VAR];
+			else process.env[CALLER_AGENT_ID_ENV_VAR] = savedCaller;
+		});
+
+		it('reads the chat with no message, and says when guest text is withheld', async () => {
+			const sent = respond(reading);
+			await sketchChat(SKETCH_ID, [], {});
+
+			expect(sent[0]).toMatchObject({
+				type: 'sketch_command',
+				action: 'chat',
+				sketchId: SKETCH_ID,
+			});
+			expect(sent[0].text).toBeUndefined();
+			expect(logged()).toContain('(a guest message, withheld: nothing screened it)');
+			expect(logged()).toContain('"hello"');
+		});
+
+		it('joins the words into one message and says the room got it', async () => {
+			const sent = respond({ ...reading, sent: { toBot: false } });
+			await sketchChat(SKETCH_ID, ['looks', 'good'], {});
+
+			expect(sent[0]).toMatchObject({ action: 'chat', text: 'looks good' });
+			expect(logged()).toContain('Posted to the room.');
+		});
+
+		it('names the request when the message asked the agent', async () => {
+			respond({ ...reading, sent: { toBot: true, replyTo: 'r9' } });
+			await sketchChat(SKETCH_ID, ['@bot tidy'], {});
+			expect(logged()).toContain('Asked the agent (request r9).');
+		});
+
+		it("waits on the desktop confirmation for an agent caller's post", async () => {
+			process.env[CALLER_AGENT_ID_ENV_VAR] = 'agent-7';
+			const sent = respond({ ...reading, sent: { toBot: false } });
+			await sketchChat(SKETCH_ID, ['hello'], {});
+			expect(sent[0]).toMatchObject({ fromSessionId: 'agent-7', timeout: CONFIRM_TIMEOUT_MS });
+		});
+
+		it('prints only the newest --last messages', async () => {
+			respond(reading);
+			await sketchChat(SKETCH_ID, [], { last: '1' });
+			expect(logged()).not.toContain('withheld');
+			expect(logged()).toContain('"hello"');
+		});
+
+		it('refuses a bad --last and an empty message before the bridge', async () => {
+			const sent = respond(reading);
+			await expect(sketchChat(SKETCH_ID, [], { last: '0' })).rejects.toThrow('__exit__');
+			await expect(sketchChat(SKETCH_ID, ['  '], {})).rejects.toThrow('__exit__');
+
+			expect(sent).toHaveLength(0);
+			expect(errors()).toContain('--last expects a whole number of messages, got "0"');
+			expect(errors()).toContain('The message is empty.');
+			expect(exitSpy).toHaveBeenCalledWith(ExitCode.InvalidUsage);
+		});
+	});
+
 	describe('@bot requests', () => {
 		const CONFIRM_TIMEOUT_MS = 5 * 60_000;
 		const waiting: SketchBotRequestInfo = {

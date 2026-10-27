@@ -34,6 +34,11 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 	'sketch new': ['maestro-cli sketch new --agent <agent-id> --name "Architecture" --json'],
 	'sketch list': ['maestro-cli sketch list --agent <agent-id> --json'],
 	'sketch open': ['maestro-cli sketch open <sketch-id> --background'],
+	'sketch rename': ['maestro-cli sketch rename <sketch-id> "Release plan"'],
+	'sketch delete': [
+		'maestro-cli sketch delete <sketch-id>',
+		'maestro-cli sketch delete <sketch-id> --yes --json',
+	],
 	'sketch read': [
 		'maestro-cli sketch read <sketch-id>',
 		'maestro-cli sketch read <sketch-id> --format elements --json',
@@ -50,6 +55,13 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 	],
 	'sketch unshare': ['maestro-cli sketch unshare <sketch-id>'],
 	'sketch revoke-link': ['maestro-cli sketch revoke-link <sketch-id> <link-id>'],
+	'sketch chat': [
+		'maestro-cli sketch chat <sketch-id> --last 10',
+		'maestro-cli sketch chat <sketch-id> "Looks good, shipping it"',
+		'maestro-cli sketch chat <sketch-id> "@bot label every box" --json',
+	],
+	'sketch link': ['maestro-cli sketch link <sketch-id> <link-id> --json'],
+	'sketch reset-link': ['maestro-cli sketch reset-link <sketch-id> <link-id>'],
 	'sketch rotate': ['maestro-cli sketch rotate <sketch-id> --json'],
 	'sketch owner': [
 		'maestro-cli sketch owner status',
@@ -201,6 +213,7 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 		'maestro-cli open settings --tab models --sub-tab library',
 		'maestro-cli open delegation-graph --group <group-id>',
 		'maestro-cli open agent-settings --agent <agent-id> --tab peers',
+		'maestro-cli open sketch-books --agent <agent-id>',
 	],
 	'image list': ['maestro-cli image list --agent <agent-id> --limit 10'],
 	'image save': ['maestro-cli image save latest --output ./screenshot.png'],

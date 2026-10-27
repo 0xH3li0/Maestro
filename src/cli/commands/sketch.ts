@@ -11,6 +11,11 @@
 // - `list [--agent]` lists every sketch, or the ones one agent owns.
 // - `open <sketchId>` shows the sketch in a tab on its agent; `--background`
 //   adds the tab without moving the view.
+// - `rename <sketchId> <name>` renames the sketch record (tab labels are the
+//   tabs' own). `delete <sketchId>` deletes it and closes its tabs, the same
+//   as the Sketch Books list; it is refused while the sketch is shared. A
+//   person confirms at the terminal (or passes `--yes`); an agent caller gets
+//   the desktop confirmation (A1).
 // - `read <sketchId>` prints a summary of the saved board, or with
 //   `--format elements` its live Excalidraw elements as JSON.
 // - `export <sketchId> --format png|svg|json --output <path>` writes the saved
@@ -26,9 +31,11 @@
 //
 // - `share <sketchId> [--role rw|ro] [--expires-days n] [--label]` shares the
 //   sketch on RunMaestro.ai (the room on the first share) and prints the new
-//   link, which holds the room key: it is shown once and kept nowhere.
-//   `unshare` archives the room, `revoke-link <sketchId> <capId>` revokes one
-//   link, `rotate` resets all access. From an agent caller each raises the
+//   link, which holds the room key; its cap is sealed on the desktop.
+//   `link <sketchId> <capId>` prints a live link again, `reset-link` revokes
+//   one and prints its replacement, `unshare` archives the room,
+//   `revoke-link <sketchId> <capId>` revokes one link, `rotate` resets all
+//   access. From an agent caller each raises the
 //   desktop confirmation and runs only on Allow (A1); a person runs them.
 // - `owner status|register|sign-out` is this device's RunMaestro.ai sign-in,
 //   which sharing needs. `register --email <address> [--wait]` sends the
@@ -42,6 +49,11 @@
 //   `discard <replyTo>` answer a held reply. From an agent caller, approve,
 //   escalate and publish raise the desktop confirmation and run only on
 //   Allow (A1); deny and discard run.
+// - `chat <sketchId> [message...] [--last n]` reads the chat pane and, with
+//   a message, posts it as the conductor first, through the Sketch tab's
+//   composer path: `@bot` asks the agent, anything else goes to the room. An
+//   agent caller's post raises the desktop confirmation (A1), and an agent
+//   caller reads a guest's message as withheld: nothing screened it.
 //
 // - `bot-policy <sketchId> [conductor|writers]` reads or sets who may ask the
 //   bot (spec section 5): the conductor alone, or read-write guests too (B2).
@@ -97,7 +109,10 @@ import {
 	type SketchReading,
 	type SketchOwnerCommandResult,
 	type SketchSceneSummary,
+	type SketchMintedLink,
 	type SketchShareResult,
+	type SketchChatEntry,
+	type SketchChatReading,
 } from '../../shared/sketch/commands';
 import { describeSketchActor } from '../../shared/sketch/attribution';
 import {
@@ -167,6 +182,15 @@ export interface SketchOpenOptions {
 	json?: boolean;
 }
 
+export interface SketchRenameOptions {
+	json?: boolean;
+}
+
+export interface SketchDeleteOptions {
+	yes?: boolean;
+	json?: boolean;
+}
+
 export interface SketchReadOptions {
 	format?: string;
 	json?: boolean;
@@ -198,6 +222,15 @@ export interface SketchOwnerOptions {
 export interface SketchRequestsCliOptions {
 	json?: boolean;
 }
+
+export interface SketchChatCliOptions {
+	json?: boolean;
+	/** Messages to print, newest last. */
+	last?: string;
+}
+
+/** Messages `sketch chat` prints when `--last` is not given. */
+const CHAT_DEFAULT_LAST = 20;
 
 export interface SketchBotPolicyCliOptions {
 	yes?: boolean;
@@ -329,6 +362,50 @@ export async function sketchOpen(sketchId: string, options: SketchOpenOptions): 
 	}
 	console.log(`Opened sketch "${opened.record.name}"${background ? ' (background tab)' : ''}`);
 	if (opened.tabId) console.log(`  Tab: ${opened.tabId}`);
+}
+
+export async function sketchRename(
+	sketchId: string,
+	name: string,
+	options: SketchRenameOptions
+): Promise<void> {
+	const id = requireSketchId(sketchId, options.json);
+	if (!name.trim()) failCommand('A new name is required.', options.json, ExitCode.InvalidUsage);
+	const record = await request<SketchRecord>('rename', { sketchId: id, name }, options.json);
+	if (options.json) {
+		printJson({ success: true, record });
+		return;
+	}
+	console.log(`Renamed sketch ${record.sketchId} to "${record.name}"`);
+}
+
+export async function sketchDelete(sketchId: string, options: SketchDeleteOptions): Promise<void> {
+	const id = requireSketchId(sketchId, options.json);
+	const caller = readCallerIdentity(process.env);
+	if (!caller && !options.yes) {
+		// A person deletes at the terminal; an agent caller gets the desktop confirmation (A1).
+		if (!canPrompt()) {
+			failCommand(
+				'Deleting a sketch needs a confirmation. Run it in a terminal, or pass --yes.',
+				options.json,
+				ExitCode.InvalidUsage
+			);
+		}
+		if (!(await confirmOnTerminal(`Delete sketch ${id}? This cannot be undone.`))) {
+			failCommand('Nothing was changed.', options.json);
+		}
+	}
+	await request<void>(
+		'delete',
+		{ sketchId: id, ...callerMessageFields(caller) },
+		options.json,
+		caller ? CONSENT_CONFIRM_TIMEOUT_MS : undefined
+	);
+	if (options.json) {
+		printJson({ success: true, sketchId: id });
+		return;
+	}
+	console.log(`Deleted sketch ${id}.`);
 }
 
 /** The human reading of a summary: counts, then shapes, then connections. */
@@ -569,11 +646,76 @@ export async function sketchShare(sketchId: string, options: SketchShareCliOptio
 		return;
 	}
 	console.log(
-		`${result.createdRoom ? 'Shared' : 'New link for'} "${result.record.name}" (${result.link.role === 'rw' ? 'can edit' : 'can view'}, expires ${new Date(result.link.expiresAt).toISOString().slice(0, 10)})`
+		`${result.createdRoom ? 'Shared' : 'New link for'} "${result.record.name}" (${describeMintedLink(result.link)})`
 	);
-	console.log(`  Link: ${result.link.url}`);
-	console.log(`  Link id: ${result.link.capId}`);
-	console.log('  The link holds the room key. It is shown once and kept nowhere.');
+	printMintedLink(result.link);
+}
+
+/** A link's access and expiry, for the human output. */
+function describeMintedLink(link: SketchMintedLink): string {
+	const access = link.role === 'rw' ? 'can edit' : 'can view';
+	return link.expiresAt === null
+		? `${access}, never expires`
+		: `${access}, expires ${new Date(link.expiresAt).toISOString().slice(0, 10)}`;
+}
+
+function printMintedLink(link: SketchMintedLink): void {
+	console.log(`  Link: ${link.url}`);
+	console.log(`  Link id: ${link.capId}`);
+	console.log('  The link holds the room key: anyone who has it gets in.');
+}
+
+/** Read the link id argument, or fail with usage. */
+function requireCapId(capId: string, json: boolean | undefined): string {
+	const id = capId.trim();
+	if (!id) failCommand('A link id is required.', json, ExitCode.InvalidUsage);
+	return id;
+}
+
+export async function sketchLink(
+	sketchId: string,
+	capId: string,
+	options: SketchSharingCliOptions
+): Promise<void> {
+	const id = requireSketchId(sketchId, options.json);
+	const cap = requireCapId(capId, options.json);
+	const caller = readCallerIdentity(process.env);
+	const link = await request<SketchMintedLink>(
+		'link',
+		{ sketchId: id, capId: cap, ...callerMessageFields(caller) },
+		options.json,
+		sharingTimeout(Boolean(caller))
+	);
+	if (options.json) {
+		printJson({ success: true, link });
+		return;
+	}
+	console.log(`Link ${link.capId} (${describeMintedLink(link)})`);
+	printMintedLink(link);
+}
+
+export async function sketchResetLink(
+	sketchId: string,
+	capId: string,
+	options: SketchSharingCliOptions
+): Promise<void> {
+	const id = requireSketchId(sketchId, options.json);
+	const cap = requireCapId(capId, options.json);
+	const caller = readCallerIdentity(process.env);
+	const result = await request<SketchShareResult>(
+		'reset-link',
+		{ sketchId: id, capId: cap, ...callerMessageFields(caller) },
+		options.json,
+		sharingTimeout(Boolean(caller))
+	);
+	if (options.json) {
+		printJson({ success: true, ...result });
+		return;
+	}
+	console.log(
+		`Reset link ${cap} on "${result.record.name}": it no longer works. New link (${describeMintedLink(result.link)})`
+	);
+	printMintedLink(result.link);
 }
 
 export async function sketchUnshare(
@@ -601,8 +743,7 @@ export async function sketchRevokeLink(
 	options: SketchSharingCliOptions
 ): Promise<void> {
 	const id = requireSketchId(sketchId, options.json);
-	const link = capId.trim();
-	if (!link) failCommand('A link id is required.', options.json, ExitCode.InvalidUsage);
+	const link = requireCapId(capId, options.json);
 	const caller = readCallerIdentity(process.env);
 	const record = await request<SketchRecord>(
 		'revoke-link',
@@ -710,6 +851,61 @@ export async function sketchRequests(options: SketchRequestsCliOptions): Promise
 		return;
 	}
 	console.log(requests.map(formatBotRequest).join('\n\n'));
+}
+
+/** One chat message for the human output. */
+export function formatSketchChatEntry(entry: SketchChatEntry): string {
+	const body =
+		entry.text === null
+			? '(a guest message, withheld: nothing screened it)'
+			: JSON.stringify(entry.text);
+	const request = entry.replyTo ? `  [@bot request ${entry.replyTo}]` : '';
+	return `${describeSketchActor(entry.actor)}, ${formatRelativeTime(entry.ts)}${request}\n  ${body}`;
+}
+
+export async function sketchChat(
+	sketchId: string,
+	words: string[],
+	options: SketchChatCliOptions
+): Promise<void> {
+	const id = requireSketchId(sketchId, options.json);
+	let last = CHAT_DEFAULT_LAST;
+	if (options.last !== undefined) {
+		last = Number(options.last);
+		if (!Number.isSafeInteger(last) || last < 1) {
+			failCommand(
+				`--last expects a whole number of messages, got "${options.last}"`,
+				options.json,
+				ExitCode.InvalidUsage
+			);
+		}
+	}
+	const text = words.join(' ').trim();
+	if (words.length > 0 && !text) {
+		failCommand('The message is empty.', options.json, ExitCode.InvalidUsage);
+	}
+	const caller = readCallerIdentity(process.env);
+	const reading = await request<SketchChatReading>(
+		'chat',
+		{ sketchId: id, ...(text ? { text } : {}), ...callerMessageFields(caller) },
+		options.json,
+		text && caller ? CONSENT_CONFIRM_TIMEOUT_MS : undefined
+	);
+	const messages = reading.messages.slice(-last);
+	if (options.json) {
+		printJson({ success: true, ...reading, messages });
+		return;
+	}
+	if (reading.sent) {
+		console.log(
+			reading.sent.toBot
+				? `Asked the agent (request ${reading.sent.replyTo}).`
+				: 'Posted to the room.'
+		);
+	}
+	console.log(
+		messages.length === 0 ? 'No chat yet.' : messages.map(formatSketchChatEntry).join('\n\n')
+	);
 }
 
 /** What each decision did. */
@@ -959,7 +1155,7 @@ export function formatRoomAudit(audit: SketchRoomAudit, flaggedOnly = false): st
 	if (audit.flagged.length > 0) {
 		lines.push(
 			'',
-			`${audit.flagged.length} element(s) withheld as flagged. Delete them in the Room panel, or list them with --flagged.`
+			`${audit.flagged.length} element(s) withheld as flagged. Delete them in the Collaborate panel, or list them with --flagged.`
 		);
 	}
 	return lines.join('\n');

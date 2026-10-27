@@ -153,6 +153,14 @@ export interface ModelEffortModalData {
 	tabId: string;
 }
 
+/**
+ * Sketch Books list scope. `agentId` lists only that agent's sketches (the
+ * tab bar search menu); absent lists every agent's (palette, menus, hotkey).
+ */
+export interface SketchBooksModalData {
+	agentId?: string;
+}
+
 /** Terminal tab startup command modal data */
 export interface TerminalStartupCommandModalData {
 	sessionId: string;
@@ -427,6 +435,7 @@ export type ModalId =
 	| 'modelEffort'
 	| 'snoozedTabs'
 	| 'tabCleanup'
+	| 'sketchBooks'
 	// Group Management
 	| 'renameGroup'
 	| 'groupSettings'
@@ -620,6 +629,7 @@ export interface ModalDataMap {
 	renameTab: RenameTabModalData;
 	snoozeTab: SnoozeTabModalData;
 	modelEffort: ModelEffortModalData;
+	sketchBooks: SketchBooksModalData;
 	terminalStartupCommand: TerminalStartupCommandModalData;
 	renameGroup: RenameGroupModalData;
 	groupSettings: GroupSettingsModalData;

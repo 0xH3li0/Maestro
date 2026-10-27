@@ -104,7 +104,11 @@ function printSurfaceList(options: OpenModalOptions): void {
 			tabs.length > 0 ? `tabs: ${tabs.join(', ')}` : null,
 			subTabs.length > 0 ? `sub-tabs (--sub-tab), ${subTabs.join('; ')}` : null,
 			surface.groupClick ? 'one group: --group <id>' : null,
-			surface.agentClick ? 'one agent: --agent <id>' : null,
+			surface.agentClick
+				? surface.agentOptional
+					? 'one agent (optional): --agent <id>'
+					: 'one agent: --agent <id>'
+				: null,
 		]
 			.filter(Boolean)
 			.join('  |  ');

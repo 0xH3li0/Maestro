@@ -98,6 +98,10 @@ export function registerSketchHandlers(deps: SketchHandlerDeps = {}): void {
 		)
 	);
 	ipcMain.handle(
+		'sketch:open',
+		withIpcErrorLogging(opts('open'), async (sketchId: string) => service.openSketch(sketchId))
+	);
+	ipcMain.handle(
 		'sketch:delete',
 		withIpcErrorLogging(opts('delete'), async (sketchId: string) => service.deleteSketch(sketchId))
 	);
@@ -111,7 +115,7 @@ export function registerSketchHandlers(deps: SketchHandlerDeps = {}): void {
 	);
 
 	// Sharing (spec section 6). The Collaborate panel calls these; `maestro-cli sketch
-	// share|unshare|revoke-link|rotate|owner` reaches the same service methods
+	// share|unshare|revoke-link|link|reset-link|rotate|owner` reaches the same service methods
 	// over the WS bridge, where an agent caller gets the A1 confirmation. A
 	// person in the Sketch tab is the conductor, so these pass no caller.
 	ipcMain.handle(
@@ -150,6 +154,18 @@ export function registerSketchHandlers(deps: SketchHandlerDeps = {}): void {
 		'sketch:revokeLink',
 		withIpcErrorLogging(opts('revokeLink'), async (sketchId: string, capId: string) =>
 			service.revokeSketchLink(sketchId, capId)
+		)
+	);
+	ipcMain.handle(
+		'sketch:link',
+		withIpcErrorLogging(opts('link'), async (sketchId: string, capId: string) =>
+			service.sketchLink(sketchId, capId)
+		)
+	);
+	ipcMain.handle(
+		'sketch:resetLink',
+		withIpcErrorLogging(opts('resetLink'), async (sketchId: string, capId: string) =>
+			service.resetSketchLink(sketchId, capId)
 		)
 	);
 	ipcMain.handle(
@@ -287,7 +303,7 @@ export function registerSketchHandlers(deps: SketchHandlerDeps = {}): void {
 		withIpcErrorLogging(opts('switchScreenToLocal'), async () => botPolicy.switchScreenToLocal())
 	);
 
-	// The Room panel (spec section 6): `room.stats`, Kick, Unlock, Unsuspend
+	// The Collaborate panel (spec section 6): `room.stats`, Kick, Unlock, Unsuspend
 	// and the audit log. `maestro-cli sketch stats|kick|unlock|unsuspend|audit`
 	// reaches the same service over the WS bridge, where an agent's Unlock and
 	// Unsuspend get the A1 confirmation.

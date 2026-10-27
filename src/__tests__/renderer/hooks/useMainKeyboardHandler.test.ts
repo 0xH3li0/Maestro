@@ -3697,6 +3697,50 @@ describe('useMainKeyboardHandler', () => {
 		});
 	});
 
+	describe('showSketchBooks shortcut', () => {
+		const pressListChord = () =>
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'K',
+						code: 'KeyK',
+						altKey: true,
+						metaKey: true,
+						shiftKey: true,
+						bubbles: true,
+					})
+				);
+			});
+
+		beforeEach(() => {
+			useModalStore.getState().closeModal('sketchBooks');
+		});
+
+		it('opens the Sketch Books list while Sketch Book is on, with no agent needed', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			result.current.keyboardHandlerRef.current = createMockContext({
+				encoreFeatures: { sketchBook: true },
+				activeSession: null,
+				isShortcut: (_e: KeyboardEvent, id: string) => id === 'showSketchBooks',
+				recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+			});
+
+			pressListChord();
+			expect(useModalStore.getState().isOpen('sketchBooks')).toBe(true);
+		});
+
+		it('does nothing while the Encore Feature is off', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			result.current.keyboardHandlerRef.current = createMockContext({
+				encoreFeatures: { sketchBook: false },
+				isShortcut: (_e: KeyboardEvent, id: string) => id === 'showSketchBooks',
+			});
+
+			pressListChord();
+			expect(useModalStore.getState().isOpen('sketchBooks')).toBe(false);
+		});
+	});
+
 	describe('openNotificationCenter shortcut', () => {
 		// Unbound by default, so the test binds it through isShortcut.
 		const press = () =>

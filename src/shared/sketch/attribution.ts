@@ -96,17 +96,28 @@ export const SKETCH_ACTOR_NAME_MAX_CHARS = 60;
  * "not verified": v1 has no guest accounts.
  */
 export function describeSketchActor(actor: SketchActor): string {
+	return `${sketchActorNameLabel(actor)} · ${sketchActorRoleLabel(actor)}`;
+}
+
+/** The first half of {@link describeSketchActor}: the capped, JSON-quoted name. */
+export function sketchActorNameLabel(actor: Pick<SketchActor, 'name'>): string {
 	const chars = Array.from(actor.name);
 	const name =
 		chars.length > SKETCH_ACTOR_NAME_MAX_CHARS
 			? `${chars.slice(0, SKETCH_ACTOR_NAME_MAX_CHARS - 1).join('')}…`
 			: actor.name;
-	const quoted = JSON.stringify(name);
-	if (actor.kind !== 'guest') return `${quoted} · ${actor.kind}`;
+	return JSON.stringify(name);
+}
+
+/** The second half of {@link describeSketchActor}: what the actor is, and on which link. */
+export function sketchActorRoleLabel(
+	actor: Pick<SketchActor, 'kind' | 'role' | 'capLabel'>
+): string {
+	if (actor.kind !== 'guest') return actor.kind;
 	const link = actor.role === 'rw' ? 'read-write link' : 'view-only link';
 	const capLabel = actor.capLabel?.replace(/\s+/g, ' ').trim();
 	const label = capLabel ? ` ${capLabel}` : '';
-	return `${quoted} · guest, ${link}${label}, not verified`;
+	return `guest, ${link}${label}, not verified`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

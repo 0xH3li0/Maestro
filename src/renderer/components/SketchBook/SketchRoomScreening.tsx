@@ -2,7 +2,8 @@
  * What the conductor sees of a shared sketch's screen: the screening badge
  * ("Local screening" / "Cloud screening: Jev", wire contract X10, spec section
  * 8.10) and the Y4 banner ("Your screen failed N guest requests", spec section
- * 8.9). The Sketch tab header shows both; the Room panel mounts the same two.
+ * 8.9). The Sketch tab shows the badge at the center of the canvas footer and
+ * the banner above the canvas.
  *
  * The badge shows the room's value as the server holds it, which is what
  * guests are told. The room only says `cloud`; the engine and its host are

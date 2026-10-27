@@ -17,9 +17,11 @@
  * the store starts empty; the scene files stay on disk untouched. A scene file
  * that is not JSON is refused by name and never written over.
  *
- * The AES room key and the owner token are sealed with `safeStorageSeal()`
- * (obscured where the OS has no key store) and live in the index beside the
- * records, never inside them, so no read of a record can carry one out.
+ * The AES room key, the owner token and each live link's cap are sealed with
+ * `safeStorageSeal()` (obscured where the OS has no key store) and live in the
+ * index beside the records, never inside them, so no read of a record can
+ * carry one out. A cap is worth less than the room key sealed beside it: the
+ * key alone decrypts the room, so keeping caps (for Copy link) widens nothing.
  *
  * Paths are rebuilt from the data directory, the owner and the sketch id on
  * every read. The `filePath` stored in a record is informational: a hand-edited
@@ -61,10 +63,26 @@ const SKETCH_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9
 /** An owner agent id becomes a folder name, so it must be one plain segment. */
 const AGENT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
-/** The secrets a sketch may hold. Sealed on disk, never part of a record. */
-export type SketchSecretName = 'roomKey' | 'ownerToken';
-const SKETCH_SECRET_NAMES: readonly SketchSecretName[] = ['roomKey', 'ownerToken'];
+/**
+ * The secrets a sketch may hold. Sealed on disk, never part of a record. A
+ * link's cap is `cap:<capId>` ({@link linkCapSecretName}).
+ */
+export type SketchSecretName = 'roomKey' | 'ownerToken' | `cap:${string}`;
+const SKETCH_FIXED_SECRET_NAMES: readonly SketchSecretName[] = ['roomKey', 'ownerToken'];
+/** A cap id as the server mints it; anything else is never a secret name. */
+const CAP_SECRET_PATTERN = /^cap:[A-Za-z0-9_-]{1,128}$/;
 export type SketchSecrets = Partial<Record<SketchSecretName, string>>;
+
+/** The secret that holds a link's cap. */
+export function linkCapSecretName(capId: string): `cap:${string}` {
+	return `cap:${capId}`;
+}
+
+function isSketchSecretName(name: string): name is SketchSecretName {
+	return (
+		(SKETCH_FIXED_SECRET_NAMES as readonly string[]).includes(name) || CAP_SECRET_PATTERN.test(name)
+	);
+}
 
 /** Why the store refused. */
 export type SketchStoreErrorCode =
@@ -257,8 +275,8 @@ export function createSketchStore(deps: SketchStoreDeps): SketchStore {
 		for (const [id, raw] of Object.entries(secrets)) {
 			if (!index.sketches[id] || !isObject(raw)) continue;
 			const kept: Partial<Record<SketchSecretName, StoredSecret>> = {};
-			for (const name of SKETCH_SECRET_NAMES) {
-				if (isStoredSecret(raw[name])) kept[name] = raw[name];
+			for (const [name, value] of Object.entries(raw)) {
+				if (isSketchSecretName(name) && isStoredSecret(value)) kept[name] = value;
 			}
 			if (Object.keys(kept).length > 0) index.secrets[id] = kept;
 		}
@@ -503,9 +521,11 @@ export function createSketchStore(deps: SketchStoreDeps): SketchStore {
 			await requireRecord(sketchId);
 			// Seal outside the queue: it is CPU work and may ask the OS for its key.
 			const sealed: Partial<Record<SketchSecretName, StoredSecret | null>> = {};
-			for (const name of SKETCH_SECRET_NAMES) {
-				const value = secrets[name];
+			for (const [name, value] of Object.entries(secrets)) {
 				if (value === undefined) continue;
+				if (!isSketchSecretName(name)) {
+					throw new Error(`Sketch Book: "${name}" is not a sketch secret.`);
+				}
 				sealed[name] = value === null ? null : sealSecret(value, deps.osSeal());
 			}
 			await writes.enqueue(sketchId, () =>
@@ -531,8 +551,10 @@ export function createSketchStore(deps: SketchStoreDeps): SketchStore {
 			await requireRecord(sketchId);
 			const stored = (await readIndex()).secrets[sketchId] ?? {};
 			const opened: SketchSecrets = {};
-			for (const name of SKETCH_SECRET_NAMES) {
-				const secret = stored[name];
+			for (const [name, secret] of Object.entries(stored) as [
+				SketchSecretName,
+				StoredSecret | undefined,
+			][]) {
 				if (secret) opened[name] = unsealSecret(secret, deps.osSeal());
 			}
 			return opened;

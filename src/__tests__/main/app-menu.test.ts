@@ -228,18 +228,22 @@ describe('app menu', () => {
 		expect(buildFromTemplate).not.toHaveBeenCalled();
 	});
 
-	it('offers New Sketch Book in the File menu only while Sketch Book is on', () => {
+	it('offers New Sketch Book and Sketch Books in the File menu only while Sketch Book is on', () => {
 		const fileItems = () => menuNamed('File').submenu!.map(nameOf);
 
 		setMenuEncoreFeatures({ sketchBook: false });
 		installApplicationMenu();
 		expect(fileItems()).not.toContain('New Sketch Book');
+		expect(fileItems()).not.toContain('Sketch Books...');
 
 		setMenuEncoreFeatures({ sketchBook: true });
 		expect(fileItems()).toContain('New Sketch Book');
+		expect(fileItems()).toContain('Sketch Books...');
 
 		itemNamed(menuNamed('File'), 'New Sketch Book').click?.({}, new FakeBrowserWindow());
 		expect(send).toHaveBeenCalledWith('menu:command', 'newSketchBook');
+		itemNamed(menuNamed('File'), 'Sketch Books...').click?.({}, new FakeBrowserWindow());
+		expect(send).toHaveBeenCalledWith('menu:command', 'showSketchBooks');
 	});
 
 	it('does not send to a destroyed window', () => {

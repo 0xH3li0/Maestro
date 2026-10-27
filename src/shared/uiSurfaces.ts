@@ -67,7 +67,8 @@ export type UiSurfaceEncoreFlag =
 	| 'aCappella'
 	| 'computerHistory'
 	| 'quickChat'
-	| 'throughputGauge';
+	| 'throughputGauge'
+	| 'sketchBook';
 
 export interface UiSurface {
 	/** CLI name (kebab-case), and the wire value on the `open_modal` message. */
@@ -105,6 +106,11 @@ export interface UiSurface {
 	 * caller cannot see. Absent, `--agent` is refused for the surface.
 	 */
 	agentClick?: string;
+	/**
+	 * The surface opens on one agent when `--agent` names one, and on every
+	 * agent without it. Only meaningful with {@link agentClick}.
+	 */
+	agentOptional?: boolean;
 	/** Encore Feature that gates the surface. */
 	encore?: UiSurfaceEncoreFlag;
 }
@@ -393,6 +399,20 @@ export const UI_SURFACES: UiSurface[] = [
 		click: 'the hamburger menu at the top of the Left Bar',
 	},
 	{
+		id: 'sketch-books',
+		label: 'Sketch Books',
+		aliases: ['sketches', 'sketch-book-list'],
+		modal: 'sketchBooks',
+		description:
+			"Every Sketch Book across all agents, or one agent's with --agent: search, open in a tab, rename, or delete. A closed sketch comes back from here.",
+		shortcutId: 'showSketchBooks',
+		commandPalette: 'Sketch Books',
+		click: 'Sketch Books in the Left Bar hamburger menu',
+		agentClick: 'See Sketches (this agent) in the tab bar search menu',
+		agentOptional: true,
+		encore: 'sketchBook',
+	},
+	{
 		id: 'quick-actions',
 		label: 'Quick Actions',
 		aliases: ['command-palette', 'palette'],
@@ -521,7 +541,7 @@ export function resolveUiSurfaceTarget(
 	if (agent !== undefined && !surface.agentClick) {
 		return { error: `${surface.label} is not one agent's, so --agent does not apply.` };
 	}
-	if (agent === undefined && surface.agentClick) {
+	if (agent === undefined && surface.agentClick && !surface.agentOptional) {
 		return { error: `${surface.label} opens on one agent: pass --agent <id>.` };
 	}
 	const target = resolveUiSurfaceTabTarget(surface, request);

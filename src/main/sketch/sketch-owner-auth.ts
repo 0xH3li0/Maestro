@@ -169,7 +169,11 @@ export interface SketchOwnerAuth {
 	register(email: string): Promise<SketchOwnerRegistration>;
 	/** One status check, at least OWNER_STATUS_MIN_INTERVAL_MS after the previous one. */
 	checkStatus(signal?: AbortSignal): Promise<SketchOwnerStatus>;
-	/** Check until the email is confirmed, the time runs out, or `signal` aborts. */
+	/**
+	 * Check until the email is confirmed, the time runs out, or `signal` aborts.
+	 * Callers without a signal share the poll in flight (and its timeout), so a
+	 * panel opened twice never runs two pollers.
+	 */
 	pollStatus(options?: PollStatusOptions): Promise<SketchOwnerStatus>;
 	status(): Promise<SketchOwnerStatus>;
 	/** The owner token for the configured server, or null when there is none. */
@@ -228,6 +232,8 @@ export function createSketchOwnerAuth(deps: SketchOwnerAuthDeps): SketchOwnerAut
 	const newClientToken = deps.newClientToken ?? (() => randomBytes(32).toString('base64url'));
 	/** When the last status request went out, so two are never closer than the minimum. */
 	let lastStatusRequestAt = Number.NEGATIVE_INFINITY;
+	/** The poll shared by every caller without its own signal. */
+	let sharedPoll: Promise<SketchOwnerStatus> | null = null;
 
 	function statusOf(state: OwnerFileState): SketchOwnerStatus {
 		if (!state.email || !state.serverUrl || (!state.pending && !state.confirmed)) {
@@ -400,7 +406,15 @@ export function createSketchOwnerAuth(deps: SketchOwnerAuthDeps): SketchOwnerAut
 		return statusOf(next);
 	}
 
-	async function pollStatus(options: PollStatusOptions = {}): Promise<SketchOwnerStatus> {
+	function pollStatus(options: PollStatusOptions = {}): Promise<SketchOwnerStatus> {
+		if (options.signal) return pollUntilSettled(options);
+		sharedPoll ??= pollUntilSettled(options).finally(() => {
+			sharedPoll = null;
+		});
+		return sharedPoll;
+	}
+
+	async function pollUntilSettled(options: PollStatusOptions): Promise<SketchOwnerStatus> {
 		const deadline = now() + (options.timeoutMs ?? DEFAULT_POLL_TIMEOUT_MS);
 		for (;;) {
 			let current: SketchOwnerStatus;

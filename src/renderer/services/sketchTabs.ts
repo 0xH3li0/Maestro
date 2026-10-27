@@ -18,8 +18,14 @@ import type { SketchRecord } from '../../shared/sketch/types';
 import { getModalActions } from '../stores/modalStore';
 import { notifyToast } from '../stores/notificationStore';
 import { selectActiveSession, updateSessionWith, useSessionStore } from '../stores/sessionStore';
+import { useSketchSessionStore } from '../stores/sketchSessionStore';
 import { ipcErrorMessage } from '../utils/ipcErrorMessage';
-import { closeSketchTab, navigateToUnifiedTabById, openSketchTab } from '../utils/tabHelpers';
+import {
+	closeSketchTab,
+	forgetSketchInSession,
+	navigateToUnifiedTabById,
+	openSketchTab,
+} from '../utils/tabHelpers';
 
 function findSketchTab(sessionId: string, tabId: string) {
 	const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
@@ -111,6 +117,23 @@ export async function createSketchInSession(
 		{ background: options.background }
 	);
 	return record;
+}
+
+/**
+ * Main deleted a sketch (`forget`): close its tabs on every agent in this
+ * window, purge it from the closed-tab history, and drop the live session so
+ * no pending autosave writes into the deleted record.
+ */
+export function forgetSketchInWindow(sketchId: string): void {
+	for (const session of useSessionStore.getState().sessions) {
+		const holdsSketch =
+			session.sketchTabs?.some((tab) => tab.sketchId === sketchId) ||
+			session.unifiedClosedTabHistory?.some(
+				(entry) => entry.type === 'sketch' && entry.tab.sketchId === sketchId
+			);
+		if (holdsSketch) updateSessionWith(session.id, (s) => forgetSketchInSession(s, sketchId));
+	}
+	useSketchSessionStore.getState().dropSketchSession(sketchId);
 }
 
 /** "New Sketch Book" on the active agent. Null when no agent is active. */

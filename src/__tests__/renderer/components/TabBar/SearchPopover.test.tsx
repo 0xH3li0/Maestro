@@ -95,3 +95,29 @@ describe('SearchPopover tab count', () => {
 		expect(screen.getByLabelText('143 open tabs')).toHaveTextContent('99+');
 	});
 });
+
+describe('SearchPopover Sketch Books row', () => {
+	beforeEach(() => {
+		useSettingsStore.setState({ showTabCountBadge: true });
+	});
+
+	it("opens this agent's sketches from the bottom of the menu", () => {
+		const onShowSketchBooks = vi.fn();
+		setup({ onShowSketchBooks });
+		fireEvent.click(screen.getByTitle('Search… (7 open tabs)'));
+
+		const buttons = screen.getAllByRole('button');
+		expect(buttons[buttons.length - 1]).toHaveTextContent('See Sketches (this agent)');
+
+		fireEvent.click(screen.getByText('See Sketches (this agent)'));
+		expect(onShowSketchBooks).toHaveBeenCalledTimes(1);
+		expect(screen.queryByText('Search Tabs')).not.toBeInTheDocument();
+	});
+
+	it('has no row while Sketch Book is unavailable', () => {
+		setup();
+		fireEvent.click(screen.getByTitle('Search… (7 open tabs)'));
+		expect(screen.getByText('See All Snoozed Tabs')).toBeInTheDocument();
+		expect(screen.queryByText('See Sketches (this agent)')).not.toBeInTheDocument();
+	});
+});

@@ -2118,6 +2118,26 @@ export function closeSketchTab(session: Session, tabId: string): CloseSketchTabR
 }
 
 /**
+ * Drop every trace of a DELETED sketch from an agent: each tab pointing at it
+ * closes the way a click closes it, and no closed-tab entry is left behind
+ * for Cmd+Shift+T to reopen onto a record that is gone. Returns the session
+ * unchanged when nothing points at the sketch.
+ */
+export function forgetSketchInSession(session: Session, sketchId: string): Session {
+	const pointsAt = (tab: { sketchId: string }) => tab.sketchId === sketchId;
+	let next = session;
+	for (const tab of session.sketchTabs ?? []) {
+		if (pointsAt(tab)) next = closeSketchTab(next, tab.id)?.session ?? next;
+	}
+	const history = next.unifiedClosedTabHistory ?? [];
+	const keptHistory = history.filter((entry) => entry.type !== 'sketch' || !pointsAt(entry.tab));
+	if (keptHistory.length !== history.length) {
+		next = { ...next, unifiedClosedTabHistory: keptHistory };
+	}
+	return next;
+}
+
+/**
  * Add an AI tab to the unified closed tab history.
  * This should be called when closing an AI tab to enable Cmd+Shift+T for all tab types.
  * Note: This only adds to the unified history - the existing closeTab function already

@@ -44,6 +44,7 @@ import { isWebDesktop } from '../../utils/runtimeContext';
 import { canOpenComputerHistory } from '../../utils/computerHistoryAvailability';
 import { canUseSketchBook } from '../../utils/sketchBookAvailability';
 import { noteDesktopAiTabSelection } from '../../utils/desktopTabSelectionSync';
+import { forwardKeyToMainHandler } from '../../utils/keyForwarding';
 
 /**
  * Open the floating media player on whatever it should be showing.
@@ -1141,6 +1142,11 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					void createSketchInSession(activeSession.id);
 					trackShortcut('newSketchBook');
 				}
+			} else if (ctx.isShortcut(e, 'showSketchBooks') && canUseSketchBook(ctx.encoreFeatures)) {
+				// Every agent's sketches, so unlike New Sketch Book it needs no agent on screen.
+				e.preventDefault();
+				useModalStore.getState().openModal('sketchBooks');
+				trackShortcut('showSketchBooks');
 			} else if (ctx.isShortcut(e, 'nextUnreadTab')) {
 				e.preventDefault();
 				ctx.goToNextUnreadTab();
@@ -1901,18 +1907,14 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				}
 			}
 
-			window.dispatchEvent(
-				new KeyboardEvent('keydown', {
-					key: input.key,
-					code: input.code,
-					metaKey: input.meta,
-					ctrlKey: input.control,
-					altKey: input.alt,
-					shiftKey: input.shift,
-					bubbles: true,
-					cancelable: true,
-				})
-			);
+			forwardKeyToMainHandler({
+				key: input.key,
+				code: input.code,
+				metaKey: input.meta,
+				ctrlKey: input.control,
+				altKey: input.alt,
+				shiftKey: input.shift,
+			});
 		});
 	}, []);
 

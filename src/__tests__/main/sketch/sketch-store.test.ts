@@ -82,6 +82,7 @@ import {
 	createSketchStore,
 	emptySketchScene,
 	isSketchStoreError,
+	linkCapSecretName,
 	type SketchStore,
 	type SketchStoreErrorCode,
 } from '../../../main/sketch/sketch-store';
@@ -372,6 +373,30 @@ describe('sealed secrets', () => {
 		expect(index.secrets).toEqual({});
 		expect(index.sketches).toEqual({});
 		expect(await exists(sceneFile('agent-a', sketchId))).toBe(false);
+	});
+
+	it('seals a link cap under its own name, and refuses a name that is not a secret', async () => {
+		const { sketchId } = await store.createSketch({ ownerAgentId: 'agent-a' });
+		const cap = 'c'.repeat(43);
+
+		await store.setSketchSecrets(sketchId, { [linkCapSecretName('capid0000001')]: cap });
+
+		const raw = await fs.readFile(indexFile(), 'utf-8');
+		expect(raw).not.toContain(cap);
+		expect(await store.readSketchSecrets(sketchId)).toEqual({ 'cap:capid0000001': cap });
+		await expect(
+			store.setSketchSecrets(sketchId, { 'cap:../escape': cap } as Record<string, string>)
+		).rejects.toThrow('is not a sketch secret');
+	});
+
+	it('drops a stored secret whose name is not one on load', async () => {
+		const { sketchId } = await store.createSketch({ ownerAgentId: 'agent-a' });
+		await store.setSketchSecrets(sketchId, { roomKey: ROOM_KEY });
+		const index = JSON.parse(await fs.readFile(indexFile(), 'utf-8'));
+		index.secrets[sketchId].bogus = index.secrets[sketchId].roomKey;
+		await fs.writeFile(indexFile(), JSON.stringify(index));
+
+		expect(Object.keys(await makeStore().readSketchSecrets(sketchId))).toEqual(['roomKey']);
 	});
 });
 
