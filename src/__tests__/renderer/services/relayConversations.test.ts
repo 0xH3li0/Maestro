@@ -139,6 +139,35 @@ describe('Relay archive and restoration', () => {
 			agentError: { type: 'unknown' },
 		});
 	});
+	it.each(['running', 'queued'] as const)(
+		'does not revive persisted %s as a native live turn',
+		(status) => {
+			tab.relayConversation!.status = status;
+			tab.state = 'busy';
+			tab.thinkingStartTime = 999;
+			const restored = applyRelayConversationRuntime(session, undefined, 'persisted').aiTabs[0];
+			expect(restored.state).toBe('idle');
+			expect(restored.thinkingStartTime).toBeUndefined();
+			expect(restored.relayConversation).toEqual(tab.relayConversation);
+		}
+	);
+
+	it('allows fresh live updates to reassert running after unverified native restoration', () => {
+		tab.relayConversation!.status = 'running';
+		const restored = applyRelayConversationRuntime(session, undefined, 'persisted');
+		const live = {
+			...restored,
+			aiTabs: restored.aiTabs.map((t) => ({
+				...t,
+				relayConversation: { ...t.relayConversation!, lastActivityAt: 2000 },
+			})),
+		};
+		expect(applyRelayConversationRuntime(live, restored).aiTabs[0]).toMatchObject({
+			state: 'busy',
+			thinkingStartTime: 2000,
+		});
+	});
+
 	it('does not clear a newer desktop running state on an unchanged lifecycle echo', () => {
 		const baseline = structuredClone(session);
 		tab.state = 'busy';

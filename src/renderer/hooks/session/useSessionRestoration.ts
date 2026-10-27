@@ -1,4 +1,7 @@
-import { applyRelayConversationRuntime } from '../../services/relayConversations';
+import {
+	applyRelayConversationRuntime,
+	deriveRelayConversationRuntime,
+} from '../../services/relayConversations';
 /**
  * useSessionRestoration - extracted from App.tsx (Phase 2E)
  *
@@ -783,17 +786,12 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				correctedSession = { ...correctedSession, activeBrowserTabId: null };
 			}
 
-			// Reset all tab states to idle - processes don't survive app restart
+			// Persisted native Relay status is unverified. Fresh live Host updates
+			// can reassert runtime; browser restoration attaches to the live Host.
+			const relayRuntimeSource = isWebDesktop() ? 'live' : 'persisted';
 			const resetAiTabs = correctedSession.aiTabs.map((tab) => ({
 				...tab,
-				state:
-					tab.relayConversation?.status === 'running' || tab.relayConversation?.status === 'queued'
-						? ('busy' as const)
-						: ('idle' as const),
-				thinkingStartTime:
-					tab.relayConversation?.status === 'running'
-						? tab.relayConversation.lastActivityAt
-						: undefined,
+				...deriveRelayConversationRuntime(tab.relayConversation, relayRuntimeSource),
 				// Clear any stranded naming-in-flight flag. The promise that would
 				// reset it lives in the renderer and cannot survive a reload/restart,
 				// so a tab whose generateTabName() call was interrupted would otherwise
@@ -945,7 +943,9 @@ export function useSessionRestoration(): SessionRestorationReturn {
 						unifiedClosedTabHistory: restoreClosedTabHistory(correctedSession),
 						unifiedTabOrder: repairedUnifiedTabOrder,
 					})
-				)
+				),
+				undefined,
+				relayRuntimeSource
 			);
 		} catch (error) {
 			logger.error(`Error restoring session ${session.id}:`, undefined, error);

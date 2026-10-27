@@ -1,28 +1,45 @@
 import { canonicalJson } from '../../shared/canonicalJson';
-import type { Session } from '../types';
+import type { AITab, Session } from '../types';
 import { useSessionStore, updateSessionWith } from '../stores/sessionStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useHeadlessActivityStore } from '../stores/headlessActivityStore';
 import { canArchiveRelayConversation } from '../../shared/relayConversation';
 
+/** Persisted native status alone does not prove that a Host turn survived.
+ * Live lifecycle updates and browser reattachment retain their normal projection.
+ */
+export function deriveRelayConversationRuntime(
+	relay: AITab['relayConversation'],
+	source: 'live' | 'persisted' = 'live'
+): Pick<AITab, 'state' | 'thinkingStartTime'> {
+	const active = source === 'live' && (relay?.status === 'running' || relay?.status === 'queued');
+	return {
+		state: active ? 'busy' : 'idle',
+		thinkingStartTime: active && relay?.status === 'running' ? relay.lastActivityAt : undefined,
+	};
+}
+
 /** Lifecycle updates preserve local runtime by default. Relay is host-owned and
  * has no renderer process exit event, so its explicit state transitions settle here.
  */
-export function applyRelayConversationRuntime(session: Session, baseline?: Session): Session {
+export function applyRelayConversationRuntime(
+	session: Session,
+	baseline?: Session,
+	source: 'live' | 'persisted' = 'live'
+): Session {
 	let changed = false;
 	const aiTabs = session.aiTabs.map((tab) => {
 		const relay = tab.relayConversation;
 		const before = baseline?.aiTabs.find((t) => t.id === tab.id)?.relayConversation;
-		if (!relay?.messageId || (baseline && canonicalJson(before ?? null) === canonicalJson(relay)))
+		if (
+			!relay?.messageId ||
+			(source === 'live' && baseline && canonicalJson(before ?? null) === canonicalJson(relay))
+		)
 			return tab;
 		changed = true;
 		return {
 			...tab,
-			state:
-				relay.status === 'running' || relay.status === 'queued'
-					? ('busy' as const)
-					: ('idle' as const),
-			thinkingStartTime: relay.status === 'running' ? relay.lastActivityAt : undefined,
+			...deriveRelayConversationRuntime(relay, source),
 			agentError:
 				relay.status === 'error'
 					? {
