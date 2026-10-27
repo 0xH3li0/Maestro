@@ -32,7 +32,6 @@ vi.mock('../../../main/utils/logger', () => ({
 import v8 from 'v8';
 import {
 	HEAP_DANGER_FRACTION,
-	countActiveAutoRuns,
 	sampleHeap,
 	startCrashContextSampling,
 	stopCrashContextSampling,
@@ -207,45 +206,24 @@ describe('crash context for a native OOM report', () => {
 		setScopeContext.mockClear();
 	});
 
-	it('counts agents running an Auto Run task, once per agent', () => {
-		expect(
-			countActiveAutoRuns([
-				'agent-a-batch-1792683668205',
-				'agent-a-batch-1792683668999',
-				'agent-b-batch-1792683763951',
-				'agent-c-ai-tab-1',
-				'agent-d-synopsis-1792683763951',
-				'agent-e-terminal',
-			])
-		).toBe(2);
-		expect(countActiveAutoRuns([])).toBe(0);
-	});
-
-	it('tags the scope with heap, agents and Auto Runs as soon as it starts', () => {
+	it('tags the scope with the heap, and nothing else, as soon as it starts', () => {
 		fakeHeapAt(0.5);
-		startCrashContextSampling(() => ({ agents: 175, activeAutoRuns: 2 }));
+		startCrashContextSampling();
 
 		expect(setScopeContext).toHaveBeenCalledTimes(1);
 		const [tags, name, context] = setScopeContext.mock.calls[0];
-		expect(tags).toEqual({ 'main.heapMB': '2048', 'main.agents': '175', 'main.autoRuns': '2' });
+		// Agent and Auto Run counts are written on change (setSentryScopeTags), so a
+		// sampled copy here would be a second, staler source for the same facts.
+		expect(tags).toEqual({ 'main.heapMB': '2048' });
 		expect(name).toBe('mainRuntime');
-		expect(context).toMatchObject({ heapUsedMB: 2048, heapLimitMB: 4096, agents: 175 });
-	});
-
-	it('still records the heap when the counts cannot be read', () => {
-		fakeHeapAt(0.25);
-		startCrashContextSampling(() => {
-			throw new Error('stores not ready');
-		});
-
-		const [tags] = setScopeContext.mock.calls[0];
-		expect(tags).toEqual({ 'main.heapMB': '1024' });
+		expect(context).toMatchObject({ heapUsedMB: 2048, heapLimitMB: 4096 });
+		expect(context).not.toHaveProperty('agents');
 	});
 
 	it('starts one sampler no matter how often it is asked to', () => {
 		fakeHeapAt(0.1);
-		startCrashContextSampling(() => ({ agents: 1, activeAutoRuns: 0 }));
-		startCrashContextSampling(() => ({ agents: 1, activeAutoRuns: 0 }));
+		startCrashContextSampling();
+		startCrashContextSampling();
 		expect(setScopeContext).toHaveBeenCalledTimes(1);
 	});
 });

@@ -29,7 +29,6 @@
 import v8 from 'v8';
 
 import { captureMessage, setScopeContext } from './sentry';
-import { REGEX_BATCH_SESSION } from '../constants';
 import { logger } from './logger';
 
 /** How often the heap is sampled while an operation is guarded. */
@@ -146,14 +145,6 @@ export const HEAP_DANGER_FRACTION = DANGER_FRACTION;
 /** How often the crash context is refreshed. */
 const CRASH_CONTEXT_INTERVAL_MS = 15_000;
 
-/** What the app is carrying, as counted by the caller. */
-export interface CrashContextCounts {
-	/** Agents in the Left Bar. */
-	agents: number;
-	/** Agents running an Auto Run task right now. */
-	activeAutoRuns: number;
-}
-
 let crashContextTimer: NodeJS.Timeout | null = null;
 
 /**
@@ -164,27 +155,16 @@ let crashContextTimer: NodeJS.Timeout | null = null;
  * persisted and rides on the minidump uploaded at the next launch (see
  * `setScopeContext`). The once-a-minute memory breadcrumbs are too coarse for
  * this: the #1862 field crash read 1665MB nine seconds before it died at the
- * 4GB limit. A 15-second sample of heap, agents and Auto Runs is cheap and
- * names the load at the moment of death.
+ * 4GB limit. A 15-second heap sample is cheap and names the load at the moment
+ * of death. Agent and Auto Run counts are not sampled here: they change on
+ * known events and are written then (`setSentryScopeTags` in ./sentry).
  */
-export function startCrashContextSampling(getCounts: () => CrashContextCounts): void {
+export function startCrashContextSampling(): void {
 	if (crashContextTimer) return;
 	const sample = () => {
-		let counts: CrashContextCounts | undefined;
-		try {
-			counts = getCounts();
-		} catch {
-			// The stores may be mid-teardown; heap numbers are still worth recording.
-		}
 		const heap = sampleHeap();
-		const tags: Record<string, string> = { 'main.heapMB': String(heap.heapUsedMB) };
-		if (counts) {
-			tags['main.agents'] = String(counts.agents);
-			tags['main.autoRuns'] = String(counts.activeAutoRuns);
-		}
-		void setScopeContext(tags, 'mainRuntime', {
+		void setScopeContext({ 'main.heapMB': String(heap.heapUsedMB) }, 'mainRuntime', {
 			...heap,
-			...counts,
 			sampledAt: new Date().toISOString(),
 		});
 	};
@@ -197,17 +177,4 @@ export function startCrashContextSampling(getCounts: () => CrashContextCounts): 
 export function stopCrashContextSampling(): void {
 	if (crashContextTimer) clearInterval(crashContextTimer);
 	crashContextTimer = null;
-}
-
-/**
- * How many agents are running an Auto Run task, from the live process table.
- * A task runs as `{agentId}-batch-{timestamp}`; one agent runs one task at a
- * time, but count distinct agents anyway so a respawn overlap is not doubled.
- */
-export function countActiveAutoRuns(sessionIds: Iterable<string>): number {
-	const agents = new Set<string>();
-	for (const id of sessionIds) {
-		if (REGEX_BATCH_SESSION.test(id)) agents.add(id.replace(REGEX_BATCH_SESSION, ''));
-	}
-	return agents.size;
 }

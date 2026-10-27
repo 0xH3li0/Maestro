@@ -24,12 +24,30 @@ const V8_OOM_ANNOTATION = 'crashpad.electron.v8-oom.is_heap_oom';
  * @sentry/electron copies a minidump's Crashpad annotations into
  * `contexts.electron` under a `crashpad.` prefix before `beforeSend` runs,
  * which is the only client-side signal: the native stack is symbolicated on
- * the server.
+ * the server. Only minidump events carry those annotations, so their presence
+ * alone identifies one. Every V8 OOM is grouped, heap or not, because any of
+ * them fails on an arbitrary allocation and would fragment the same way.
+ *
+ * The process name is normalized because the same process reaches here under
+ * different spellings: Crashpad's `process_type` says `gpu-process`, while the
+ * SDK's `event.process` fallback says `gpu` or, from `child-process-gone`,
+ * `GPU`. Without it one GPU OOM could open two issues.
  */
 export function v8OomFingerprint(event: MinimalSentryEvent): string[] | undefined {
 	const electron = event.contexts?.electron;
 	if (!electron || !(V8_OOM_ANNOTATION in electron)) return undefined;
-	const processType =
-		electron['crashpad.process_type'] ?? event.tags?.['event.process'] ?? 'unknown';
-	return ['v8-oom', String(processType)];
+	const processName =
+		normalizeProcessName(electron['crashpad.process_type']) ||
+		normalizeProcessName(event.tags?.['event.process']) ||
+		'unknown';
+	return ['v8-oom', processName];
+}
+
+/** `gpu-process`, `GPU` and `gpu` are one process. Empty when there is no name. */
+function normalizeProcessName(raw: unknown): string {
+	if (typeof raw !== 'string') return '';
+	return raw
+		.trim()
+		.toLowerCase()
+		.replace(/-process$/, '');
 }

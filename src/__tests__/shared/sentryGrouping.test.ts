@@ -46,6 +46,50 @@ describe('v8OomFingerprint', () => {
 		]);
 	});
 
+	it('names the GPU process one way whichever spelling reached it', () => {
+		// Crashpad says `gpu-process`; the SDK's child-process-gone path says `GPU`.
+		const fromAnnotation = minidumpEvent({
+			'electron.v8-oom.is_heap_oom': '1',
+			process_type: 'gpu-process',
+		});
+		const fromSdkTag = minidumpEvent(
+			{ 'electron.v8-oom.is_heap_oom': '1' },
+			{ 'event.process': 'GPU' }
+		);
+		expect(v8OomFingerprint(fromAnnotation)).toEqual(['v8-oom', 'gpu']);
+		expect(v8OomFingerprint(fromSdkTag)).toEqual(['v8-oom', 'gpu']);
+	});
+
+	it('skips a blank process_type and uses the event.process tag', () => {
+		const event = minidumpEvent(
+			{ 'electron.v8-oom.is_heap_oom': '1', process_type: ' ' },
+			{ 'event.process': 'renderer' }
+		);
+		expect(v8OomFingerprint(event)).toEqual(['v8-oom', 'renderer']);
+	});
+
+	it('groups a startup minidump shaped like MAESTRO-174, whatever the OOM location', () => {
+		// The shape @sentry/electron hands beforeSend for a minidump found at the next
+		// launch: the SDK's native tags plus the Crashpad annotations, no stack yet.
+		const event = (location: string) => ({
+			level: 'fatal',
+			platform: 'native',
+			tags: { 'event.environment': 'native', 'event.process': 'browser' },
+			contexts: {
+				electron: {
+					'crashpad.electron.v8-oom.is_heap_oom': '1',
+					'crashpad.electron.v8-oom.location': location,
+					'crashpad.process_type': 'browser',
+				},
+			},
+		});
+		expect(v8OomFingerprint(event('Ineffective mark-compacts near heap limit'))).toEqual([
+			'v8-oom',
+			'browser',
+		]);
+		expect(v8OomFingerprint(event('Reached heap limit'))).toEqual(['v8-oom', 'browser']);
+	});
+
 	it('leaves every other event to default grouping', () => {
 		expect(v8OomFingerprint({})).toBeUndefined();
 		expect(v8OomFingerprint(minidumpEvent({ process_type: 'browser' }))).toBeUndefined();
