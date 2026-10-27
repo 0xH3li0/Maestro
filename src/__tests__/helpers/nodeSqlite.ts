@@ -108,6 +108,11 @@ class NodeSqliteDatabaseShim {
 		};
 	}
 
+	function(name: string, fn: () => number): this {
+		this.db.function(name, fn);
+		return this;
+	}
+
 	close(): void {
 		this.db.close();
 	}

@@ -1,4 +1,5 @@
 import { cancelRelayConversationTurn } from '../../plugins/relay-conversations';
+import { getPendingPermissionSnapshot } from '../../permission-relay/registry';
 import { getHeadlessAgentActivity } from '../../utils/headless-agent-activity';
 import { ipcMain, BrowserWindow } from 'electron';
 import Store from 'electron-store';
@@ -147,6 +148,8 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 			}
 		)
 	);
+
+	ipcMain.handle('process:getPendingPermissions', () => getPendingPermissionSnapshot());
 
 	// Renderer -> main: the user's allow/deny decision for a relayed request.
 	ipcMain.handle(

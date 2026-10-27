@@ -23,6 +23,8 @@ import semver from 'semver';
 /**
  * The host API version this Maestro build implements. 1.31.0 adds durable Relay
  * conversation/message identity, replay receipts, and explicit task completion.
+ * 1.29.0 adds generic verified invocations, consented TLS, opaque secrets,
+ * confirmed records, durable plugin Cue events and parentSessionId metadata.
  * 1.25.0 added resumable
  * agents.send with public progress, verified plugin-tool caller identity, and
  * isolated agents.generateTitle. 1.24.0 added host-mediated services.
