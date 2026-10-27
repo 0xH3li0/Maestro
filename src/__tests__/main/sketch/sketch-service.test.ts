@@ -16,6 +16,11 @@
  *     `sketch-share.test.ts`.
  *   - **The bot screen** (`screenBotRequest`) takes guest requests only and
  *     hands the gate a chat subject for the sketch's owning agent.
+ *   - **The `@bot` decisions** (`listBotRequests`, `decideBotRequest`): each
+ *     owner's window lists its own sketches' requests, a decision goes to the
+ *     window that owns the request's sketch, and an agent caller's approve,
+ *     escalate and publish wait on the desktop confirmation (A1) while deny
+ *     and discard run.
  *   - **The CLI verbs** (`new`, `open`, `read`, `export`): a tab opens on the
  *     sketch's own agent through the renderer bridge, a gone or SSH owner is
  *     refused before the window is asked, `read` summarizes or returns live
@@ -51,6 +56,7 @@ import type { SketchRendererBridge } from '../../../main/sketch/sketch-renderer-
 import type { SketchStore } from '../../../main/sketch/sketch-store';
 import { encoreDisabledMessage } from '../../../shared/encoreFeatureDefaults';
 import type { SketchRecord, SketchScene } from '../../../shared/sketch/types';
+import type { SketchBotRequestInfo } from '../../../shared/sketch/bot-requests';
 
 const SKETCH_ID = '11111111-2222-4333-8444-555555555555';
 
@@ -529,6 +535,126 @@ describe('SketchService', () => {
 				s.screenBotRequest(SKETCH_ID, { ...base, replyTo: '', actor: guest })
 			).rejects.toThrow('replyTo must be');
 			expect(screen).not.toHaveBeenCalled();
+		});
+	});
+	describe('@bot decisions', () => {
+		const waiting: SketchBotRequestInfo = {
+			sketchId: SKETCH_ID,
+			replyTo: 'm1',
+			actor: { id: 'g1', kind: 'guest', name: 'Sam', role: 'rw', capLabel: '#3' },
+			text: 'draw a box',
+			ts: 1,
+			status: 'awaiting_approval',
+			verdict: { status: 'clean', score: 0.04, sourceLabel: 'Prompt Guard 2', locality: 'local' },
+			posture: 'restricted',
+			canEscalate: false,
+		};
+		let confirm: ReturnType<typeof vi.fn<(prompt: unknown) => Promise<boolean>>>;
+
+		const decisions = (agents: SketchOwnerAgent[] = [localAgent]) =>
+			createSketchService({
+				store: () => store,
+				isEnabled: () => true,
+				findAgent: (id) => agents.find((agent) => agent.id === id) ?? null,
+				renderer,
+				confirm,
+			});
+
+		beforeEach(() => {
+			confirm = vi.fn(async () => true);
+			renderer.mockImplementation(async (_agentId, request) =>
+				request.action === 'botRequest' && request.op === 'list'
+					? { success: true, botRequests: [waiting] }
+					: { success: true, botRequests: [{ ...waiting, status: 'running' }] }
+			);
+		});
+
+		it("lists each owner's sketches from that owner's window", async () => {
+			const other: SketchRecord = { ...record, sketchId: 'other', ownerAgentId: 'agent-2' };
+			const remote: SketchRecord = { ...record, sketchId: 'ssh', ownerAgentId: 'agent-3' };
+			store.listSketches.mockResolvedValue([record, other, remote]);
+			const agents = [
+				localAgent,
+				{ ...localAgent, id: 'agent-2' },
+				{ ...localAgent, id: 'agent-3', sshRemote: true },
+			];
+			await expect(decisions(agents).listBotRequests()).resolves.toHaveLength(2);
+			expect(renderer.mock.calls).toEqual([
+				['agent-1', { action: 'botRequest', op: 'list', sketchIds: [SKETCH_ID] }],
+				['agent-2', { action: 'botRequest', op: 'list', sketchIds: ['other'] }],
+			]);
+		});
+
+		it('skips a window that does not answer', async () => {
+			renderer.mockResolvedValueOnce({ success: false, error: 'No Maestro window is open.' });
+			await expect(decisions().listBotRequests()).resolves.toEqual([]);
+		});
+
+		it("sends a person's approval to the owning window without a confirmation", async () => {
+			await expect(decisions().decideBotRequest('approve', 'm1')).resolves.toMatchObject({
+				replyTo: 'm1',
+				status: 'running',
+			});
+			expect(confirm).not.toHaveBeenCalled();
+			expect(renderer).toHaveBeenLastCalledWith('agent-1', {
+				action: 'botRequest',
+				op: 'approve',
+				sketchId: SKETCH_ID,
+				replyTo: 'm1',
+			});
+		});
+
+		it.each(['approve', 'escalate', 'publish'] as const)(
+			"%s from an agent waits on the conductor's confirmation",
+			async (op) => {
+				await decisions().decideBotRequest(op, 'm1', { requestedBy: 'Helper' });
+				expect(confirm).toHaveBeenCalledTimes(1);
+				expect(confirm.mock.calls[0][0]).toMatchObject({ requestedBy: 'Helper' });
+			}
+		);
+
+		it('names the actor, the request and the verdict when an agent asks to approve', async () => {
+			await decisions().decideBotRequest('approve', 'm1', { requestedBy: 'Helper' });
+			const prompt = confirm.mock.calls[0][0] as { message: string; detail: string };
+			expect(prompt.message).toContain('"Sam" · guest, read-write link #3, not verified');
+			expect(prompt.detail).toContain('"draw a box"');
+			expect(prompt.detail).toContain('Screened: clean, Prompt Guard 2, 0.04');
+		});
+
+		it('does nothing on Deny', async () => {
+			confirm.mockResolvedValueOnce(false);
+			await expect(
+				decisions().decideBotRequest('escalate', 'm1', { requestedBy: 'Helper' })
+			).rejects.toThrow('the conductor chose Deny');
+			expect(
+				renderer.mock.calls.some(([, request]) => 'op' in request && request.op !== 'list')
+			).toBe(false);
+		});
+
+		it.each(['deny', 'discard'] as const)('%s from an agent runs without one', async (op) => {
+			await decisions().decideBotRequest(op, 'm1', { requestedBy: 'Helper' });
+			expect(confirm).not.toHaveBeenCalled();
+		});
+
+		it('refuses an unknown request, an empty id and an unknown op', async () => {
+			await expect(decisions().decideBotRequest('approve', 'nope')).rejects.toThrow(
+				'no open @bot request has the id "nope"'
+			);
+			await expect(decisions().decideBotRequest('approve', '')).rejects.toThrow('replyTo must be');
+			await expect(
+				decisions().decideBotRequest('run' as unknown as 'approve', 'm1')
+			).rejects.toThrow('op must be');
+		});
+
+		it("passes the window's refusal on", async () => {
+			renderer.mockImplementation(async (_agentId, request) =>
+				request.action === 'botRequest' && request.op === 'list'
+					? { success: true, botRequests: [waiting] }
+					: { success: false, error: 'Sketch Book: request m1 is running.' }
+			);
+			await expect(decisions().decideBotRequest('approve', 'm1')).rejects.toThrow(
+				'request m1 is running'
+			);
 		});
 	});
 });

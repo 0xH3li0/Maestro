@@ -22,6 +22,8 @@
  * - `snapshotScene`: the live scene for a snapshot upload (share, rotate),
  *   with the newest op seq the room client has merged (0 without one).
  * - `syncRoom`: join or leave a shared sketch's room (`sketchSharing.ts`).
+ * - `botRequest`: list or decide the bot relay's `@bot` requests
+ *   (`sketchBotRequestCommands.ts`), through the functions the chips call.
  *
  * Every path answers, a thrown one included, so main never waits out its
  * timeout. Registered by `useRemoteIntegration`.
@@ -188,6 +190,20 @@ export async function runRemoteSketchCommand(
 			const { applySketchRoomConnection } = await import('./sketchSharing');
 			await applySketchRoomConnection(request.sketchId, request.connection, request.baseline);
 			return { success: true };
+		}
+		if (request.action === 'botRequest') {
+			const { listSketchBotRequests, runSketchBotRequestOp } =
+				await import('./sketchBotRequestCommands');
+			if (request.op === 'list') {
+				return { success: true, botRequests: listSketchBotRequests(request.sketchIds) };
+			}
+			if (!request.sketchId || !request.replyTo) {
+				return { success: false, error: 'Sketch Book: a sketch and a request id are required.' };
+			}
+			return {
+				success: true,
+				botRequests: [runSketchBotRequestOp(request.op, request.sketchId, request.replyTo)],
+			};
 		}
 		if (request.action === 'readSession') {
 			return {

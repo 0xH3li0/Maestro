@@ -56,6 +56,12 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 		'maestro-cli sketch owner register --email you@example.com --wait',
 		'maestro-cli sketch owner sign-out',
 	],
+	'sketch requests': ['maestro-cli sketch requests', 'maestro-cli sketch requests --json'],
+	'sketch approve': ['maestro-cli sketch approve <reply-to>'],
+	'sketch deny': ['maestro-cli sketch deny <reply-to> --json'],
+	'sketch escalate': ['maestro-cli sketch escalate <reply-to>'],
+	'sketch publish': ['maestro-cli sketch publish <reply-to>'],
+	'sketch discard': ['maestro-cli sketch discard <reply-to>'],
 	// RC queue steering, notifications and Quick Chat controls
 	'queue hold': ['maestro-cli queue hold <item-id> --agent <agent-id>'],
 	'queue resume': ['maestro-cli queue resume <item-id> --agent <agent-id>'],

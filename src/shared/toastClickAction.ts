@@ -27,6 +27,8 @@ import type { ToolType } from './types';
  *   open-terminal - switch to the agent and focus one of its terminal tabs
  *   open-browser  - focus an existing in-app browser tab, or open `url` in a new one
  *   open-url      - open a URL in the system browser (no agent involved)
+ *   open-sketch   - switch to the agent and show a Sketch Book in a tab there
+ *                   (`name` labels a new tab; the sketch's own tab is reused)
  *   undo-group-publish - put back the settings a Group Settings publish wrote
  *                        over. `publishId` names the snapshot the publish kept
  *                        (`renderer/services/groupDefaultsPublish.ts`).
@@ -57,6 +59,7 @@ export type ToastClickAction =
 			url?: string;
 	  }
 	| { kind: 'open-url'; url: string }
+	| { kind: 'open-sketch'; sessionId: string; sketchId: string; name?: string }
 	| { kind: 'undo-group-publish'; publishId: string };
 
 /** Every valid `kind`, for validation messages and CLI help. */
@@ -67,6 +70,7 @@ export const TOAST_CLICK_ACTION_KINDS = [
 	'open-terminal',
 	'open-browser',
 	'open-url',
+	'open-sketch',
 	'undo-group-publish',
 ] as const;
 
@@ -138,6 +142,15 @@ export function parseToastClickAction(raw: unknown): {
 			const url = str(obj, 'url');
 			if (!url) return { error: "clickAction kind 'open-url' requires url" };
 			return { action: { kind, url } };
+		}
+		case 'open-sketch': {
+			const sessionId = str(obj, 'sessionId');
+			const sketchId = str(obj, 'sketchId');
+			if (!sessionId || !sketchId) {
+				return { error: "clickAction kind 'open-sketch' requires sessionId and sketchId" };
+			}
+			const name = str(obj, 'name');
+			return { action: { kind, sessionId, sketchId, ...(name ? { name } : {}) } };
 		}
 		case 'undo-group-publish': {
 			const publishId = str(obj, 'publishId');

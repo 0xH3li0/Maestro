@@ -4,13 +4,21 @@
  * as the bot relay mirrors it (`sketchBotRelay.ts`), and the conductor's own
  * `@bot` messages and their local replies. Names come from the posting actor,
  * never from the text. Bot replies the outbound screen holds wait at the
- * bottom with their "Publish anyway" chip (`SketchHeldReplyChip`).
+ * bottom with their "Publish anyway" chip (`SketchHeldReplyChip`), after the
+ * guests' requests waiting on Run or Deny (`SketchApprovalChip`, B2).
+ *
+ * A conductor message whose turn ran restricted because a guest edited the
+ * board carries "Run with full access" once that turn is over (Q2). It runs
+ * that one message again; the next message is restricted again.
  */
 
+import { ShieldOff } from 'lucide-react';
 import type { Theme } from '../../types';
 import { formatRelativeTime } from '../../../shared/formatters';
 import { useStickToBottom } from '../../hooks/ui/useStickToBottom';
 import type { SketchBotRequest, SketchChatMessage } from '../../stores/sketchSessionStore';
+import { HeaderActionButton } from '../ui/HeaderActionButton';
+import { SketchApprovalChip } from './SketchApprovalChip';
 import { SketchHeldReplyChip } from './SketchHeldReplyChip';
 
 export interface SketchChatPaneProps {
@@ -20,19 +28,64 @@ export interface SketchChatPaneProps {
 	heldReplies?: readonly SketchBotRequest[];
 	onPublishHeld?: (replyTo: string) => void;
 	onDiscardHeld?: (replyTo: string) => void;
+	/** Guest requests shown as chips: awaiting Run or Deny, or running. */
+	approvals?: readonly SketchBotRequest[];
+	/** Requests waiting behind the per-link chip limit. */
+	waitingApprovals?: number;
+	onRunRequest?: (replyTo: string) => void;
+	onDenyRequest?: (replyTo: string) => void;
+	/** Ids of the messages "Run with full access" is offered on (`canEscalateSketchMessage()`). */
+	escalatable?: ReadonlySet<string>;
+	onEscalate?: (replyTo: string) => void;
 }
 
-const NO_HELD: readonly SketchBotRequest[] = [];
+const NO_REQUESTS: readonly SketchBotRequest[] = [];
+const NO_IDS: ReadonlySet<string> = new Set();
 const noop = () => {};
+
+/** "Run with full access" under a conductor message that ran restricted (Q2). */
+function EscalateControl({
+	replyTo,
+	theme,
+	onEscalate,
+}: {
+	replyTo: string;
+	theme: Theme;
+	onEscalate: (replyTo: string) => void;
+}) {
+	return (
+		<div className="flex flex-col items-start gap-1 pt-1 select-none">
+			<span className="text-xs" style={{ color: theme.colors.textDim }}>
+				A guest edited this board, so this ran restricted.
+			</span>
+			<HeaderActionButton
+				theme={theme}
+				variant="ghost"
+				icon={<ShieldOff />}
+				onClick={() => onEscalate(replyTo)}
+			>
+				Run with full access
+			</HeaderActionButton>
+		</div>
+	);
+}
 
 export function SketchChatPane({
 	messages,
 	theme,
-	heldReplies = NO_HELD,
+	heldReplies = NO_REQUESTS,
 	onPublishHeld = noop,
 	onDiscardHeld = noop,
+	approvals = NO_REQUESTS,
+	waitingApprovals = 0,
+	onRunRequest = noop,
+	onDenyRequest = noop,
+	escalatable = NO_IDS,
+	onEscalate = noop,
 }: SketchChatPaneProps) {
-	const listRef = useStickToBottom<HTMLDivElement>(messages.length + heldReplies.length);
+	const listRef = useStickToBottom<HTMLDivElement>(
+		messages.length + heldReplies.length + approvals.length
+	);
 	return (
 		<aside
 			className="w-72 shrink-0 flex flex-col min-h-0"
@@ -63,8 +116,30 @@ export function SketchChatPane({
 						>
 							{message.text}
 						</div>
+						{message.request && escalatable.has(message.id) && (
+							<EscalateControl
+								replyTo={message.request.replyTo}
+								theme={theme}
+								onEscalate={onEscalate}
+							/>
+						)}
 					</div>
 				))}
+				{approvals.map((request) => (
+					<SketchApprovalChip
+						key={request.replyTo}
+						request={request}
+						theme={theme}
+						onRun={onRunRequest}
+						onDeny={onDenyRequest}
+					/>
+				))}
+				{waitingApprovals > 0 && (
+					<div className="text-xs select-none" style={{ color: theme.colors.textDim }}>
+						{waitingApprovals} more {waitingApprovals === 1 ? 'request waits' : 'requests wait'}{' '}
+						behind these.
+					</div>
+				)}
 				{heldReplies.map((request) => (
 					<SketchHeldReplyChip
 						key={request.replyTo}

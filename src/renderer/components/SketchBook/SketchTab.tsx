@@ -18,6 +18,13 @@
  * show in the chat pane. A shared sketch's room notice (a close code, a
  * reconnect; `sketchRoomClient.ts`) shows above the canvas.
  *
+ * The chat pane also holds the conductor's decisions on `@bot` (spec section
+ * 5): a guest's request waits on its approval chip (Run / Deny, at most three
+ * per link), a held reply on "Publish anyway", and a conductor message that
+ * ran restricted offers "Run with full access" (Q2). Every button calls the
+ * same relay functions `maestro-cli sketch approve|deny|escalate|publish|
+ * discard` reach.
+ *
  * The Share button in the bar above the canvas opens the Share panel
  * (`SketchSharePanel.tsx`). Opening a shared sketch joins its room when this
  * window has no client for it yet (`ensureSketchRoomConnected()`), which is
@@ -37,8 +44,11 @@ import { mergeNewerSketchElements } from '../../../shared/sketch/agent-writes';
 import type { SketchWireElement } from '../../../shared/sketch/payloads';
 import { Spinner } from '../ui/Spinner';
 import { useDebouncedCallback } from '../../hooks/utils/useThrottle';
+import { visibleSketchApprovals } from '../../../shared/sketch/bot-requests';
 import {
 	SKETCH_AUTOSAVE_DEBOUNCE_MS,
+	canEscalateSketchMessage,
+	sketchGuestEdited,
 	useSketchSessionStore,
 } from '../../stores/sketchSessionStore';
 import { loadExcalidraw } from './excalidrawAssets';
@@ -47,6 +57,11 @@ import { SketchSharePanel } from './SketchSharePanel';
 import { HeaderActionButton } from '../ui/HeaderActionButton';
 import { ensureSketchRoomConnected } from '../../services/sketchSharing';
 import { discardHeldSketchReply, publishHeldSketchReply } from '../../services/sketchBotTurns';
+import {
+	approveSketchBotRequest,
+	denySketchBotRequest,
+	escalateSketchBotRequest,
+} from '../../services/sketchBotRelay';
 
 const Excalidraw = React.lazy(() =>
 	loadExcalidraw().then((module) => ({ default: module.Excalidraw }))
@@ -89,6 +104,27 @@ export function SketchTabView({ sketchId, theme }: SketchTabViewProps) {
 		() => (botRequests ?? []).filter((request) => request.status === 'held'),
 		[botRequests]
 	);
+	const { approvals, waitingApprovals } = React.useMemo(() => {
+		const requests = botRequests ?? [];
+		const { visible, waiting } = visibleSketchApprovals(requests);
+		const running = requests.filter(
+			(request) => request.status === 'running' && request.actor.kind === 'guest'
+		);
+		return {
+			approvals: [...running, ...visible].sort((a, b) => a.ts - b.ts),
+			waitingApprovals: waiting.length,
+		};
+	}, [botRequests]);
+	const guestEdited = useSketchSessionStore((s) => sketchGuestEdited(s.sessions[sketchId]));
+	const escalatable = React.useMemo(() => {
+		const session = useSketchSessionStore.getState().sessions[sketchId];
+		return new Set(
+			(chat ?? [])
+				.filter((message) => canEscalateSketchMessage(session, message))
+				.map((message) => message.id)
+		);
+		// `guestEdited` and `botRequests` decide the answer; the session is read fresh.
+	}, [sketchId, chat, botRequests, guestEdited]);
 	const roomNotice = useSketchSessionStore((s) => s.sessions[sketchId]?.room?.notice ?? null);
 	const roomConnection = useSketchSessionStore(
 		(s) => s.sessions[sketchId]?.room?.connection ?? null
@@ -287,13 +323,19 @@ export function SketchTabView({ sketchId, theme }: SketchTabViewProps) {
 						</React.Suspense>
 					</div>
 				</div>
-				{((chat && chat.length > 0) || heldReplies.length > 0) && (
+				{((chat && chat.length > 0) || heldReplies.length > 0 || approvals.length > 0) && (
 					<SketchChatPane
 						messages={chat ?? []}
 						theme={theme}
 						heldReplies={heldReplies}
 						onPublishHeld={(replyTo) => publishHeldSketchReply(sketchId, replyTo)}
 						onDiscardHeld={(replyTo) => discardHeldSketchReply(sketchId, replyTo)}
+						approvals={approvals}
+						waitingApprovals={waitingApprovals}
+						onRunRequest={(replyTo) => approveSketchBotRequest(sketchId, replyTo)}
+						onDenyRequest={(replyTo) => denySketchBotRequest(sketchId, replyTo)}
+						escalatable={escalatable}
+						onEscalate={(replyTo) => escalateSketchBotRequest(sketchId, replyTo)}
 					/>
 				)}
 				{shareOpen && (

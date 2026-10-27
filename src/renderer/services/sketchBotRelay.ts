@@ -13,7 +13,9 @@
  *    send `guardrail_rejected {replyTo, reason:'screen_unavailable'}`.
  *    Nothing else rides on the frame (`buildGuardrailRejected()`).
  * 3. `clean` sends `bot.progress {awaiting_approval}` and raises the approval
- *    chip: the request goes into the session's `botRequests`.
+ *    chip: the request goes into the session's `botRequests`, and a toast
+ *    whose click opens the sketch tells the conductor (only for a chip that
+ *    shows, not one waiting behind the per-link limit).
  * 4. Run sends `bot.progress {running}` and starts a restricted turn (Q4);
  *    Deny sends `bot.denied`.
  * 5. The turn's answer goes out as `bot.reply`; an error, a stop, or a reply
@@ -27,7 +29,12 @@
  * unshared sketch (or with the socket down) the turn runs locally and the
  * reply is posted to the chat pane. Posture (spec section 5, Turn posture):
  * restricted while a guest has edited the canvas, unless the conductor
- * escalated that one message; full otherwise.
+ * escalated that one message; full otherwise. The message keeps its request
+ * (`SketchChatMessage.request`), so once a restricted turn is over the
+ * conductor can run it again with full access ({@link SketchBotRelay.escalate},
+ * Q2). The second turn answers the same `replyTo`: in a room its reply is
+ * posted as bot chat under the message (the server holds no pending entry
+ * for the conductor's own chat, so nothing else is sent for it).
  *
  * Every request ends with exactly one of `guardrail_rejected`, `bot.denied`,
  * `bot.failed` or `bot.reply`, with two exceptions the server owns: a request
@@ -48,7 +55,12 @@
  * moment it was sent.
  */
 
-import { botActor, localConductorActor } from '../../shared/sketch/attribution';
+import {
+	botActor,
+	describeSketchActor,
+	localConductorActor,
+} from '../../shared/sketch/attribution';
+import { visibleSketchApprovals } from '../../shared/sketch/bot-requests';
 import type { SealedField } from '../../shared/sketch/crypto';
 import {
 	CHAT_MAX_CHARS,
@@ -71,6 +83,8 @@ import type {
 import { generateUUID } from '../../shared/uuid';
 import { notifyToast } from '../stores/notificationStore';
 import {
+	canEscalateSketchMessage,
+	sketchGuestEdited,
 	useSketchSessionStore,
 	type SketchAgentIdentity,
 	type SketchBotRequest,
@@ -137,6 +151,8 @@ export interface SketchBotRelayDeps {
 	now?: () => number;
 	/** Tell the conductor a turn failed. Default a red toast. */
 	notifyFailure?: (sketchId: string, reason: string) => void;
+	/** Tell the conductor an approval chip is up. Default a toast that opens the sketch. */
+	notifyApproval?: (sketchId: string, request: SketchBotRequest) => void;
 }
 
 export interface SketchBotRelay {
@@ -148,6 +164,12 @@ export interface SketchBotRelay {
 	approve(sketchId: string, replyTo: string): boolean;
 	/** Deny a guest request the chip shows. False when it is not waiting on approval. */
 	deny(sketchId: string, replyTo: string): boolean;
+	/**
+	 * "Run with full access" (Q2): run a conductor message whose restricted
+	 * turn is over again, once, with full access. False when the message is
+	 * not offered it (`canEscalateSketchMessage()`).
+	 */
+	escalate(sketchId: string, replyTo: string): boolean;
 	/**
 	 * Send the conductor's own `@bot` message and start its turn now.
 	 * Resolves with the request's `replyTo` once the turn has started.
@@ -190,6 +212,37 @@ function defaultNotifyFailure(_sketchId: string, reason: string): void {
 	notifyToast({ color: 'red', title: 'Sketch Book', message: `The agent turn failed: ${reason}` });
 }
 
+/**
+ * The approval toast. Its click opens the sketch on its owner. The guest's
+ * text stays in the chip: a toast is not the place to read it.
+ */
+async function defaultNotifyApproval(sketchId: string, request: SketchBotRequest): Promise<void> {
+	let record: Awaited<ReturnType<typeof window.maestro.sketch.get>> = null;
+	try {
+		record = await window.maestro.sketch.get(sketchId);
+	} catch (error) {
+		logger.warn('No sketch record for the approval toast', LOG_CTX, {
+			error: errorMessage(error),
+		});
+	}
+	notifyToast({
+		color: 'yellow',
+		title: 'Sketch Book: Run or Deny?',
+		message: `${describeSketchActor(request.actor)} asks the agent to act on ${record ? JSON.stringify(record.name) : 'a sketch'}.`,
+		...(record
+			? {
+					sessionId: record.ownerAgentId,
+					clickAction: {
+						kind: 'open-sketch' as const,
+						sessionId: record.ownerAgentId,
+						sketchId,
+						name: record.name,
+					},
+				}
+			: {}),
+	});
+}
+
 /** The verdict the relay acts on when the gate itself cannot answer: fail closed. */
 function gateFailed(reason: string): SketchScreenVerdict {
 	return { status: 'unscreened', sourceLabel: 'Screen unavailable', locality: 'local', reason };
@@ -203,6 +256,10 @@ export function createSketchBotRelay(deps: SketchBotRelayDeps = {}): SketchBotRe
 	const newId = deps.newId ?? generateUUID;
 	const now = deps.now ?? Date.now;
 	const notifyFailure = deps.notifyFailure ?? defaultNotifyFailure;
+	const notifyApproval =
+		deps.notifyApproval ??
+		((sketchId: string, request: SketchBotRequest) =>
+			void defaultNotifyApproval(sketchId, request));
 	let runTurn = deps.runTurn ?? null;
 
 	const rooms = new Map<string, { room: SketchBotRelayRoom; unsubscribe: () => void }>();
@@ -353,14 +410,14 @@ export function createSketchBotRelay(deps: SketchBotRelayDeps = {}): SketchBotRe
 			case 'unscreened':
 				finish(entry, buildGuardrailRejected({ replyTo: entry.replyTo }, 'screen_unavailable'));
 				return;
-			case 'clean':
+			case 'clean': {
 				entry.phase = 'awaiting_approval';
 				send(entry.sketchId, {
 					t: 'bot.progress',
 					replyTo: entry.replyTo,
 					status: 'awaiting_approval',
 				});
-				store().putSketchBotRequest(entry.sketchId, {
+				const request: SketchBotRequest = {
 					replyTo: entry.replyTo,
 					actor,
 					text,
@@ -369,8 +426,16 @@ export function createSketchBotRelay(deps: SketchBotRelayDeps = {}): SketchBotRe
 					verdict,
 					// Q4: a guest request never runs with full access.
 					posture: 'restricted',
-				});
+				};
+				store().putSketchBotRequest(entry.sketchId, request);
+				const { visible } = visibleSketchApprovals(
+					store().sessions[entry.sketchId]?.botRequests ?? []
+				);
+				if (visible.some((shown) => shown.replyTo === entry.replyTo)) {
+					notifyApproval(entry.sketchId, request);
+				}
 				return;
+			}
 		}
 	}
 
@@ -499,6 +564,36 @@ export function createSketchBotRelay(deps: SketchBotRelayDeps = {}): SketchBotRe
 			return true;
 		},
 
+		escalate(sketchId, replyTo) {
+			const session = store().sessions[sketchId];
+			const message = session?.chat.find((candidate) => candidate.request?.replyTo === replyTo);
+			const mark = message?.request;
+			if (!session || !message || !mark || !canEscalateSketchMessage(session, message)) {
+				return false;
+			}
+			if (tracked.has(keyOf(sketchId, replyTo))) return false;
+			store().updateSketchChatMessage(sketchId, message.id, (current) =>
+				current.request ? { ...current, request: { ...current.request, escalated: true } } : current
+			);
+			const shared = mark.shared && rooms.has(sketchId);
+			// `ended`: the server holds no pending entry for the conductor's own chat, so no
+			// progress or failure frame goes out; a reply is still posted under it (Y3).
+			const entry: Tracked = { sketchId, replyTo, phase: 'running', shared, ended: shared };
+			tracked.set(keyOf(sketchId, replyTo), entry);
+			const request: SketchBotRequest = {
+				replyTo,
+				actor: message.actor,
+				text: message.text,
+				ts: now(),
+				status: 'running',
+				verdict: null,
+				posture: 'full',
+			};
+			store().putSketchBotRequest(sketchId, request);
+			startTurn(entry, request, true);
+			return true;
+		},
+
 		async sendConductorMessage(sketchId, text, options = {}) {
 			const session = store().sessions[sketchId];
 			if (!session) throw new Error('Sketch Book: the sketch is not open.');
@@ -508,13 +603,11 @@ export function createSketchBotRelay(deps: SketchBotRelayDeps = {}): SketchBotRe
 				throw new Error(`Sketch Book: a message holds at most ${CHAT_MAX_CHARS} characters.`);
 			}
 			const escalated = options.escalated === true;
-			const guestEdited =
-				session.room?.guestEdited === true ||
-				Object.values(session.authors).some((author) => author.guestTouched);
-			const posture: SketchTurnPosture = guestEdited && !escalated ? 'restricted' : 'full';
+			const posture: SketchTurnPosture =
+				sketchGuestEdited(session) && !escalated ? 'restricted' : 'full';
 			const actor = session.room?.actor ?? localConductorActor();
 			const ts = now();
-			store().postSketchChat(sketchId, { actor, text: body, ts });
+			const posted = store().postSketchChat(sketchId, { actor, text: body, ts });
 
 			// In a live room the request goes out as `toBot` chat, so the reply threads under it.
 			const room = rooms.get(sketchId)?.room;
@@ -528,6 +621,12 @@ export function createSketchBotRelay(deps: SketchBotRelayDeps = {}): SketchBotRe
 					shared = true;
 					room.send({ t: 'bot.progress', replyTo, status: 'running' });
 				}
+			}
+			if (posted) {
+				store().updateSketchChatMessage(sketchId, posted.id, (message) => ({
+					...message,
+					request: { replyTo, posture, shared, ...(escalated ? { escalated: true as const } : {}) },
+				}));
 			}
 			const entry: Tracked = { sketchId, replyTo, phase: 'running', shared, ended: false };
 			tracked.set(keyOf(sketchId, replyTo), entry);
@@ -585,6 +684,11 @@ export function approveSketchBotRequest(sketchId: string, replyTo: string): bool
 /** The approval chip's Deny. */
 export function denySketchBotRequest(sketchId: string, replyTo: string): boolean {
 	return relay().deny(sketchId, replyTo);
+}
+
+/** "Run with full access" on a conductor message (Q2). */
+export function escalateSketchBotRequest(sketchId: string, replyTo: string): boolean {
+	return relay().escalate(sketchId, replyTo);
 }
 
 /** The Sketch tab's composer: the conductor's own `@bot` message. */

@@ -238,6 +238,30 @@ describe('dispatchToastClickAction', () => {
 		);
 	});
 
+	it('open-sketch switches to the agent and shows the sketch in a tab', () => {
+		seedSessions([createMockSession({ id: 's1' })]);
+		expect(
+			dispatchToastClickAction({
+				kind: 'open-sketch',
+				sessionId: 's1',
+				sketchId: 'k1',
+				name: 'Board',
+			})
+		).toBe(true);
+		const session = currentSession('s1');
+		expect(useSessionStore.getState().activeSessionId).toBe('s1');
+		const tab = session?.sketchTabs?.find((candidate) => candidate.sketchId === 'k1');
+		expect(tab?.name).toBe('Board');
+		expect(session?.activeSketchTabId).toBe(tab?.id);
+	});
+
+	it('open-sketch reports an agent that is gone', () => {
+		expect(
+			dispatchToastClickAction({ kind: 'open-sketch', sessionId: 'gone', sketchId: 'k1' })
+		).toBe(false);
+		expect(useNotificationStore.getState().toasts[0].title).toBe('Agent not found');
+	});
+
 	it('undo-group-publish reports a publish that is no longer there, never a silent click', async () => {
 		dispatchToastClickAction({ kind: 'undo-group-publish', publishId: 'gone' });
 

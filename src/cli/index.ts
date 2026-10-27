@@ -258,6 +258,7 @@ import {
 	dataviewQuery,
 } from './commands/dataview';
 import {
+	sketchBotDecision,
 	sketchExport,
 	sketchList,
 	sketchNew,
@@ -267,6 +268,7 @@ import {
 	sketchRevokeLink,
 	sketchRotate,
 	sketchScreeningConsent,
+	sketchRequests,
 	sketchShare,
 	sketchUnshare,
 } from './commands/sketch';
@@ -4628,7 +4630,7 @@ dataviewCmd
 // Sketch Book commands - the verbs that need no room (spec section 9). Each
 // rides `sketch_command` to the SketchService the Sketch tab uses.
 const sketchCmd = encoreCommand(program, 'sketch', 'sketchBook', encoreFlags).description(
-	'Sketch Book: create, list, open, read, export and share Excalidraw whiteboards owned by an agent, and manage cloud screening consent'
+	'Sketch Book: create, list, open, read, export and share Excalidraw whiteboards owned by an agent, answer @bot requests, and manage cloud screening consent'
 );
 
 sketchCmd
@@ -4723,6 +4725,50 @@ sketchCmd
 	.option('--wait', 'Wait for the confirmation link to be clicked (register, up to 15 minutes)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((op, options) => sketchOwner(op, options));
+
+sketchCmd
+	.command('requests')
+	.description(
+		'List open @bot requests: approvals, running turns, held replies, and your messages that can run with full access'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => sketchRequests(options));
+
+sketchCmd
+	.command('approve <replyTo>')
+	.description(
+		'Run a guest @bot request (the approval chip): restricted posture. An agent caller gets a desktop confirmation'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((replyTo, options) => sketchBotDecision('approve', replyTo, options));
+
+sketchCmd
+	.command('deny <replyTo>')
+	.description('Deny a guest @bot request (the approval chip); it counts toward their lockout')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((replyTo, options) => sketchBotDecision('deny', replyTo, options));
+
+sketchCmd
+	.command('escalate <replyTo>')
+	.description(
+		'Run with full access: run your own @bot message again once, after a guest edit made it restricted. An agent caller gets a desktop confirmation'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((replyTo, options) => sketchBotDecision('escalate', replyTo, options));
+
+sketchCmd
+	.command('publish <replyTo>')
+	.description(
+		'Publish anyway: post a bot reply the outbound screen held. An agent caller gets a desktop confirmation'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((replyTo, options) => sketchBotDecision('publish', replyTo, options));
+
+sketchCmd
+	.command('discard <replyTo>')
+	.description('Discard a held bot reply: the request ends as failed')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((replyTo, options) => sketchBotDecision('discard', replyTo, options));
 
 // Quick Chat commands - the hotkey-summoned floating chat window. Each verb is
 // the same action as the matching button in the window.

@@ -138,6 +138,31 @@ describe('parseToastClickAction', () => {
 		});
 	});
 
+	describe('open-sketch', () => {
+		it('accepts a sessionId and a sketchId, with an optional name', () => {
+			expect(
+				parseToastClickAction({ kind: 'open-sketch', sessionId: 's1', sketchId: 'k1' }).action
+			).toEqual({ kind: 'open-sketch', sessionId: 's1', sketchId: 'k1' });
+			expect(
+				parseToastClickAction({
+					kind: 'open-sketch',
+					sessionId: 's1',
+					sketchId: 'k1',
+					name: 'Board',
+				}).action
+			).toEqual({ kind: 'open-sketch', sessionId: 's1', sketchId: 'k1', name: 'Board' });
+		});
+
+		it('requires sessionId and sketchId', () => {
+			for (const raw of [
+				{ kind: 'open-sketch', sketchId: 'k1' },
+				{ kind: 'open-sketch', sessionId: 's1' },
+			]) {
+				expect(parseToastClickAction(raw).error).toContain('requires sessionId and sketchId');
+			}
+		});
+	});
+
 	describe('undo-group-publish', () => {
 		it('accepts a publishId', () => {
 			expect(

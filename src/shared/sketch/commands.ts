@@ -15,6 +15,9 @@
  * element skeletons (`convertMermaid`), since both need Excalidraw's DOM.
  * `sketch_screenshot` and `sketch_export` (T9, T10) draw the session's
  * elements that main picked, with the session's files (`renderForAgent`).
+ * The `@bot` decisions (`sketch requests|approve|deny|escalate|publish|
+ * discard`) list and act on the bot relay's requests, which live in the
+ * window that owns the sketch (`botRequest`).
  *
  * Also here: `summarizeSketchScene()`, the `read --format summary` view of a
  * saved scene. Bundled into the renderer and the CLI, so it imports nothing
@@ -22,11 +25,13 @@
  */
 
 import type { ElementAuthorship } from './attribution';
+import type { SketchBotRequestInfo, SketchBotRequestOp } from './bot-requests';
 import type { SketchOwnerStatus } from './server';
 import type { SketchWireElement } from './payloads';
 import {
 	SKETCH_ACTOR_KINDS,
 	SKETCH_ROLES,
+	type SketchActor,
 	type SketchLinkRole,
 	type SketchRecord,
 	type SketchScene,
@@ -44,6 +49,12 @@ export const SKETCH_COMMAND_ACTIONS = [
 	'revoke-link',
 	'rotate',
 	'owner',
+	'requests',
+	'approve',
+	'deny',
+	'escalate',
+	'publish',
+	'discard',
 ] as const;
 export type SketchCommandAction = (typeof SKETCH_COMMAND_ACTIONS)[number];
 
@@ -259,6 +270,19 @@ export type SketchRendererRequest =
 	  }
 	| {
 			/**
+			 * The bot relay's `@bot` requests: `list` the ones in `sketchIds`, or
+			 * act on the request `replyTo` of `sketchId` (spec sections 5 and 9).
+			 * Main has already raised the desktop confirmation an agent caller
+			 * needs (A1).
+			 */
+			action: 'botRequest';
+			op: SketchBotRequestOp;
+			sketchIds?: string[];
+			sketchId?: string;
+			replyTo?: string;
+	  }
+	| {
+			/**
 			 * Join the sketch's room, or leave it (`connection: null`). `baseline`
 			 * is what the room holds after the snapshot main just uploaded; edits
 			 * newer than it go out as deltas once the client is live.
@@ -345,6 +369,8 @@ export type SketchRendererResult =
 			skeletons?: SketchElementSkeleton[];
 			/** `snapshotScene`. */
 			snapshot?: SketchSceneForSnapshot;
+			/** `botRequest`: the listed requests, or the one an op acted on. */
+			botRequests?: SketchBotRequestInfo[];
 	  }
 	| { success: false; error: string };
 
@@ -445,6 +471,10 @@ export function normalizeSketchRendererResult(raw: unknown): SketchRendererResul
 			? reply.skeletons
 			: undefined;
 	const snapshot = normalizeSceneForSnapshot(reply.snapshot);
+	const botRequests =
+		Array.isArray(reply.botRequests) && reply.botRequests.every(isBotRequestInfo)
+			? reply.botRequests
+			: undefined;
 	return {
 		success: true,
 		...(typeof reply.tabId === 'string' ? { tabId: reply.tabId } : {}),
@@ -453,7 +483,34 @@ export function normalizeSketchRendererResult(raw: unknown): SketchRendererResul
 		...(write ? { write } : {}),
 		...(skeletons ? { skeletons } : {}),
 		...(snapshot ? { snapshot } : {}),
+		...(botRequests ? { botRequests } : {}),
 	};
+}
+
+function isRequestActor(value: unknown): value is SketchActor {
+	return (
+		isObjectRecord(value) &&
+		typeof value.id === 'string' &&
+		typeof value.name === 'string' &&
+		(SKETCH_ACTOR_KINDS as readonly unknown[]).includes(value.kind) &&
+		(SKETCH_ROLES as readonly unknown[]).includes(value.role)
+	);
+}
+
+/** A listed `@bot` request as main may trust it. */
+function isBotRequestInfo(value: unknown): value is SketchBotRequestInfo {
+	return (
+		isObjectRecord(value) &&
+		typeof value.sketchId === 'string' &&
+		typeof value.replyTo === 'string' &&
+		isRequestActor(value.actor) &&
+		typeof value.text === 'string' &&
+		typeof value.ts === 'number' &&
+		['awaiting_approval', 'running', 'held', 'ended'].includes(value.status as string) &&
+		(value.verdict === null || isObjectRecord(value.verdict)) &&
+		(value.posture === 'restricted' || value.posture === 'full') &&
+		typeof value.canEscalate === 'boolean'
+	);
 }
 
 /** A `snapshotScene` reply as main may trust it, or undefined. The store checks the scene again. */

@@ -22,7 +22,9 @@
  *   Excalidraw. A view's own `onChange` never bumps it, so nothing echoes.
  * - `focusRequest` is an agent's `sketch_focus`, waiting for a view to scroll
  *   to it; `chat` is the chat pane: the agent's local posts (T12) and the
- *   room's chat as the bot relay mirrors it (`sketchBotRelay.ts`).
+ *   room's chat as the bot relay mirrors it (`sketchBotRelay.ts`). The
+ *   conductor's own `@bot` messages carry their request (`request`), so the
+ *   pane can offer "Run with full access" on one that ran restricted (Q2).
  * - `botRequests` are the `@bot` requests the bot relay holds (spec section
  *   5): a guest request the gate passed, waiting on the approval chip (B2),
  *   and every turn running for the sketch. Never a request still being
@@ -55,6 +57,7 @@ import {
 	type SketchEditor,
 } from '../../shared/sketch/attribution';
 import { createKeyedWriteQueue } from '../../shared/keyedWriteQueue';
+import type { SketchBotRequestStatus } from '../../shared/sketch/bot-requests';
 import type { SketchImageApprovals } from '../../shared/sketch/commands';
 import type { SketchWireElement } from '../../shared/sketch/payloads';
 import type { Screening } from '../../shared/sketch/protocol';
@@ -96,6 +99,20 @@ export type SketchSessionStatus = 'loading' | 'ready' | 'error';
 /** Most chat messages a session keeps; older ones drop off the top. */
 export const SKETCH_CHAT_HISTORY_LIMIT = 200;
 
+/**
+ * The `@bot` request a conductor message started, kept on the message so the
+ * pane can offer "Run with full access" once its restricted turn is over (Q2).
+ */
+export interface SketchChatRequestMark {
+	replyTo: string;
+	/** The posture the message's own turn ran under. */
+	posture: SketchTurnPosture;
+	/** The room saw it as a `toBot` chat, so a reply threads under `replyTo`. */
+	shared: boolean;
+	/** The conductor ran it again with full access. Escalation never carries over. */
+	escalated?: true;
+}
+
 /** One message in the Sketch tab's chat pane. */
 export interface SketchChatMessage {
 	id: string;
@@ -103,11 +120,11 @@ export interface SketchChatMessage {
 	actor: SketchActor;
 	text: string;
 	ts: number;
+	/** Set on the conductor's own `@bot` messages. */
+	request?: SketchChatRequestMark;
 }
 
-/** Where one `@bot` request stands in the bot relay. */
-/** `held`: the turn answered, and the outbound screen's model pass holds the reply for "Publish anyway". */
-export type SketchBotRequestStatus = 'awaiting_approval' | 'running' | 'held';
+export type { SketchBotRequestStatus };
 
 /** One `@bot` request the bot relay holds (spec section 5). */
 export interface SketchBotRequest {
@@ -232,6 +249,34 @@ export interface SketchSession {
 	room: SketchRoomState | null;
 }
 
+/**
+ * A guest has edited this board (spec section 5, Turn posture): the room's
+ * flag (M5), or any element a guest touched. The conductor's own turns run
+ * restricted while it is true.
+ */
+export function sketchGuestEdited(session: SketchSession | null | undefined): boolean {
+	if (!session) return false;
+	return (
+		session.room?.guestEdited === true ||
+		Object.values(session.authors).some((author) => author.guestTouched)
+	);
+}
+
+/**
+ * "Run with full access" is offered on this message (Q2): the conductor's
+ * own `@bot` message, whose turn ran restricted and is not running now, not
+ * escalated before, while a guest has edited the board.
+ */
+export function canEscalateSketchMessage(
+	session: SketchSession | null | undefined,
+	message: SketchChatMessage
+): boolean {
+	const mark = message.request;
+	if (!session || !mark || mark.posture !== 'restricted' || mark.escalated) return false;
+	if (!sketchGuestEdited(session)) return false;
+	return !session.botRequests.some((request) => request.replyTo === mark.replyTo);
+}
+
 /** One Excalidraw `onChange`, as the session takes it. */
 export interface SketchLocalChange {
 	elements: readonly SketchWireElement[];
@@ -289,6 +334,12 @@ interface SketchSessionState {
 		sketchId: string,
 		message: { actor: SketchActor; text: string; ts?: number }
 	) => SketchChatMessage | null;
+	/** Change one chat message in place. Nothing happens when it has dropped off. */
+	updateSketchChatMessage: (
+		sketchId: string,
+		messageId: string,
+		update: (message: SketchChatMessage) => SketchChatMessage
+	) => void;
 	/** Add a bot request, or replace the one with the same `replyTo`. */
 	putSketchBotRequest: (sketchId: string, request: SketchBotRequest) => void;
 	/** Change one bot request in place. Nothing happens when it is gone. */
@@ -504,6 +555,15 @@ export const useSketchSessionStore = create<SketchSessionState>((set, get) => {
 			}));
 			return message;
 		},
+
+		updateSketchChatMessage: (sketchId, messageId, update) =>
+			patchSession(sketchId, (session) => {
+				const index = session.chat.findIndex((message) => message.id === messageId);
+				if (index < 0) return session;
+				const chat = [...session.chat];
+				chat[index] = update(chat[index]);
+				return { ...session, chat };
+			}),
 
 		putSketchBotRequest: (sketchId, request) =>
 			patchSession(sketchId, (session) => ({

@@ -23,6 +23,7 @@ import { resolveTerminalTab } from '../utils/terminalTabHelpers';
 import { browserTabFocusFields, terminalTabFocusFields } from '../utils/tabFocusFields';
 import { openUrl } from '../utils/openUrl';
 import { undoGroupDefaultsPublish } from './groupDefaultsPublish';
+import { openSketchInSession } from './sketchTabs';
 import { logger } from '../utils/logger';
 
 export interface ToastClickActionHandlers {
@@ -176,6 +177,20 @@ export function dispatchToastClickAction(
 		case 'open-url':
 			openUrl(action.url);
 			return true;
+
+		case 'open-sketch': {
+			if (!useSessionStore.getState().sessions.some((s) => s.id === action.sessionId)) {
+				reportMiss('Agent not found', 'The agent this notification points at is gone.');
+				return false;
+			}
+			// A click is the user asking to be taken there: switches agent and tab.
+			switchToSession(action.sessionId);
+			openSketchInSession(action.sessionId, {
+				sketchId: action.sketchId,
+				name: action.name ?? 'Sketch Book',
+			});
+			return true;
+		}
 
 		case 'undo-group-publish':
 			// The service says what it restored, or that there is nothing left to

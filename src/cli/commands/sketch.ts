@@ -34,6 +34,15 @@
 //   which sharing needs. `register --email <address> [--wait]` sends the
 //   confirmation email and, with `--wait`, waits for the click.
 //
+// - `requests` lists the open `@bot` requests (spec section 5): guest
+//   requests waiting on approval, running turns, held replies, and the
+//   conductor's own messages that can run again with full access.
+//   `approve <replyTo>` and `deny <replyTo>` answer an approval chip,
+//   `escalate <replyTo>` is "Run with full access" (Q2), and `publish` /
+//   `discard <replyTo>` answer a held reply. From an agent caller, approve,
+//   escalate and publish raise the desktop confirmation and run only on
+//   Allow (A1); deny and discard run.
+//
 // `read` and `export` work from the SAVED scene, which the tab autosaves within
 // a second of an edit.
 //
@@ -74,6 +83,13 @@ import {
 	type SketchSceneSummary,
 	type SketchShareResult,
 } from '../../shared/sketch/commands';
+import { describeSketchActor } from '../../shared/sketch/attribution';
+import {
+	describeSketchVerdict,
+	sketchBotOpNeedsConfirmation,
+	type SketchBotDecisionOp,
+	type SketchBotRequestInfo,
+} from '../../shared/sketch/bot-requests';
 import type { SketchOwnerStatus } from '../../shared/sketch/server';
 import type { SketchLinkRole, SketchRecord } from '../../shared/sketch/types';
 
@@ -134,6 +150,10 @@ export interface SketchSharingCliOptions {
 export interface SketchOwnerOptions {
 	email?: string;
 	wait?: boolean;
+	json?: boolean;
+}
+
+export interface SketchRequestsCliOptions {
 	json?: boolean;
 }
 
@@ -601,4 +621,63 @@ export async function sketchOwner(op: string, options: SketchOwnerOptions): Prom
 		);
 	}
 	console.log(formatOwnerStatus(result.status));
+}
+
+/** The human reading of one `@bot` request. */
+export function formatBotRequest(request: SketchBotRequestInfo): string {
+	const state =
+		request.status === 'ended'
+			? 'ended, can run with full access'
+			: `${request.status.replace('_', ' ')}${request.waiting ? ', waiting behind older requests' : ''}`;
+	const lines = [
+		`${request.replyTo}  [${state}]  ${request.posture}  (sketch ${request.sketchId})`,
+		`  ${describeSketchActor(request.actor)}, ${formatRelativeTime(request.ts)}`,
+		`  ${JSON.stringify(request.text)}`,
+	];
+	if (request.verdict) lines.push(`  ${describeSketchVerdict(request.verdict)}`);
+	return lines.join('\n');
+}
+
+export async function sketchRequests(options: SketchRequestsCliOptions): Promise<void> {
+	const requests = await request<SketchBotRequestInfo[]>('requests', {}, options.json);
+	if (options.json) {
+		printJson({ success: true, requests });
+		return;
+	}
+	if (requests.length === 0) {
+		console.log('No open @bot requests.');
+		return;
+	}
+	console.log(requests.map(formatBotRequest).join('\n\n'));
+}
+
+/** What each decision did. */
+const BOT_DECISION_DONE: Readonly<Record<SketchBotDecisionOp, string>> = {
+	approve: 'Approved: the agent runs the request restricted.',
+	deny: 'Denied: the guest is told no.',
+	escalate: 'Running the message again with full access.',
+	publish: 'Published the held reply.',
+	discard: 'Discarded the held reply: the request ends as failed.',
+};
+
+export async function sketchBotDecision(
+	op: SketchBotDecisionOp,
+	replyTo: string,
+	options: SketchRequestsCliOptions
+): Promise<void> {
+	const id = replyTo.trim();
+	if (!id) failCommand('A request id is required.', options.json, ExitCode.InvalidUsage);
+	const caller = readCallerIdentity(process.env);
+	const result = await request<SketchBotRequestInfo>(
+		op,
+		{ replyTo: id, ...callerMessageFields(caller) },
+		options.json,
+		caller && sketchBotOpNeedsConfirmation(op) ? CONSENT_CONFIRM_TIMEOUT_MS : undefined
+	);
+	if (options.json) {
+		printJson({ success: true, op, request: result });
+		return;
+	}
+	console.log(BOT_DECISION_DONE[op]);
+	console.log(formatBotRequest(result));
 }

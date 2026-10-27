@@ -1,10 +1,12 @@
 /**
  * Sketch Book WebSocket handler: `sketch_command`, the CLI half of Sketch Book
  * (`maestro-cli sketch new|list|open|read|export|screening-consent|share|
- * unshare|revoke-link|rotate|owner`, spec section 9).
+ * unshare|revoke-link|rotate|owner|requests|approve|deny|escalate|publish|
+ * discard`, spec section 9).
  *
- * The sharing verbs pass the asking agent's name when an agent called (A1):
- * the service raises the desktop confirmation and runs only on Allow.
+ * The sharing verbs and the `@bot` decisions pass the asking agent's name
+ * when an agent called (A1): the service raises the desktop confirmation
+ * (sharing, approve, escalate, publish) and runs only on Allow.
  *
  * One message carrying an `action`, answered by the SAME SketchService the
  * `sketch:*` IPC handlers call, so the CLI and the UI cannot drift. The service
@@ -72,6 +74,14 @@ function run(action: SketchCommandAction, message: WebClientMessage): Promise<un
 			return service.rotateSketch(sketchId, callerOf(message));
 		case 'owner':
 			return owner(message);
+		case 'requests':
+			return service.listBotRequests();
+		case 'approve':
+		case 'deny':
+		case 'escalate':
+		case 'publish':
+		case 'discard':
+			return service.decideBotRequest(action, message.replyTo as string, callerOf(message));
 	}
 }
 

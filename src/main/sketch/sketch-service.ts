@@ -41,7 +41,14 @@
  *
  * Every sharing verb takes `requestedBy` when an agent asked through the CLI
  * (A1): the conductor answers a desktop confirmation first, and nothing runs
- * on Deny. The owner token and the room key stay in main, except for the
+ * on Deny.
+ *
+ * The `@bot` decisions (`maestro-cli sketch requests|approve|deny|escalate|
+ * publish|discard`, spec sections 5 and 9) live here too. The bot relay's
+ * requests are held in the window that owns each sketch, so `listBotRequests`
+ * asks each owner's window, and `decideBotRequest` finds the request, raises
+ * the A1 confirmation for an agent's approve, escalate or publish, then asks
+ * that window to press the same button the Sketch tab shows. The owner token and the room key stay in main, except for the
  * connection handed to the room client in the owning window.
  */
 
@@ -64,6 +71,15 @@ import {
 	type SketchRoomKey,
 } from '../../shared/sketch/crypto';
 import { sceneSnapshotPayloads } from '../../shared/sketch/payloads';
+import { describeSketchActor } from '../../shared/sketch/attribution';
+import {
+	describeSketchVerdict,
+	isSketchBotDecisionOp,
+	sketchBotOpNeedsConfirmation,
+	type SketchBotDecisionOp,
+	type SketchBotRequestInfo,
+} from '../../shared/sketch/bot-requests';
+import { truncateAtWordBoundary } from '../../shared/formatters';
 import { FILE_MAX_BYTES, isSketchFileId } from '../../shared/sketch/protocol';
 import {
 	DEFAULT_LINK_EXPIRY_DAYS,
@@ -208,6 +224,53 @@ export interface SketchService {
 	 * else is refused, so no caller can skip the gate by naming another actor.
 	 */
 	screenBotRequest(sketchId: string, request: SketchBotScreenRequest): Promise<SketchScreenVerdict>;
+	/** Every open `@bot` request, from the windows that own the sketches (`sketch requests`). */
+	listBotRequests(): Promise<SketchBotRequestInfo[]>;
+	/**
+	 * Approve, deny, escalate, publish or discard one request (`sketch approve`
+	 * and siblings). An agent caller's approve, escalate and publish wait on
+	 * the desktop confirmation (A1). Resolves with the request as it stands after.
+	 */
+	decideBotRequest(
+		op: SketchBotDecisionOp,
+		replyTo: string,
+		caller?: SketchCaller
+	): Promise<SketchBotRequestInfo>;
+}
+
+/** Longest stretch of a request quoted in the A1 confirmation. */
+const CONFIRM_REQUEST_MAX_CHARS = 400;
+
+/** The A1 confirmation for an agent's `@bot` decision. */
+function botDecisionPrompt(
+	op: SketchBotDecisionOp,
+	request: SketchBotRequestInfo,
+	sketchName: string
+): Omit<SketchDesktopConfirmPrompt, 'requestedBy'> {
+	const quoted = JSON.stringify(
+		truncateAtWordBoundary(request.text, CONFIRM_REQUEST_MAX_CHARS, '…')
+	);
+	const sketch = JSON.stringify(sketchName);
+	switch (op) {
+		case 'escalate':
+			return {
+				title: 'Run with full access?',
+				message: `Run your message on ${sketch} again with the agent's full access?`,
+				detail: `A guest has edited this board, so the message ran restricted. With full access the agent can run commands and change files while it reads what guests put on the board. The message: ${quoted}`,
+			};
+		case 'publish':
+			return {
+				title: 'Publish a held reply?',
+				message: `Post the held bot reply on ${sketch} to the room?`,
+				detail: `The outbound screen held this reply because it may hold a secret. Everyone in the room reads it once it is posted. It answers ${describeSketchActor(request.actor)}.`,
+			};
+		default:
+			return {
+				title: 'Run a guest request?',
+				message: `Run the request from ${describeSketchActor(request.actor)} on ${sketch}?`,
+				detail: `The agent runs it restricted: read-only, plus the sketch tools. ${describeSketchVerdict(request.verdict)}. The request: ${quoted}`,
+			};
+	}
 }
 
 /** The live agent with this id, as Sketch Book sees it, or `null`. */
@@ -934,6 +997,66 @@ export function createSketchService(deps: SketchServiceDeps = {}): SketchService
 				},
 				text: raw.text,
 			});
+		},
+
+		async listBotRequests() {
+			const sketches = open();
+			const records = await sketches.listSketches();
+			const byOwner = new Map<string, string[]>();
+			for (const record of records) {
+				const agent = findAgent(record.ownerAgentId);
+				if (!agent || agent.sshRemote) continue;
+				byOwner.set(agent.id, [...(byOwner.get(agent.id) ?? []), record.sketchId]);
+			}
+			const requests: SketchBotRequestInfo[] = [];
+			for (const [agentId, sketchIds] of byOwner) {
+				const result = await renderer(agentId, { action: 'botRequest', op: 'list', sketchIds });
+				if (!result.success) {
+					// A window that is closed holds no requests: they went with its room client.
+					logger.warn('A window did not list its Sketch Book requests', LOG_CONTEXT, {
+						agentId,
+						error: result.error,
+					});
+					continue;
+				}
+				requests.push(...(result.botRequests ?? []));
+			}
+			return requests.sort((a, b) => a.ts - b.ts);
+		},
+
+		async decideBotRequest(op, replyTo, caller) {
+			if (!isSketchBotDecisionOp(op)) {
+				throw new Error('Sketch Book: op must be approve, deny, escalate, publish or discard.');
+			}
+			const id = requireString(replyTo, 'replyTo');
+			const sketches = open();
+			const request = (await service.listBotRequests()).find(
+				(candidate) => candidate.replyTo === id
+			);
+			if (!request) {
+				throw new Error(
+					`Sketch Book: no open @bot request has the id "${id}". List them with maestro-cli sketch requests.`
+				);
+			}
+			const record = await requireSketch(sketches, request.sketchId);
+			if (sketchBotOpNeedsConfirmation(op)) {
+				await confirmForAgent(caller, botDecisionPrompt(op, request, record.name));
+			}
+			const result = await renderer(record.ownerAgentId, {
+				action: 'botRequest',
+				op,
+				sketchId: record.sketchId,
+				replyTo: id,
+			});
+			if (!result.success) throw new Error(result.error);
+			const after = result.botRequests?.[0];
+			if (!after) throw new Error('Sketch Book: the window did not report the request.');
+			logger.info('Sketch Book @bot decision', LOG_CONTEXT, {
+				sketchId: record.sketchId,
+				op,
+				byAgent: Boolean(caller?.requestedBy),
+			});
+			return after;
 		},
 	};
 	return service;

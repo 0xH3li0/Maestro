@@ -6,7 +6,10 @@
  * the elements, `export` writes the returned bytes to the resolved `--output` path,
  * the sharing verbs pass an agent caller on (A1: the app confirms on the desktop,
  * so the CLI waits longer) and a person's request goes without one, and bad
- * arguments and app refusals exit with the documented codes.
+ * arguments and app refusals exit with the documented codes. The `@bot` verbs
+ * (`requests`, `approve`, `deny`, `escalate`, `publish`, `discard`) send their
+ * action with the request id; an agent caller is passed on, and the CLI waits
+ * on the desktop confirmation only for approve, escalate and publish (A1).
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
@@ -32,12 +35,15 @@ vi.mock('../../../cli/utils/confirm', () => ({
 
 import {
 	exportFileBytes,
+	formatBotRequest,
 	formatSketchSummary,
+	sketchBotDecision,
 	sketchExport,
 	sketchList,
 	sketchNew,
 	sketchOpen,
 	sketchRead,
+	sketchRequests,
 	sketchRevokeLink,
 	sketchRotate,
 	sketchScreeningConsent,
@@ -51,6 +57,7 @@ import { ExitCode } from '../../../cli/exit-codes';
 import { encoreDisabledMessage } from '../../../shared/encoreFeatureDefaults';
 import { summarizeSketchScene } from '../../../shared/sketch/commands';
 import type { SketchRecord } from '../../../shared/sketch/types';
+import type { SketchBotRequestInfo } from '../../../shared/sketch/bot-requests';
 
 const SKETCH_ID = '11111111-2222-4333-8444-555555555555';
 
@@ -635,6 +642,116 @@ describe('sketch command', () => {
 
 			expect(sent).toHaveLength(0);
 			expect(errors()).toContain('A link id is required.');
+			expect(exitSpy).toHaveBeenCalledWith(ExitCode.InvalidUsage);
+		});
+	});
+	describe('@bot requests', () => {
+		const CONFIRM_TIMEOUT_MS = 5 * 60_000;
+		const waiting: SketchBotRequestInfo = {
+			sketchId: SKETCH_ID,
+			replyTo: 'm1',
+			actor: {
+				id: 'g1',
+				kind: 'guest',
+				name: 'Sam',
+				role: 'rw',
+				capId: 'cap-3',
+				capLabel: '#3',
+			},
+			text: 'draw a box',
+			ts: Date.now() - 5_000,
+			status: 'awaiting_approval',
+			verdict: { status: 'clean', score: 0.04, sourceLabel: 'Prompt Guard 2', locality: 'local' },
+			posture: 'restricted',
+			canEscalate: false,
+		};
+		let savedCaller: string | undefined;
+
+		beforeEach(() => {
+			savedCaller = process.env[CALLER_AGENT_ID_ENV_VAR];
+			delete process.env[CALLER_AGENT_ID_ENV_VAR];
+		});
+
+		afterEach(() => {
+			if (savedCaller === undefined) delete process.env[CALLER_AGENT_ID_ENV_VAR];
+			else process.env[CALLER_AGENT_ID_ENV_VAR] = savedCaller;
+		});
+
+		it('lists open requests with the actor line and the verdict', async () => {
+			const sent = respond([waiting]);
+			await sketchRequests({});
+
+			expect(sent[0]).toMatchObject({ type: 'sketch_command', action: 'requests' });
+			expect(logged()).toContain('m1  [awaiting approval]  restricted');
+			expect(logged()).toContain('"Sam" · guest, read-write link #3, not verified');
+			expect(logged()).toContain('"draw a box"');
+			expect(logged()).toContain('Screened: clean, Prompt Guard 2, 0.04');
+		});
+
+		it('says so when nothing is open', async () => {
+			respond([]);
+			await sketchRequests({});
+			expect(logged()).toBe('No open @bot requests.');
+		});
+
+		it('names a conductor message that can run with full access', () => {
+			const text = formatBotRequest({
+				...waiting,
+				actor: { id: 'c1', kind: 'conductor', name: 'Pedram', role: 'conductor' },
+				status: 'ended',
+				verdict: null,
+				canEscalate: true,
+			});
+			expect(text).toContain('[ended, can run with full access]');
+			expect(text).not.toContain('Screened');
+		});
+
+		it.each(['approve', 'deny', 'escalate', 'publish', 'discard'] as const)(
+			'%s sends the request id for a person, with no caller',
+			async (op) => {
+				const sent = respond({ ...waiting, status: 'running' });
+				await sketchBotDecision(op, ' m1 ', {});
+
+				expect(sent[0]).toMatchObject({ type: 'sketch_command', action: op, replyTo: 'm1' });
+				expect(sent[0]).not.toHaveProperty('fromSessionId');
+				expect(sent[0].timeout).toBeUndefined();
+			}
+		);
+
+		it.each([
+			['approve', CONFIRM_TIMEOUT_MS],
+			['escalate', CONFIRM_TIMEOUT_MS],
+			['publish', CONFIRM_TIMEOUT_MS],
+			['deny', undefined],
+			['discard', undefined],
+		] as const)(
+			'%s from an agent passes the caller on and waits only on a confirmation',
+			async (op, timeout) => {
+				process.env[CALLER_AGENT_ID_ENV_VAR] = 'agent-7';
+				const sent = respond({ ...waiting, status: 'ended' });
+				await sketchBotDecision(op, 'm1', {});
+
+				expect(sent[0]).toMatchObject({ action: op, replyTo: 'm1', fromSessionId: 'agent-7' });
+				expect(sent[0].timeout).toBe(timeout);
+			}
+		);
+
+		it('prints the request as JSON with --json', async () => {
+			respond({ ...waiting, status: 'running' });
+			await sketchBotDecision('approve', 'm1', { json: true });
+			expect(json()).toMatchObject({
+				success: true,
+				op: 'approve',
+				request: { replyTo: 'm1', status: 'running' },
+			});
+		});
+
+		it('needs a request id', async () => {
+			const sent = respond(waiting);
+			await expect(sketchBotDecision('deny', '  ', {})).rejects.toThrow('__exit__');
+
+			expect(sent).toHaveLength(0);
+			expect(errors()).toContain('A request id is required.');
 			expect(exitSpy).toHaveBeenCalledWith(ExitCode.InvalidUsage);
 		});
 	});

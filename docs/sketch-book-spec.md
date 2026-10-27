@@ -204,6 +204,8 @@ Not installed here, so not run: Gemini CLI, Antigravity, Qwen3 Coder, Pi, Oh My 
 - Actions: **Run** (sends `bot.progress {running}`), **Deny** (`bot.denied`). Chips are rate-limited per cap: at most 3 visible, newer requests wait behind them.
 - The chip disappears when the server reports the request expired (wire contract X3).
 
+**Built 2026-10-27.** `SketchApprovalChip` in the chat pane (Run / Deny while it waits, no buttons once it runs); the verdict line is `describeSketchVerdict()`, the per-link limit `visibleSketchApprovals()` (`src/shared/sketch/bot-requests.ts`), and the pane counts the requests waiting behind it. The toast fires only for a chip that shows; its click (`open-sketch`, a new `ToastClickAction` kind) opens the sketch on its owner. "Run with full access" sits under a conductor message whose turn ran restricted, once that turn is over, while `sketchGuestEdited()` is true. It runs that one message again with full access on the same `replyTo` (in a room the reply posts as bot chat under it, Y3, and no progress or failure frame goes out, since the server holds no pending entry for the conductor's own chat), then hides: escalation never carries over. There is no composer yet, so escalation is offered after the send rather than before it. CLI: `sketch requests` (the read), `approve`, `deny`, `escalate`, plus `publish` / `discard` for the held reply chip; main finds the request in the owning window (`botRequest` hop), raises A1 for an agent's approve, escalate or publish, then presses the same relay function the chip does.
+
 ### Sleep, quit and crash
 
 `powerMonitor` `suspend` and app `before-quit` send `bot.presence {online:false}` for every shared sketch before the socket closes. On `resume`, the session reconnects and sends `bot.presence {online:true}`. A crash closes the socket without the frame, so the server must treat a closed conductor socket as offline (wire contract X7).
@@ -433,6 +435,7 @@ CLI parity: `maestro-cli sketch screening-consent grant|revoke --engine jev|open
 | `share <sketchId> [--role rw\|ro] [--expires-days]`, `unshare`, `revoke-link`, `rotate`                   | **Desktop confirmation** (A1)                                     |
 | `bot-policy <sketchId> conductor\|writers`                                                                | `writers` needs a desktop confirmation; `conductor` runs          |
 | `approve <replyTo>`, `deny <replyTo>`, `escalate <replyTo>`                                               | **Desktop confirmation** for approve and escalate (A1); deny runs |
+| `requests`, `publish <replyTo>`, `discard <replyTo>`                                                      | `publish` needs a desktop confirmation (A1); the others run       |
 | `kick`, `unlock`, `unsuspend`                                                                             | `unlock` and `unsuspend` need a desktop confirmation; `kick` runs |
 | `stats <sketchId>`                                                                                        | Runs                                                              |
 | `owner status\|register --email <address> [--wait]\|sign-out`                                             | Runs (registering only sends a confirmation email)                |
