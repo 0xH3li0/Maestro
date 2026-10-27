@@ -36,7 +36,7 @@ import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 interface PianolaDashboardProps {
 	theme: Theme;
-	onJumpToAgent: (sessionId: string) => void;
+	onJumpToAgent: (sessionId: string, tabId?: string) => void;
 }
 
 /** A titled, icon-led section with a count, an empty-state line, and an optional
@@ -90,7 +90,7 @@ function AgentRow({
 	theme: Theme;
 	row: DashboardAgentRow;
 	accent: string;
-	onJump: (sessionId: string) => void;
+	onJump: (sessionId: string, tabId?: string) => void;
 }): React.ReactElement {
 	const clickable = !!row.sessionId;
 	const children = row.worktreeChildren ?? [];
@@ -99,7 +99,12 @@ function AgentRow({
 			<button
 				type="button"
 				disabled={!clickable}
-				onClick={() => row.sessionId && onJump(row.sessionId)}
+				onClick={() => {
+					if (row.sessionId) {
+						if (row.tabId) onJump(row.sessionId, row.tabId);
+						else onJump(row.sessionId);
+					}
+				}}
 				className="w-full text-left rounded px-3 py-2 flex items-center gap-3 transition-colors hover:bg-white/5 disabled:cursor-default"
 				style={{ backgroundColor: theme.colors.bgSidebar, borderLeft: `2px solid ${accent}` }}
 				title={clickable ? `Jump to ${row.agentName}` : row.agentName}
@@ -126,7 +131,12 @@ function AgentRow({
 							key={child.key}
 							type="button"
 							disabled={!child.sessionId}
-							onClick={() => child.sessionId && onJump(child.sessionId)}
+							onClick={() => {
+								if (child.sessionId) {
+									if (child.tabId) onJump(child.sessionId, child.tabId);
+									else onJump(child.sessionId);
+								}
+							}}
 							className="w-full text-left rounded px-3 py-1.5 flex items-center gap-2 transition-colors hover:bg-white/5 disabled:cursor-default"
 							style={{ backgroundColor: theme.colors.bgSidebar, borderLeft: `2px solid ${accent}` }}
 							title={child.sessionId ? `Jump to ${child.agentName}` : child.agentName}

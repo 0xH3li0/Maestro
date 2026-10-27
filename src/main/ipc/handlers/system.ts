@@ -29,12 +29,35 @@ import { checkForUpdates } from '../../update-checker';
 import { sendCheckin } from '../../checkin';
 import { setAllowPrerelease } from '../../auto-updater';
 import { WebServer } from '../../web-server';
+import { startTunnel, stopTunnel, getTunnelState } from '../../web-server/live-mode';
 import { powerManager } from '../../power-manager';
 import { setMenuShortcutKeys } from '../../app-menu';
 import { MaestroSettings } from './persistence';
 import { captureException } from '../../utils/sentry';
 import { createSafeSend } from '../../utils/safe-send';
 import type { BootstrapSettings } from '../../stores/types';
+import { isLinux } from '../../../shared/platformDetection';
+
+/**
+ * `shell.openPath` that always settles.
+ *
+ * On Linux, Electron's `platform_util::OpenPath` launches `xdg-open` with
+ * `wait_for_exit = false` and never runs its completion callback, so the promise
+ * `shell.openPath` returns there never resolves (Electron 41,
+ * `shell/common/platform_util_linux.cc`). An IPC handler that awaits it never
+ * replies; once the pending invoke is garbage-collected the renderer gets
+ * "Error invoking remote method 'shell:openPath': reply was never sent"
+ * (MAESTRO-QH, Linux only). Linux reports nothing either way, so there it is
+ * fired and reported as launched; macOS and Windows still return the real
+ * error message.
+ */
+function openPathSettled(target: string): Promise<string> {
+	if (isLinux()) {
+		void shell.openPath(target);
+		return Promise.resolve('');
+	}
+	return shell.openPath(target);
+}
 
 // Type for tunnel manager instance
 type TunnelManagerType = typeof tunnelManagerInstance;
@@ -246,7 +269,7 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 			// Detect absolute file paths and redirect to openPath - Fixes MAESTRO-FN/FA/F4
 			if (path.isAbsolute(url)) {
 				if (fsSync.existsSync(url)) {
-					const errorMessage = await shell.openPath(url);
+					const errorMessage = await openPathSettled(url);
 					if (errorMessage) {
 						throw new Error(errorMessage);
 					}
@@ -264,7 +287,7 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 			if (!fsSync.existsSync(filePath)) {
 				throw new Error(`Path does not exist: ${filePath}`);
 			}
-			const errorMessage = await shell.openPath(filePath);
+			const errorMessage = await openPathSettled(filePath);
 			if (errorMessage) {
 				throw new Error(errorMessage);
 			}
@@ -347,7 +370,7 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 			logger.warn(`shell:openPath - path does not exist: ${absolutePath}`, 'Shell');
 			return;
 		}
-		const errorMessage = await shell.openPath(absolutePath);
+		const errorMessage = await openPathSettled(absolutePath);
 		if (errorMessage) {
 			logger.warn(`shell:openPath failed for ${absolutePath}: ${errorMessage}`, 'Shell');
 		}
@@ -423,57 +446,13 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 		return await isCloudflaredInstalled();
 	});
 
-	ipcMain.handle('tunnel:start', async () => {
-		const webServer = getWebServer();
-		// Get web server URL (includes the security token)
-		const serverUrl = webServer?.getSecureUrl();
-		if (!serverUrl) {
-			return { success: false, error: 'Web server not running' };
-		}
+	// Start/stop/status share one implementation with `maestro-cli live tunnel`
+	// through the Live Mode service.
+	ipcMain.handle('tunnel:start', async () => startTunnel(getWebServer(), tunnelManager));
 
-		// Parse the URL to get port and token path
-		const parsedUrl = new URL(serverUrl);
-		const port = parseInt(parsedUrl.port, 10);
-		const tokenPath = parsedUrl.pathname; // e.g., "/7d7f7162-614c-43e2-bb8a-8a8123c2f56a"
+	ipcMain.handle('tunnel:stop', async () => stopTunnel(getWebServer(), tunnelManager));
 
-		const result = await tunnelManager.start(port);
-
-		if (result.success && result.url) {
-			// Append the token path to the tunnel URL for security
-			// e.g., "https://xyz.trycloudflare.com" + "/TOKEN" = "https://xyz.trycloudflare.com/TOKEN"
-			const fullTunnelUrl = result.url + tokenPath;
-			return { success: true, url: fullTunnelUrl };
-		}
-
-		return result;
-	});
-
-	ipcMain.handle('tunnel:stop', async () => {
-		await tunnelManager.stop();
-		return { success: true };
-	});
-
-	ipcMain.handle('tunnel:getStatus', async () => {
-		const status = tunnelManager.getStatus();
-		if (!status.isRunning || !status.url) return status;
-
-		// Append the web server's token path so the URL stays usable.
-		// tunnelManager itself is token-agnostic - composition happens here,
-		// matching tunnel:start above.
-		const webServer = getWebServer();
-		const serverUrl = webServer?.getSecureUrl();
-		if (!serverUrl) return status;
-
-		try {
-			const tokenPath = new URL(serverUrl).pathname;
-			if (tokenPath && tokenPath !== '/' && !status.url.endsWith(tokenPath)) {
-				return { ...status, url: status.url + tokenPath };
-			}
-		} catch {
-			// Malformed server URL - fall back to bare tunnel URL
-		}
-		return status;
-	});
+	ipcMain.handle('tunnel:getStatus', async () => getTunnelState(getWebServer(), tunnelManager));
 
 	// ============ DevTools Handlers ============
 

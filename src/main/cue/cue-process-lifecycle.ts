@@ -14,6 +14,7 @@ import type { SpawnSpec } from './cue-spawn-builder';
 import type { ToolType } from '../../shared/types';
 import { getOutputParser } from '../parsers';
 import { captureException } from '../utils/sentry';
+import { logger } from '../utils/logger';
 import { isWindows } from '../../shared/platformDetection';
 import { stripAnsiCodes } from '../../shared/stringUtils';
 import {
@@ -302,7 +303,11 @@ export function runProcess(
 		// observe EOF. `'ignore'` gives the child /dev/null for stdin so it
 		// never tries to read - Claude already behaves correctly with either,
 		// so this is safe across all agents.
-		const needsStdinWrite = sshRemoteEnabled && (Boolean(sshStdinScript) || Boolean(stdinPrompt));
+		// A local run writes stdin only when the spec moved the prompt there (a
+		// Windows `.cmd` shim, see cue-spawn-builder).
+		const needsStdinWrite = sshRemoteEnabled
+			? Boolean(sshStdinScript) || Boolean(stdinPrompt)
+			: Boolean(stdinPrompt);
 		const stdinMode: 'pipe' | 'ignore' = needsStdinWrite ? 'pipe' : 'ignore';
 		try {
 			// maestro-p (interactive token mode) self-allocates its own PTY via
@@ -312,6 +317,9 @@ export function runProcess(
 			child = spawn(spec.command, spec.args, {
 				cwd: spec.cwd,
 				env: spec.env,
+				// cmd.exe for a Windows `.cmd` / `.bat` shim, which Node will not start
+				// directly (spawn EINVAL, MAESTRO-R0). The builder escaped the args.
+				shell: spec.shell ?? false,
 				stdio: [stdinMode, 'pipe', 'pipe'],
 			});
 		} catch (err) {
@@ -395,6 +403,21 @@ export function runProcess(
 			finish('failed', null);
 		});
 
+		// Handle stdin errors. A stream error with no listener is an uncaught
+		// exception; a child that exits while a large prompt is still being
+		// written raises EPIPE, and the exit that follows settles the run. Same
+		// handling as ChildProcessSpawner.
+		child.stdin?.on('error', (err) => {
+			const errorCode = (err as NodeJS.ErrnoException).code;
+			if (errorCode === 'EPIPE') {
+				logger.debug('[CUE] stdin EPIPE - process closed before write completed', 'Cue', {
+					runId,
+				});
+			} else {
+				logger.error('[CUE] stdin error', 'Cue', { runId, error: String(err) });
+			}
+		});
+
 		// Write to stdin based on execution mode
 		if (sshStdinScript && sshRemoteEnabled) {
 			// SSH stdin script mode - send the full bash script via stdin
@@ -402,8 +425,9 @@ export function runProcess(
 				sshRemotePidFile ? withRemotePidRecord(sshStdinScript, sshRemotePidFile) : sshStdinScript
 			);
 			child.stdin?.end();
-		} else if (stdinPrompt && sshRemoteEnabled) {
-			// SSH small prompt mode - send raw prompt via stdin
+		} else if (stdinPrompt) {
+			// SSH small prompt mode, or a local Windows `.cmd` shim - send the raw
+			// prompt via stdin
 			child.stdin?.write(stdinPrompt);
 			child.stdin?.end();
 		} else {

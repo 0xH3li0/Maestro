@@ -459,6 +459,37 @@ describe('startCrossAgentRequest dispatch lifecycle', () => {
 		}
 	});
 
+	// The consult runs in the target's own cwd, which a TUI target may trust (#1872).
+	it("lets a TUI target accept claude's folder trust for its own cwd", async () => {
+		const { dispatch } = harness();
+		await dispatch();
+
+		const config = vi.mocked(spawnGroupChatAgent).mock.calls[0][0];
+		expect(config.cwd).toBe('/proj');
+		expect(config.acceptWorkspaceTrust).toBe(true);
+	});
+
+	it('names the untrusted folder when maestro-p exits 7, not "no visible output"', async () => {
+		const { chunks, dispatch, emitExit } = harness();
+		await dispatch();
+
+		emitExit(7);
+
+		expect(chunks[0].error).toContain('has not trusted the folder /proj');
+		expect(chunks[0].error).not.toContain('no visible output');
+	});
+
+	it('keeps the generic message for exit 7 from a non-Claude target', async () => {
+		const { chunks, dispatch, emitExit } = harness({
+			getTargetSession: () => ({ ...targetSession(), toolType: 'codex' }),
+		});
+		await dispatch();
+
+		emitExit(7);
+
+		expect(chunks[0].error).toContain('produced no visible output (exit code 7)');
+	});
+
 	it('kills the target and flushes partial output once it goes silent', async () => {
 		const { chunks, dispatch, emitData, processManager } = harness();
 		await dispatch();
