@@ -83,37 +83,72 @@ export function createPluginHeadlessAgentRunner(
 					: 'Authenticated plugin tools unavailable',
 			};
 		}
-		const customBinary =
-			local && agent.customPath ? await checkCustomPath(agent.customPath) : undefined;
-		const detection = local
-			? customBinary
-				? { available: customBinary.exists, path: customBinary.path }
-				: await deps.detectAgent(agent.toolType)
-			: undefined;
-		if (local && !detection?.available) {
-			return {
-				success: false,
-				response: null,
-				sessionId: null,
-				error: `Agent CLI unavailable: ${agent.toolType}`,
-			};
-		}
-		// Complete asynchronous preparation before issuing time-bounded run authority.
-		const systemPrompt = signal?.aborted ? undefined : await deps.prepareSystemPrompt(agent);
-		const remainingMs = Math.max(0, deadlineAt - Date.now());
-		const completionTtlMs = Math.min(
-			HEADLESS_RUN_COMPLETION_TIMEOUT_MS,
-			remainingMs + HEADLESS_RUN_CLEANUP_MARGIN_MS
-		);
-		const runToken =
-			local && deps.hasPluginTools() && !signal?.aborted && remainingMs > 0
-				? deps.issueRunToken(agent.id, completionTtlMs, receiptToolId)
-				: undefined;
+		let runToken: string | undefined;
 		let pluginRunProofFile: string | undefined;
 		let releaseActivity: (() => void) | undefined;
 		let settled = false;
 		let conversationId = providerSessionId;
 		try {
+			let stopPreflight: () => void = () => {};
+			const stopped = new Promise<undefined>((resolve) => {
+				stopPreflight = () => resolve(undefined);
+			});
+			const timer = setTimeout(stopPreflight, Math.max(0, deadlineAt - Date.now()));
+			timer.unref?.();
+			signal?.addEventListener('abort', stopPreflight, { once: true });
+			const isStopped = () => signal?.aborted || Date.now() >= deadlineAt;
+			let prepared;
+			try {
+				prepared = await Promise.race([
+					(async () => {
+						if (isStopped()) return undefined;
+						const customBinary =
+							local && agent.customPath ? await checkCustomPath(agent.customPath) : undefined;
+						if (isStopped()) return undefined;
+						const detection = local
+							? customBinary
+								? { available: customBinary.exists, path: customBinary.path }
+								: await deps.detectAgent(agent.toolType)
+							: undefined;
+						if (isStopped()) return undefined;
+						const systemPrompt =
+							local && !detection?.available ? undefined : await deps.prepareSystemPrompt(agent);
+						return { detection, systemPrompt };
+					})(),
+					stopped,
+				]);
+			} finally {
+				clearTimeout(timer);
+				signal?.removeEventListener('abort', stopPreflight);
+			}
+			if (!prepared || isStopped()) {
+				return {
+					success: false,
+					response: null,
+					sessionId: null,
+					error: signal?.aborted
+						? 'Agent run cancelled'
+						: 'Agent run stopped: absolute runtime ceiling exceeded',
+				};
+			}
+			const { detection, systemPrompt } = prepared;
+			if (local && !detection?.available) {
+				return {
+					success: false,
+					response: null,
+					sessionId: null,
+					error: `Agent CLI unavailable: ${agent.toolType}`,
+				};
+			}
+			const remainingMs = Math.max(0, deadlineAt - Date.now());
+			const completionTtlMs = Math.min(
+				HEADLESS_RUN_COMPLETION_TIMEOUT_MS,
+				remainingMs + HEADLESS_RUN_CLEANUP_MARGIN_MS
+			);
+			runToken =
+				local && deps.hasPluginTools() && !signal?.aborted && remainingMs > 0
+					? deps.issueRunToken(agent.id, completionTtlMs, receiptToolId)
+					: undefined;
 			pluginRunProofFile = runToken
 				? createPluginRunProofFile(runToken, completionTtlMs)
 				: undefined;

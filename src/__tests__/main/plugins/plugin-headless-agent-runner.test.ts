@@ -809,3 +809,63 @@ it.each(['success', 'error', 'throw', 'cancel-before-spawn'] as const)(
 		}
 	}
 );
+
+it.each([
+	['detection', 'cancel'],
+	['detection', 'deadline'],
+	['prompt', 'cancel'],
+	['prompt', 'deadline'],
+] as const)('bounds stalled %s preparation by %s without late authority', async (stage, stop) => {
+	vi.useFakeTimers();
+	const controller = new AbortController();
+	let finish!: () => void;
+	const stalled = new Promise<void>((resolve) => {
+		finish = resolve;
+	});
+	const spawn = vi.fn();
+	const issueRunToken = vi.fn();
+	const prepareSystemPrompt = vi.fn(async () => {
+		if (stage === 'prompt') await stalled;
+		return undefined;
+	});
+	const run = createPluginHeadlessAgentRunner({
+		getAgent: () => agent,
+		detectAgent: async () => {
+			if (stage === 'detection') await stalled;
+			return { available: true };
+		},
+		hasPluginTools: () => true,
+		spawn,
+		prepareSystemPrompt,
+		issueRunToken,
+		revokeRunToken: vi.fn(),
+		cliScriptPath: () => '/cli.js',
+		audit: vi.fn(),
+	});
+	try {
+		const pending = run(agent.id, 'hello', undefined, controller.signal);
+		await vi.advanceTimersByTimeAsync(0);
+		if (stop === 'cancel') controller.abort();
+		else await vi.advanceTimersByTimeAsync(6 * 60 * 60_000);
+		const result = await Promise.race([
+			pending,
+			Promise.resolve().then(() => Promise.resolve('still waiting')),
+		]);
+		expect(result).toMatchObject({
+			success: false,
+			error:
+				stop === 'cancel'
+					? 'Agent run cancelled'
+					: 'Agent run stopped: absolute runtime ceiling exceeded',
+		});
+		finish();
+		await vi.advanceTimersByTimeAsync(0);
+		expect(spawn).not.toHaveBeenCalled();
+		expect(issueRunToken).not.toHaveBeenCalled();
+		if (stage === 'detection') expect(prepareSystemPrompt).not.toHaveBeenCalled();
+		expect(vi.getTimerCount()).toBe(0);
+	} finally {
+		finish();
+		vi.useRealTimers();
+	}
+});
