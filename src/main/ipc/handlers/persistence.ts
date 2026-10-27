@@ -651,19 +651,20 @@ export function registerPersistenceHandlers(
 					};
 				const storedTabs = new Map<string, Record<string, unknown>>();
 				for (const tab of session.aiTabs ?? []) storedTabs.set(tab.id, tab);
-				const aiTabs = (live.tabInventory ?? session.aiTabs ?? []).map(
-					({ clearRuntimeFields, ...tab }) => {
-						const current: Record<string, unknown> = {
-							...storedTabs.get(tab.id),
-							...tab,
-							logs: [],
-							inputValue: '',
-							stagedImages: [],
-						};
-						for (const field of clearRuntimeFields ?? []) delete current[field];
-						return current;
-					}
-				);
+				const inventory: Array<
+					Record<string, unknown> & { id: string; clearRuntimeFields?: string[] }
+				> = live.tabInventory ?? session.aiTabs ?? [];
+				const aiTabs = inventory.map(({ clearRuntimeFields, ...tab }) => {
+					const current: Record<string, unknown> = {
+						...storedTabs.get(tab.id),
+						...tab,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+					};
+					for (const field of clearRuntimeFields ?? []) delete current[field];
+					return current;
+				});
 				const current = { ...session, ...live.runtime };
 				for (const field of live.clearRuntimeFields ?? []) delete current[field];
 				return {
