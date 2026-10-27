@@ -25,7 +25,6 @@ import semver from 'semver';
  * consented bounded original-audio staging for supported local agent sends.
  * 1.29.0 adds generic verified invocations, consented TLS, opaque secrets,
  * confirmed records, durable plugin Cue events and parentSessionId metadata.
- * Shared Dictation API1.27 (PR1880) remains a release prerequisite.
  * 1.25.0 adds resumable
  * agents.send with public progress, verified plugin-tool caller identity, and
  * isolated agents.generateTitle. 1.24.0 added host-mediated services.
