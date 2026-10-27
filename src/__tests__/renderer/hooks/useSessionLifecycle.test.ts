@@ -1585,6 +1585,43 @@ describe('useSessionLifecycle', () => {
 	// ======================================================================
 
 	describe('groups persistence effect', () => {
+		it('persists loaded groups after a group change', async () => {
+			const groups = [{ id: 'g1', name: 'Group 1', emoji: '', collapsed: false }];
+			useSessionStore.setState({ groups, initialLoadComplete: true, groupsLoaded: true });
+			renderHook(() => useSessionLifecycle(createDeps()));
+			expect(window.maestro.groups.setAll).not.toHaveBeenCalled();
+			act(() => {
+				useSessionStore.setState({
+					groups: [...groups, { id: 'g2', name: 'Group 2', emoji: '', collapsed: false }],
+				});
+			});
+			await vi.waitFor(() =>
+				expect(window.maestro.groups.setAll).toHaveBeenCalledWith(
+					[
+						{ id: 'g1', name: 'Group 1', emoji: '', collapsed: false },
+						{ id: 'g2', name: 'Group 2', emoji: '', collapsed: false },
+					],
+					expect.anything()
+				)
+			);
+		});
+
+		it('persists a successfully loaded empty registry when it first changes', async () => {
+			useSessionStore.setState({ groups: [], initialLoadComplete: true, groupsLoaded: true });
+			renderHook(() => useSessionLifecycle(createDeps()));
+			expect(window.maestro.groups.setAll).not.toHaveBeenCalled();
+			act(() => {
+				useSessionStore.setState({
+					groups: [{ id: 'g1', name: 'Group 1', emoji: '', collapsed: false }],
+				});
+			});
+			await vi.waitFor(() =>
+				expect(window.maestro.groups.setAll).toHaveBeenCalledWith(
+					[{ id: 'g1', name: 'Group 1', emoji: '', collapsed: false }],
+					expect.anything()
+				)
+			);
+		});
 		it('does not persist groups before initialLoadComplete', () => {
 			const groups = [{ id: 'g1', name: 'Group 1', emoji: '', collapsed: false }];
 			useSessionStore.setState({

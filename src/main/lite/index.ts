@@ -468,7 +468,7 @@ export async function startLite(): Promise<void> {
 		}
 		const retainedView = view;
 		const retainView = preserveView && !!retainedView;
-		const closing = teardown(!retainView);
+		const closing = teardown(retainView);
 		const version = connectionVersion;
 		await closing;
 		if (version !== connectionVersion || window.isDestroyed()) {

@@ -198,8 +198,9 @@ The failed read leaves saved agents untouched and keeps persistence disabled
 until loading succeeds. An uncertain submission must be checked on the host
 before it is submitted again.
 A received save rejection is reported without permanently blocking later saves.
-A save with a lost acknowledgement remains held until the host view is reloaded;
-the rejected or uncertain write is never automatically resent.
+A save with a lost acknowledgement blocks further saves until the client finishes
+in-place authoritative recovery; the rejected or uncertain write is never
+automatically resent.
 
 A failed process start does not create a running capture. Host administration
 settings, including Encore feature controls, remain unavailable to browser/Lite
@@ -419,6 +420,8 @@ To access Maestro from outside your local network (e.g., on mobile data or from 
 <Tip>
 The Remote tab automatically activates when the tunnel connects successfully.
 </Tip>
+
+You can also do all of this from a terminal: `maestro-cli live on --tunnel` starts the web interface and the tunnel, `maestro-cli live status` prints both URLs, and `maestro-cli live off` stops them. The LIVE panel follows whatever the CLI does. See [CLI: Live Mode](./cli#live-mode-live).
 
 ## Custom Port Configuration
 

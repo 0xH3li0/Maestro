@@ -799,6 +799,7 @@ async function main() {
 	await invoke(lite.webContents, 'lite:control', 'reconnect');
 	await until(async () => (await state()).status.startsWith('connected'), 'remembered reconnect');
 	assert.equal(hostShell.host.devices.list('aster-id').length, 1);
+	assert.equal(lite.contentView.children.length, 1);
 	await until(
 		() => js(host.webContents, '!document.querySelector("#manage-access").hidden'),
 		'pairing complete navigation'

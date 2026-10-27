@@ -613,7 +613,7 @@ export function triggerCustomNotification(
 	// The command runs on the HOST, and the desktop renderer that owns the
 	// side effects fires it. A browser client firing it too would double the
 	// cue, and the bridge refuses `notification:speak` anyway.
-	if (!shouldFire || isWebDesktop()) return false;
+	if (!shouldFire) return false;
 
 	if (typeof window !== 'undefined' && window.maestro?.notification?.speak) {
 		// Stay 2-arg when no context is provided so callers (and their tests) that

@@ -19,7 +19,7 @@ import type { Session, SessionState, ToolType, LogEntry } from '../../types';
 import { isLimitError } from '../../../shared/types';
 import { updateSessionWith, useSessionStore } from '../../stores/sessionStore';
 import { useGroupChatStore } from '../../stores/groupChatStore';
-import { useSettingsStore } from '../../stores/settingsStore';
+import { loadAllSettings, useSettingsStore } from '../../stores/settingsStore';
 import { isAgentDormant } from '../../../shared/agentVisibility';
 import { gitService } from '../../services/git';
 import { generateId } from '../../utils/ids';
@@ -43,6 +43,7 @@ import {
 } from '../../utils/activeSessionPersistence';
 import { useSessionLifecycleSync } from './useSessionLifecycleSync';
 import { applyRuntime } from './useSessionTranscriptSync';
+import type { SessionRuntimeSnapshot } from '../../../shared/sessionTranscript';
 import { useEventListener } from '../utils/useEventListener';
 import {
 	SESSION_PERSISTENCE_BASELINE_EVENT,
@@ -58,12 +59,62 @@ import { releaseConnectionHeldQueueItems } from '../../utils/executionQueue';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import { interruptConsultHolds } from '../../services/crossAgentConsultHold';
 import { applyAutoRunMirrorSnapshot } from '../batch/useAutoRunStateMirror';
+import { startReopenedTabContentLoader } from '../../services/reopenedTabContent';
+import { closedTabHistoryContext, projectClosedTabHistory } from '../../../shared/closedTabHistory';
 import {
 	MAX_PERSISTED_AI_COMMAND_HISTORY,
 	mergeDeferredItems,
 } from '../../../shared/deferredSessionContent';
 
 const CONNECTION_RECONCILE_RETRY_MS = 1000;
+
+/**
+ * The closed-tab stack a restored agent starts with: the stored entries in their
+ * stored form, so the first flush writes back exactly what main holds. Missing or
+ * malformed data from an older store yields an empty stack.
+ */
+function restoreClosedTabHistory(session: Session): Session['unifiedClosedTabHistory'] {
+	return (
+		projectClosedTabHistory<Session['unifiedClosedTabHistory'][number]>(
+			session.unifiedClosedTabHistory,
+			closedTabHistoryContext(session)
+		) ?? []
+	);
+}
+
+/** The session fields every tab helper iterates with `.map` / `for...of`. */
+const TAB_COLLECTION_FIELDS = [
+	'aiTabs',
+	'filePreviewTabs',
+	'browserTabs',
+	'terminalTabs',
+	'unifiedTabOrder',
+	'tabGroups',
+] as const;
+
+/**
+ * Replace any tab collection that was persisted as something other than an
+ * array with an empty one. `undefined` / `null` are left alone: every reader
+ * already defaults those with `?? []`. A truthy non-array (an object) is the
+ * case that defeats that default, so `(session.tabGroups || []).map` throws.
+ *
+ * It has to run before anything else in restoreSession and again on its error
+ * fallback: when restoration threw on such a field, the fallback used to hand
+ * the raw session to the store, and the tab strip then threw on every render,
+ * so the app crashed on each launch (MAESTRO-16B).
+ */
+function withArrayTabCollections(session: Session): Session {
+	let repaired: Session | null = null;
+	for (const field of TAB_COLLECTION_FIELDS) {
+		const value: unknown = session[field];
+		if (value == null || Array.isArray(value)) continue;
+		logger.warn(
+			`[restoreSession] Session ${session.id} has a non-array ${field}; resetting it to []`
+		);
+		repaired = { ...(repaired ?? session), [field]: [] };
+	}
+	return repaired ?? session;
+}
 
 /** Ids of the terminal tabs that are tiled into one of the session's tab groups. */
 function collectGroupedTerminalIds(session: { tabGroups?: Session['tabGroups'] }): Set<string> {
@@ -263,6 +314,37 @@ export function useSessionRestoration(): SessionRestorationReturn {
 		[ownedGate]
 	);
 
+	// Reconnect also has to refresh background agents: selected deferred content
+	// and process liveness cannot tell us whether the host still needs input.
+	// Use the same private, metadata-only snapshots and stale-turn guard as
+	// deferred runtime hydration; never load background transcripts here.
+	const refreshWebRuntime = useCallback(async () => {
+		if (!isWebDesktop() || !useSessionStore.getState().sessionsReadOk) return;
+		const baselines = new Map(
+			useSessionStore.getState().sessions.map((session) => [session.id, session])
+		);
+		try {
+			const bootstrap = await window.maestro.sessions.getBootstrap();
+			for (const session of bootstrap) {
+				const baseline = baselines.get(session.id);
+				if (!baseline) continue;
+				for (const snapshot of session.transcriptSnapshots ?? []) {
+					if (snapshot.sessionId !== session.id || snapshot.tabId) continue;
+					updateSessionWith(session.id, (current) => {
+						const hydrated = applyRuntime(current, snapshot, baseline);
+						return hydrated === current
+							? current
+							: {
+									...hydrated,
+									unifiedTabOrder: getRepairedUnifiedTabOrder(hydrated),
+								};
+					});
+				}
+			}
+		} catch (error) {
+			logger.warn('Failed to refresh owning host runtime after reconnect', 'Sessions', error);
+		}
+	}, []);
 	const loadActiveDeferredContent = useCallback(async (): Promise<boolean> => {
 		if (!isWebDesktop() || !useSessionStore.getState().sessionsReadOk) return true;
 		const { sessions, activeSessionId } = useSessionStore.getState();
@@ -387,9 +469,9 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				return false;
 			})
 			.then(async (loaded) => {
-				if (generation !== deferredLoadGeneration.current) return false;
 				if (deferredLoadsInFlight.current.get(key) === work)
 					deferredLoadsInFlight.current.delete(key);
+				if (generation !== deferredLoadGeneration.current) return false;
 				const remainingLoaded = await loadActiveDeferredContent();
 				return loaded && remainingLoaded;
 			});
@@ -404,6 +486,13 @@ export function useSessionRestoration(): SessionRestorationReturn {
 		return unsubscribe;
 	}, [loadActiveDeferredContent]);
 
+	// A closed tab restored from a stored entry comes back without its transcript
+	// or file content (the entry is a pointer); read it back once it is visible.
+	// The web-desktop equivalent is the deferred-content loader above.
+	useEffect(() => {
+		if (isWebDesktop()) return;
+		return startReopenedTabContentLoader();
+	}, []);
 	// --- fetchGitInfoInBackground ---
 	const fetchGitInfoInBackground = useCallback(
 		async (sessionId: string, cwd: string, sshRemoteId: string | undefined) => {
@@ -452,7 +541,11 @@ export function useSessionRestoration(): SessionRestorationReturn {
 	// --- restoreSession ---
 	const restoreSession = useCallback(async (session: Session): Promise<Session> => {
 		try {
+			// A tab collection persisted as a non-array would throw in every helper
+			// below and then in the tab strip, so coerce it before anything reads it.
+			session = withArrayTabCollections(session);
 			session = restoreClientSessionView(session);
+
 			// Migration: tag snoozes parked before SnoozedTabEntry carried a kind.
 			// An untagged entry falls through every per-kind switch, and the wake
 			// path would clear the snooze without restoring the tab.
@@ -557,7 +650,9 @@ export function useSessionRestoration(): SessionRestorationReturn {
 					browserTabs: [],
 					activeBrowserTabId: null,
 					unifiedTabOrder: [{ type: 'ai' as const, id: defaultTabId }],
-					unifiedClosedTabHistory: [],
+					// Keep the stored closed tabs so Cmd+Shift+T can bring back what the
+					// corrupted record lost.
+					unifiedClosedTabHistory: restoreClosedTabHistory(session),
 				};
 			}
 
@@ -862,13 +957,14 @@ export function useSessionRestoration(): SessionRestorationReturn {
 					agentError: isLimitPause ? correctedSession.agentError : undefined,
 					agentErrorPaused: isLimitPause ? true : false,
 					closedTabHistory: [],
+					unifiedClosedTabHistory: restoreClosedTabHistory(correctedSession),
 					unifiedTabOrder: repairedUnifiedTabOrder,
 				})
 			);
 		} catch (error) {
 			logger.error(`Error restoring session ${session.id}:`, undefined, error);
 			return {
-				...session,
+				...withArrayTabCollections(session),
 				aiPid: -1,
 				terminalPid: 0,
 				state: 'error' as SessionState,
@@ -884,6 +980,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 			if (!useSessionStore.getState().sessionsReadOk) retrySessionLoad.current();
 			void loadActiveDeferredContent();
 			void reattachLiveAiTurns();
+			void refreshWebRuntime();
 			return;
 		}
 		detail.waitUntil(
@@ -892,12 +989,12 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				useSessionStore.setState((state) => ({
 					sessionReconciliationGeneration: state.sessionReconciliationGeneration + 1,
 				}));
-				deferredLoadGeneration.current++;
 				const [savedSessions, groups, groupChats, autoRuns] = await Promise.all([
 					window.maestro.sessions.getBootstrap(),
 					window.maestro.groups.getAll(),
 					window.maestro.groupChat.list(),
 					window.maestro.web.getAutoRunStates(),
+					loadAllSettings(),
 				]);
 				signal.throwIfAborted();
 				if (savedSessions.some((session) => session.deferredContent?.ownerUnavailable))
@@ -985,6 +1082,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 					throw new Error('Visible host conversation recovery failed');
 				signal.throwIfAborted();
 				await reattachLiveAiTurns(signal);
+				await refreshWebRuntime();
 				signal.throwIfAborted();
 				// A lost save is resolved by this snapshot, never by re-sending the old diff.
 				window.dispatchEvent(
@@ -1013,8 +1111,17 @@ export function useSessionRestoration(): SessionRestorationReturn {
 			setSessionsLoaded(false);
 			try {
 				window.__updateSplash?.(50, 'Seating the musicians...');
+				const runtimeSnapshots = new Map<string, SessionRuntimeSnapshot>();
 				const savedSessions = isWebDesktop()
-					? await window.maestro.sessions.getBootstrap()
+					? (await window.maestro.sessions.getBootstrap()).map(
+							({ transcriptSnapshots, ...session }) => {
+								for (const snapshot of transcriptSnapshots ?? []) {
+									if (snapshot.sessionId === session.id && !snapshot.tabId)
+										runtimeSnapshots.set(session.id, snapshot);
+								}
+								return session;
+							}
+						)
 					: await window.maestro.sessions.getAll();
 				if (generation !== deferredLoadGeneration.current) return;
 
@@ -1025,7 +1132,15 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				);
 				// Handle sessions
 				if (savedSessions && savedSessions.length > 0) {
-					const restoredSessions = await Promise.all(savedSessions.map((s) => restoreSession(s)));
+					const restoredSessions = await Promise.all(
+						savedSessions.map(async (session) => {
+							const restored = await restoreSession(session);
+							const snapshot = runtimeSnapshots.get(session.id);
+							if (!snapshot) return restored;
+							const hydrated = applyRuntime(restored, snapshot);
+							return { ...hydrated, unifiedTabOrder: getRepairedUnifiedTabOrder(hydrated) };
+						})
+					);
 					if (generation !== deferredLoadGeneration.current) return;
 					setSessions(restoredSessions);
 

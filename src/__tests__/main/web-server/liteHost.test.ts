@@ -305,6 +305,32 @@ describe('Lite host handshake and readiness', () => {
 			vi.useRealTimers();
 		}
 	});
+	it('shares an in-flight workflow read and retries after its timeout clears', async () => {
+		vi.useFakeTimers();
+		try {
+			installWorkflowFixture();
+			let calls = 0;
+			handlers.set('sessions:getBootstrap', () => {
+				calls++;
+				return new Promise(() => {});
+			});
+			const options = [
+				{ sessions: true, terminal: true, files: true, browserRelay: false },
+				{ id: 'probe', cli: false },
+			] as const;
+			const first = qualifyRemoteWorkflows(...options);
+			const second = qualifyRemoteWorkflows(...options);
+			expect(calls).toBe(1);
+			await vi.advanceTimersByTimeAsync(3001);
+			await Promise.all([first, second]);
+			const third = qualifyRemoteWorkflows(...options);
+			expect(calls).toBe(2);
+			await vi.advanceTimersByTimeAsync(3001);
+			await third;
+		} finally {
+			vi.useRealTimers();
+		}
+	});
 	it('uses the local bootstrap identity without adopting synced installation identity', () => {
 		state.settings.set('installationId', 'synced-other-machine');
 		const firstStore = {

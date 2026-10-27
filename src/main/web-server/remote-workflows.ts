@@ -110,27 +110,30 @@ const READ_PROBES: Partial<
 	],
 };
 
-async function probeRead(
+const probesInFlight = new Map<string, Promise<boolean>>();
+function probeRead(
 	client: Pick<WebClient, 'id' | 'user' | 'cli'>,
 	channel: string,
 	accepts: (value: unknown) => boolean
 ): Promise<boolean> {
-	return new Promise((resolve) => {
-		const timer = setTimeout(() => resolve(false), 3000);
-		// Use the real dispatcher, including acting-user attribution, path guards,
-		// desktop-only restrictions and result filtering. Never probe a mutation.
-		void handleBridgeInvoke(
-			client,
-			{ type: 'bridge.invoke', requestId: channel, channel, args: [] },
-			(_client, payload) => {
-				clearTimeout(timer);
-				resolve(record(payload) && payload.ok === true && accepts(payload.result));
-			}
-		).catch(() => {
-			clearTimeout(timer);
-			resolve(false);
-		});
-	});
+	const existing = probesInFlight.get(channel);
+	if (existing) return existing;
+	const { promise, resolve } = Promise.withResolvers<boolean>();
+	probesInFlight.set(channel, promise);
+	const finish = (result: boolean) => {
+		clearTimeout(timer);
+		probesInFlight.delete(channel);
+		resolve(result);
+	};
+	const timer = setTimeout(() => finish(false), 3000);
+	// Use the real dispatcher, including acting-user attribution, path guards,
+	// desktop-only restrictions and result filtering. Never probe a mutation.
+	void handleBridgeInvoke(
+		client,
+		{ type: 'bridge.invoke', requestId: channel, channel, args: [] },
+		(_client, payload) => finish(record(payload) && payload.ok === true && accepts(payload.result))
+	).catch(() => finish(false));
+	return promise;
 }
 
 export async function qualifyRemoteWorkflows(
