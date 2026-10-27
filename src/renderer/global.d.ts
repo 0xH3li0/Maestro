@@ -301,7 +301,11 @@ interface MaestroAPI {
 	};
 	sessions: {
 		getAll: () => Promise<any[]>;
-		getBootstrap: () => Promise<any[]>;
+		getBootstrap: () => Promise<
+			(import('./types').Session & {
+				transcriptSnapshots?: import('../shared/sessionTranscript').SessionRuntimeSnapshot[];
+			})[]
+		>;
 		getDeferredContent: (
 			sessionId: string,
 			tabId: string | null,
@@ -368,7 +372,10 @@ interface MaestroAPI {
 	};
 	groups: {
 		getAll: () => Promise<any[]>;
-		setAll: (groups: any[]) => Promise<boolean>;
+		setAll: (
+			groups: import('../shared/types').Group[],
+			baseline: import('../shared/types').Group[]
+		) => Promise<boolean>;
 	};
 	process: {
 		onRemoteStartAutoRun: (
@@ -496,6 +503,12 @@ interface MaestroAPI {
 		) => () => void;
 		/** `signal` is set only when the process was killed by a signal, never on a clean exit. */
 		onExit: (callback: (sessionId: string, code: number, signal?: number) => void) => () => void;
+		getPendingPermissions: () => Promise<
+			import('../shared/pendingPermissions').PendingPermissionSnapshot
+		>;
+		onPendingPermissionsChanged: (
+			callback: (snapshot: import('../shared/pendingPermissions').PendingPermissionSnapshot) => void
+		) => () => void;
 		onPermissionRequest: (
 			callback: (request: {
 				requestId: string;
@@ -1477,6 +1490,9 @@ interface MaestroAPI {
 		) => Promise<{ success: boolean }>;
 	};
 	web: {
+		getAutoRunStates: () => Promise<
+			Record<string, import('../shared/autoRunBroadcast').AutoRunBroadcastState>
+		>;
 		onLiteReady: (getReady: () => boolean) => () => void;
 		startAutoRun: (
 			sessionId: string,
