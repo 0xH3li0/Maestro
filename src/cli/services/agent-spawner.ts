@@ -79,7 +79,10 @@ import {
 	type ClaudeSpawnCoreDeps,
 	type PackagedAppHost,
 } from '../../shared/maestro-lib/launch/interactive-mode';
-import type { HarnessControlMode } from '../../shared/maestro-lib/providers/native-control';
+import {
+	resolveHarnessControlMode,
+	type HarnessControlMode,
+} from '../../shared/maestro-lib/providers/native-control';
 import type {
 	HarnessInteractionRequest,
 	HarnessInteractionResolution,
@@ -1775,7 +1778,11 @@ async function spawnAgentOnce(
 ): Promise<AgentResult> {
 	if (options?.signal?.aborted) return interruptedResult();
 
-	if (options?.harnessControlMode === 'native') {
+	if (
+		options &&
+		resolveHarnessControlMode({ toolType, harnessControlMode: options.harnessControlMode }) ===
+			'native'
+	) {
 		if (options.sshRemoteConfig?.enabled) {
 			return spawnFailureResult('Native CLI control is local-only; use the current SSH transport');
 		}

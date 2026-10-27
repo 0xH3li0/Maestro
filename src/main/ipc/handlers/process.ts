@@ -52,6 +52,15 @@ const handlerOpts = (
 	...extra,
 });
 
+/** Extract a fail-closed owner from either an Electron or bridge invocation event. */
+function harnessControlOwner(event: { sender?: { id: number }; clientId?: unknown }): {
+	webContentsId?: number;
+	bridgeClientId?: string;
+} {
+	if (typeof event.clientId === 'string') return { bridgeClientId: event.clientId };
+	return { webContentsId: event.sender?.id };
+}
+
 // AgentConfigsData imported from stores/types
 
 /**
@@ -168,10 +177,10 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 		}
 	);
 	ipcMain.handle('harnessControl:listPending', (event) =>
-		pendingHarnessInteractions(event.sender.id)
+		pendingHarnessInteractions(harnessControlOwner(event))
 	);
 	ipcMain.handle('harnessControl:respond', (event, response: unknown) =>
-		resolveHarnessInteractionResponse(response, event.sender.id)
+		resolveHarnessInteractionResponse(response, harnessControlOwner(event))
 	);
 
 	// Spawn a new process for a session
