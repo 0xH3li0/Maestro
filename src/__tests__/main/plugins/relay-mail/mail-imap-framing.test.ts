@@ -72,6 +72,48 @@ describe('host-private incremental IMAP framing', () => {
 		}
 	);
 
+	it.each([
+		'todo+work',
+		'important!',
+		'a&b',
+		'a[b',
+		'a}b',
+		"a'b",
+		'a/b',
+		'a=b',
+		'a`b',
+		'+'.repeat(64),
+		'\\X+Extension',
+	])('accepts bounded RFC 3501 flag atom %s', (flag) => {
+		const decoder = new ImapResponseDecoder();
+		const line = `* FLAGS (\\Seen ${flag})`;
+		expect(decoder.push(Buffer.from(`${line}\r\n`))).toEqual([
+			{ kind: 'data', name: 'FLAGS', parts: [line] },
+		]);
+		decoder.finish();
+	});
+
+	it.each([
+		'bad%flag',
+		'bad*flag',
+		'bad"flag',
+		'bad\\flag',
+		'bad{flag',
+		'bad]flag',
+		'bad(flag',
+		'bad)flag',
+		' leading',
+		'trailing ',
+		'two  flags',
+		'+'.repeat(65),
+		'\\' + '+'.repeat(65),
+	])('refuses invalid or oversized flag atom %j', (flag) => {
+		const decoder = new ImapResponseDecoder();
+		expect(() => decoder.push(Buffer.from(`* FLAGS (${flag})\r\n`))).toThrowError(
+			new ImapFramingError('MAIL_PROTOCOL')
+		);
+	});
+
 	it('transfers distinct literal ownership, including empty and multiple parts', () => {
 		const wire = Buffer.from('* 1 FETCH (A {0}\r\n B {2}\r\nZZ C {2}\r\nYY)\r\n');
 		const decoder = new ImapResponseDecoder();

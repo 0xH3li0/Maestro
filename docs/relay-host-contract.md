@@ -297,6 +297,10 @@ plus validated HIGHESTMODSEQ/NOMODSEQ metadata during EXAMINE
 ([RFC 7162](https://www.rfc-editor.org/rfc/rfc7162.html)). These responses neither
 enable extensions nor grant authority. LOGINDISABLED in the greeting stops the
 read before LOGIN or secret use. Unknown or malformed responses still fail closed.
+Flag keywords and extensions accept RFC 3501 atom characters, bounded to 64
+characters per atom. Only PERMANENTFLAGS accepts the exact `\*` metadata marker;
+embedded wildcards and malformed atoms remain invalid. This metadata never
+changes the fixed read-only command set.
 Search requests retain their explicit `fromUid`/`toUid` span: more than 1,024
 returned UIDs fail with `MAIL_LIMIT`; the Host never silently narrows the search
 and risks hiding matches. Callers may explicitly choose smaller UID windows.

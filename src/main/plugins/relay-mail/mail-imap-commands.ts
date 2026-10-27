@@ -5,7 +5,7 @@ import { Buffer } from 'node:buffer';
  * See RFC 3501 sections 6/7 and the documented restricted transport grammar.
  */
 import { ImapConnectionError } from './mail-errors';
-import { IMAP_FRAMING_LIMITS, type ImapResponseFrame } from './mail-imap-framing';
+import { IMAP_FRAMING_LIMITS, isImapFlagList, type ImapResponseFrame } from './mail-imap-framing';
 
 export const IMAP_COMMAND_LIMITS = Object.freeze({
 	username: 256,
@@ -229,11 +229,7 @@ export function validateImapStatusCode(
 		assertImapUid(code[2], 'MAIL_PROTOCOL');
 		return;
 	}
-	if (
-		name === 'PERMANENTFLAGS' &&
-		/^\((?:\\?[A-Za-z0-9_.$*-]{1,64}(?: \\?[A-Za-z0-9_.$*-]{1,64})*)?\)$/.test(code[2] ?? '')
-	)
-		return;
+	if (name === 'PERMANENTFLAGS' && isImapFlagList(code[2] ?? '', true)) return;
 	fail();
 }
 

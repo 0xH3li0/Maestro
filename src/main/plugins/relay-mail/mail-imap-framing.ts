@@ -16,6 +16,26 @@ export const IMAP_FRAMING_LIMITS = Object.freeze({
 	depth: 16,
 });
 
+/** Bounded RFC 3501 flag atoms; only PERMANENTFLAGS permits the exact \\* marker. */
+export function isImapFlagList(value: string, allowPermanentWildcard = false): boolean {
+	if (
+		value.length > IMAP_FRAMING_LIMITS.lineBytes ||
+		!value.startsWith('(') ||
+		!value.endsWith(')')
+	)
+		return false;
+	if (value === '()') return true;
+	// ATOM-CHAR excludes controls, space, (){, list wildcards, quotes, backslash and ].
+	return value
+		.slice(1, -1)
+		.split(' ')
+		.every(
+			(flag) =>
+				(allowPermanentWildcard && flag === '\\*') ||
+				/^\\?[\x21\x23-\x24\x26-\x27\x2b-\x5b\x5e-\x7a\x7c-\x7e]{1,64}$/.test(flag)
+		);
+}
+
 type FramingLimits = { -readonly [K in keyof typeof IMAP_FRAMING_LIMITS]: number };
 type Status = 'OK' | 'NO' | 'BAD' | 'BYE';
 
@@ -201,9 +221,7 @@ export class ImapResponseDecoder {
 				// The command layer validates these bounded opaque tokens only during LOGIN.
 				return { kind: 'data', name: 'CAPABILITY', parts: [text] };
 			}
-			if (
-				/^\* FLAGS \((?:\\?[A-Za-z0-9_.$-]{1,64}(?: \\?[A-Za-z0-9_.$-]{1,64})*)?\)$/i.test(text)
-			) {
+			if (/^\* FLAGS /i.test(text) && isImapFlagList(text.slice(8))) {
 				return { kind: 'data', name: 'FLAGS', parts: [text] };
 			}
 			const fetch = /^\* ([1-9][0-9]{0,9}) FETCH \(/i.exec(text);

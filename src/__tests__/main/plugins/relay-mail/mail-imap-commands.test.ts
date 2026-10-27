@@ -257,6 +257,29 @@ describe('real framed IMAP command response semantics', () => {
 		command.bytes.fill(0);
 	});
 	it.each([
+		'todo+work',
+		'important!',
+		'a&b',
+		'a[b',
+		'a}b',
+		"a'b",
+		'a/b',
+		'a=b',
+		'a`b',
+		'+'.repeat(64),
+		'\\X+Extension',
+		'\\*',
+	])('accepts bounded passive PERMANENTFLAGS atom %s', (flag) => {
+		const command = prepareImapCommand('A1', { kind: 'examine', mailbox: 'INBOX' });
+		const wire = `* FLAGS ()\r\n* 0 EXISTS\r\n* 0 RECENT\r\n* OK [UIDVALIDITY 1] valid\r\n* OK [PERMANENTFLAGS (\\Seen ${flag})] metadata\r\nA1 OK [READ-ONLY] done\r\n`;
+		expect(validateImapCommandResult(command, decode(wire))).toEqual({
+			kind: 'examine',
+			uidValidity: '1',
+		});
+		command.bytes.fill(0);
+	});
+
+	it.each([
 		'[UIDVALIDITY 0]',
 		'[UIDVALIDITY 01]',
 		'[UIDVALIDITY 4294967296]',
@@ -266,7 +289,20 @@ describe('real framed IMAP command response semantics', () => {
 		'[READ-ONLY extra]',
 		'[UIDNOTSTICKY]',
 		'[PERMANENTFLAGS]',
-		'[PERMANENTFLAGS (bad flag!)]',
+		'[PERMANENTFLAGS (*)]',
+		'[PERMANENTFLAGS (foo*bar)]',
+		'[PERMANENTFLAGS (\\foo*)]',
+		'[PERMANENTFLAGS (\\**)]',
+		'[PERMANENTFLAGS (bad"flag)]',
+		'[PERMANENTFLAGS (bad\\flag)]',
+		'[PERMANENTFLAGS (bad{flag)]',
+		'[PERMANENTFLAGS (bad]flag)]',
+		'[PERMANENTFLAGS ( leading)]',
+		'[PERMANENTFLAGS (trailing )]',
+		'[PERMANENTFLAGS (two  flags)]',
+		`[PERMANENTFLAGS (${'+'.repeat(65)})]`,
+
+		'[PERMANENTFLAGS (bad%flag)]',
 		'[PERMANENTFLAGS (\\Seen)]tail',
 	])('refuses unsupported or malformed EXAMINE status code %s', (code) => {
 		const command = prepareImapCommand('A1', { kind: 'examine', mailbox: 'INBOX' });
