@@ -172,6 +172,7 @@ type SpawnOverrides = Pick<
 	| 'onProgress'
 	| 'onProcessStarted'
 	| 'maestroPMaxWaitSeconds'
+	| 'acceptWorkspaceTrust'
 > & { deadlineAt?: number };
 
 /** Derive an action only from known tool names and narrow public metadata fields. */
@@ -931,6 +932,7 @@ async function spawnClaudeAgent(
 			interactiveModeArgs: def?.interactiveModeArgs,
 			remoteClaudeBin: spawnDecision.claudeRealBinPath,
 			maxWaitSeconds: overrides.maestroPMaxWaitSeconds,
+			acceptWorkspaceTrust: overrides.acceptWorkspaceTrust,
 		});
 		const remoteEnv = plan.envVars;
 		const wrapped = await maybeWrapSpawnWithSsh(
@@ -964,6 +966,7 @@ async function spawnClaudeAgent(
 			execPath: packagedHost?.execPath,
 			resourcesPath: packagedHost?.resourcesPath,
 			maxWaitSeconds: overrides.maestroPMaxWaitSeconds,
+			acceptWorkspaceTrust: overrides.acceptWorkspaceTrust,
 		});
 		spawnCommand = applied.command;
 		spawnArgs = applied.args;
@@ -1720,6 +1723,12 @@ export interface SpawnAgentOptions {
 	 */
 	maestroPMaxWaitSeconds?: number;
 	/**
+	 * `cwd` is the agent's own working directory, so a TUI turn may accept
+	 * claude's folder-trust prompt there (#1872). Leave unset for any other
+	 * folder.
+	 */
+	acceptWorkspaceTrust?: boolean;
+	/**
 	 * Who asked for this turn. Stamped into the agent's env as
 	 * MAESTRO_QUERY_SOURCE so tooling downstream of the spawn can tell a
 	 * playbook or Auto Run task apart from a `maestro send` the user typed -
@@ -1812,6 +1821,7 @@ async function spawnAgentOnce(
 		additionalDirectories: options?.additionalDirectories,
 		querySource: options?.querySource,
 		maestroPMaxWaitSeconds: options?.maestroPMaxWaitSeconds,
+		acceptWorkspaceTrust: options?.acceptWorkspaceTrust,
 	};
 	// Single source of truth for the token-source triple (never a partial forward).
 	const tokenSource = getClaudeTokenSourceFields(options);
