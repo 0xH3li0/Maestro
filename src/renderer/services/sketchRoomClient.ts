@@ -50,9 +50,15 @@ import {
 	decryptPayload,
 	encryptPayload,
 	importRoomKey,
+	type SealedField,
 	type SketchRoomKey,
 } from '../../shared/sketch/crypto';
-import type { SketchWireElement } from '../../shared/sketch/payloads';
+import type {
+	DecodePayloadResult,
+	SketchPayloadByKind,
+	SketchPayloadKind,
+	SketchWireElement,
+} from '../../shared/sketch/payloads';
 import {
 	CLOSE_CODES,
 	PROTOCOL_VERSION,
@@ -459,6 +465,32 @@ export class SketchRoomClient {
 		this.botAnnounced = online;
 		if (online) this.scheduleFlush();
 		return true;
+	}
+
+	/**
+	 * Decrypt a frame's `iv` / `ct` as `kind` under the room key and the
+	 * current key epoch, for the bot relay (chat requests). The key never
+	 * leaves the client. Never throws; a failure means drop the frame.
+	 */
+	async openPayload<K extends SketchPayloadKind>(
+		kind: K,
+		sealed: SealedField
+	): Promise<DecodePayloadResult<K>> {
+		if (!this.key) return { ok: false, error: 'no room key' };
+		return decryptPayload(this.key, kind, this.roomId, this.keyEpoch, sealed);
+	}
+
+	/**
+	 * Encrypt a payload for a frame (`chat`, `bot.reply`) under the current
+	 * key epoch. Null before the key is imported. Throws on an invalid
+	 * payload, like `encryptPayload()`.
+	 */
+	async sealPayload<K extends SketchPayloadKind>(
+		kind: K,
+		payload: SketchPayloadByKind[K]
+	): Promise<SealedField | null> {
+		if (!this.key) return null;
+		return encryptPayload(this.key, kind, this.roomId, this.keyEpoch, payload);
 	}
 
 	// ------------------------------------------------------------ connection

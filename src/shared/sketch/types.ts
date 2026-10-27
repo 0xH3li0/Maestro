@@ -94,6 +94,44 @@ export const GUARDRAIL_NOTICES: readonly GuardrailNotice[] = ['rejected', 'unava
 /** Why the gate kept third-party text from the agent (spec section 8.3 rule 5). */
 export type WithheldReason = 'flagged' | 'unscreened';
 
+/** What the gate decides for one value (spec section 8.3). */
+export type SketchScreenStatus = 'clean' | 'flagged' | 'unscreened';
+
+/** Where screened text went: `cloud` when it left this machine. */
+export type SketchScreenLocality = 'local' | 'cloud';
+
+/** One gate decision (spec section 8.3). Never carries the text. */
+export interface SketchScreenVerdict {
+	status: SketchScreenStatus;
+	score?: number;
+	/** The source as a person reads it ("Prompt Guard 2 22M", "Screen off"). */
+	sourceLabel: string;
+	locality: SketchScreenLocality;
+	/** Why the text is `unscreened`. */
+	reason?: string;
+	/** `unscreened` because the task is `off` (D2 needs this; `unavailable` never sets it). */
+	off?: true;
+	/** Conductor or bot input: nothing was screened (spec section 8.2). */
+	skipped?: true;
+	/** Canvas only: this decision sent the one server report for `(actorId, elementId)`. */
+	reported?: true;
+}
+
+/** Whether a `@bot` turn runs restricted or with the agent's full access (spec section 5). */
+export type SketchTurnPosture = 'restricted' | 'full';
+
+/** A guest's `@bot` chat for the gate (spec section 8.2, I1), as the bot relay hands it over. */
+export interface SketchBotScreenRequest {
+	/** The chat message id: the `replyTo` of every frame that answers it. */
+	replyTo: string;
+	/** The server `chat.ts` (ms), for H1. */
+	ts: number;
+	/** The envelope actor. The relay sends only guest requests. */
+	actor: SketchActor;
+	/** The decrypted chat text. */
+	text: string;
+}
+
 /**
  * One share link. The cap secret itself is never stored here: the server
  * returns it once, and the record keeps only what the Room panel shows.

@@ -1,8 +1,9 @@
 /**
- * The Sketch tab's chat pane: the session's local chat (spec T12), newest at
- * the bottom. Until the room client and bot relay land (phases 05 and 06) it
- * holds only what the agent posts with `sketch_chat_post` on an unshared
- * sketch. Names come from the posting actor, never from the text.
+ * The Sketch tab's chat pane: the session's chat, newest at the bottom. It
+ * holds what the agent posts with `sketch_chat_post` (T12), the room's chat
+ * as the bot relay mirrors it (`sketchBotRelay.ts`), and the conductor's own
+ * `@bot` messages and their local replies. Names come from the posting actor,
+ * never from the text.
  */
 
 import type { Theme } from '../../types';

@@ -29,7 +29,7 @@ import type { SafeSendFn } from '../../utils/safe-send';
 import type { SketchCloudEngine } from '../../../shared/sketch/cloud-consent';
 import type { SketchSceneForSnapshot, SketchShareOptions } from '../../../shared/sketch/commands';
 import type { Screening } from '../../../shared/sketch/protocol';
-import type { SketchScene } from '../../../shared/sketch/types';
+import type { SketchBotScreenRequest, SketchScene } from '../../../shared/sketch/types';
 
 const LOG_CONTEXT = '[SketchBook]';
 
@@ -155,6 +155,14 @@ export function registerSketchHandlers(deps: SketchHandlerDeps = {}): void {
 		'sketch:roomConnection',
 		withIpcErrorLogging(opts('roomConnection'), async (sketchId: string) =>
 			service.roomConnection(sketchId)
+		)
+	);
+	ipcMain.handle(
+		'sketch:screenBotRequest',
+		withIpcErrorLogging(
+			opts('screenBotRequest'),
+			async (sketchId: string, request: SketchBotScreenRequest) =>
+				service.screenBotRequest(sketchId, request)
 		)
 	);
 

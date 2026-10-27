@@ -28,7 +28,12 @@ import type {
 	SketchScreeningConsentStatus,
 } from '../../shared/sketch/cloud-consent';
 import type { Screening } from '../../shared/sketch/protocol';
-import type { SketchRecord, SketchScene } from '../../shared/sketch/types';
+import type {
+	SketchBotScreenRequest,
+	SketchRecord,
+	SketchScene,
+	SketchScreenVerdict,
+} from '../../shared/sketch/types';
 
 /** Matches `SKETCH_REMOTE_COMMAND_CHANNEL` in `src/main/sketch/sketch-renderer-bridge.ts`. */
 const REMOTE_COMMAND_CHANNEL = 'remote:sketchCommand';
@@ -87,6 +92,12 @@ export function createSketchApi() {
 		/** What the room client needs to join, or null when it cannot. */
 		roomConnection: (sketchId: string): Promise<SketchRoomJoin | null> =>
 			ipcRenderer.invoke('sketch:roomConnection', sketchId),
+		/** Screen a guest's `@bot` chat through the guardrail gate (the bot relay). Never the text back. */
+		screenBotRequest: (
+			sketchId: string,
+			request: SketchBotScreenRequest
+		): Promise<SketchScreenVerdict> =>
+			ipcRenderer.invoke('sketch:screenBotRequest', sketchId, request),
 		/** Main's requests for this window (`maestro-cli sketch`). Returns the unsubscribe. */
 		onRemoteCommand: (
 			callback: (request: SketchRendererRequest, responseChannel: string) => void

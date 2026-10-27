@@ -79,6 +79,12 @@ describe('sketch IPC handlers', () => {
 			rotateSketch: vi.fn(async () => record),
 			uploadSnapshot: vi.fn(async () => ({ bytes: 64 })),
 			roomConnection: vi.fn(async () => null),
+			screenBotRequest: vi.fn(async () => ({
+				status: 'clean' as const,
+				score: 0.04,
+				sourceLabel: 'Prompt Guard 2 22M',
+				locality: 'local' as const,
+			})),
 		};
 		registerSketchHandlers();
 	});
@@ -115,6 +121,7 @@ describe('sketch IPC handlers', () => {
 			'sketch:roomScreening',
 			'sketch:rotate',
 			'sketch:saveToProject',
+			'sketch:screenBotRequest',
 			'sketch:screeningConsentStatus',
 			'sketch:setRoomLive',
 			'sketch:share',
@@ -153,6 +160,16 @@ describe('sketch IPC handlers', () => {
 		expect(service.uploadSnapshot).toHaveBeenCalledWith(SKETCH_ID, { scene, baseSeq: 3 });
 		await expect(invoke('sketch:roomConnection', SKETCH_ID)).resolves.toBeNull();
 		expect(service.roomConnection).toHaveBeenCalledWith(SKETCH_ID);
+		const request = {
+			replyTo: 'msg-1',
+			ts: 1_000,
+			actor: { id: 'guest-1', kind: 'guest', name: 'Sam', role: 'rw' },
+			text: 'add a box',
+		};
+		await expect(invoke('sketch:screenBotRequest', SKETCH_ID, request)).resolves.toMatchObject({
+			status: 'clean',
+		});
+		expect(service.screenBotRequest).toHaveBeenCalledWith(SKETCH_ID, request);
 	});
 
 	it('passes each consent channel through to the consent module', async () => {

@@ -373,10 +373,65 @@ describe('focus requests and chat', () => {
 		});
 	});
 
+	it("keeps a room message's server ts", async () => {
+		await openWith(scene());
+		const message = useSketchSessionStore
+			.getState()
+			.postSketchChat(SKETCH_ID, { actor: guest, text: 'hello', ts: 1_234 });
+		expect(message).toMatchObject({ ts: 1_234 });
+		expect(session().chat[0].ts).toBe(1_234);
+	});
+
 	it('does nothing for a sketch with no session', () => {
 		const store = useSketchSessionStore.getState();
 		expect(store.requestSketchFocus('missing', ['a'])).toBeNull();
 		expect(store.postSketchChat('missing', { actor: bot, text: 'hi' })).toBeNull();
+	});
+});
+
+describe('bot requests', () => {
+	const request = {
+		replyTo: 'msg-1',
+		actor: guest,
+		text: 'add a box',
+		ts: 1_000,
+		status: 'awaiting_approval' as const,
+		verdict: {
+			status: 'clean' as const,
+			score: 0.04,
+			sourceLabel: 'Prompt Guard 2 22M',
+			locality: 'local' as const,
+		},
+		posture: 'restricted' as const,
+	};
+
+	it('starts empty, adds, replaces by replyTo, updates in place and removes', async () => {
+		await openWith(scene());
+		const store = useSketchSessionStore.getState();
+		expect(session().botRequests).toEqual([]);
+
+		store.putSketchBotRequest(SKETCH_ID, request);
+		store.putSketchBotRequest(SKETCH_ID, { ...request, replyTo: 'msg-2' });
+		store.putSketchBotRequest(SKETCH_ID, { ...request, text: 'add a circle' });
+		expect(session().botRequests.map((entry) => [entry.replyTo, entry.text])).toEqual([
+			['msg-2', 'add a box'],
+			['msg-1', 'add a circle'],
+		]);
+
+		store.updateSketchBotRequest(SKETCH_ID, 'msg-1', (entry) => ({ ...entry, status: 'running' }));
+		expect(session().botRequests[1].status).toBe('running');
+
+		store.removeSketchBotRequest(SKETCH_ID, 'msg-2');
+		expect(session().botRequests.map((entry) => entry.replyTo)).toEqual(['msg-1']);
+	});
+
+	it('leaves the session alone for an unknown request', async () => {
+		await openWith(scene());
+		const store = useSketchSessionStore.getState();
+		const before = session();
+		store.updateSketchBotRequest(SKETCH_ID, 'nope', (entry) => ({ ...entry, status: 'running' }));
+		store.removeSketchBotRequest(SKETCH_ID, 'nope');
+		expect(session()).toBe(before);
 	});
 });
 

@@ -73,10 +73,13 @@ import {
 } from '../../shared/sketch/server';
 import {
 	SKETCH_LINK_ROLES,
+	SKETCH_ROLES,
+	type SketchBotScreenRequest,
 	type SketchLink,
 	type SketchLinkRole,
 	type SketchRecord,
 	type SketchScene,
+	type SketchScreenVerdict,
 	type SketchShare,
 } from '../../shared/sketch/types';
 import type {
@@ -92,6 +95,7 @@ import {
 	confirmSketchActionOnDesktop,
 	type SketchDesktopConfirmPrompt,
 } from './sketch-desktop-confirm';
+import { screenText, type SketchScreenTextRequest } from './sketch-guardrail';
 import {
 	configuredSketchServerUrl,
 	getSketchOwnerAuth,
@@ -144,6 +148,8 @@ export interface SketchServiceDeps {
 	confirm?: (prompt: SketchDesktopConfirmPrompt) => Promise<boolean>;
 	newRoomKey?: () => string;
 	now?: () => number;
+	/** The guardrail gate (spec section 8). Default the app's `screenText()`. */
+	screen?: (request: SketchScreenTextRequest) => Promise<SketchScreenVerdict>;
 }
 
 export interface SketchService {
@@ -196,6 +202,12 @@ export interface SketchService {
 	uploadSnapshot(sketchId: string, input: SketchSceneForSnapshot): Promise<{ bytes: number }>;
 	/** What the room client needs to join, or null when the sketch is not shared or no one is signed in. */
 	roomConnection(sketchId: string): Promise<SketchRoomJoin | null>;
+	/**
+	 * Screen a guest's `@bot` chat (spec section 8.2, I1) for the bot relay,
+	 * on behalf of the sketch's owning agent. Only guest requests: anything
+	 * else is refused, so no caller can skip the gate by naming another actor.
+	 */
+	screenBotRequest(sketchId: string, request: SketchBotScreenRequest): Promise<SketchScreenVerdict>;
 }
 
 /** The live agent with this id, as Sketch Book sees it, or `null`. */
@@ -239,6 +251,7 @@ export function createSketchService(deps: SketchServiceDeps = {}): SketchService
 	const confirm = deps.confirm ?? confirmSketchActionOnDesktop;
 	const newRoomKey = deps.newRoomKey ?? generateRoomKey;
 	const now = deps.now ?? Date.now;
+	const screen = deps.screen ?? screenText;
 	/** The file ids each room holds under each key epoch, so a snapshot uploads only new images. */
 	const uploadedFiles = new Map<string, Set<string>>();
 
@@ -882,6 +895,38 @@ export function createSketchService(deps: SketchServiceDeps = {}): SketchService
 			if (!token || (share.serverUrl && share.serverUrl !== serverUrl())) return null;
 			const roomKey = await requireRoomKey(sketches, record);
 			return connectionFor(record, share, { serverUrl: serverUrl(), ownerToken: token }, roomKey);
+		},
+
+		async screenBotRequest(sketchId, request) {
+			const sketches = open();
+			const record = await requireSketch(sketches, sketchId);
+			const raw: Record<string, unknown> = isObject(request) ? request : {};
+			const replyTo = requireString(raw.replyTo, 'replyTo');
+			if (!Number.isSafeInteger(raw.ts) || (raw.ts as number) < 0) {
+				throw new Error('Sketch Book: ts must be a whole number of at least 0.');
+			}
+			if (typeof raw.text !== 'string') throw new Error('Sketch Book: text must be a string.');
+			const actor: Record<string, unknown> = isObject(raw.actor) ? raw.actor : {};
+			if (actor.kind !== 'guest') {
+				throw new Error('Sketch Book: only a guest request goes through the bot screen.');
+			}
+			if (!(SKETCH_ROLES as readonly unknown[]).includes(actor.role)) {
+				throw new Error('Sketch Book: actor.role is not a room role.');
+			}
+			return screen({
+				sketchId: record.sketchId,
+				agentId: record.ownerAgentId,
+				subject: { kind: 'chat', replyTo, ts: raw.ts as number },
+				actor: {
+					id: requireString(actor.id, 'actor.id'),
+					kind: 'guest',
+					name: optionalString(actor.name, 'actor.name') ?? '',
+					role: actor.role as SketchBotScreenRequest['actor']['role'],
+					...(typeof actor.capId === 'string' ? { capId: actor.capId } : {}),
+					...(typeof actor.capLabel === 'string' ? { capLabel: actor.capLabel } : {}),
+				},
+				text: raw.text,
+			});
 		},
 	};
 	return service;

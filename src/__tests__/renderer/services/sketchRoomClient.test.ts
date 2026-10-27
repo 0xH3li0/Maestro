@@ -737,6 +737,31 @@ describe('sketchReconnectDelay', () => {
 	});
 });
 
+describe('payload seal and open for the bot relay', () => {
+	it("seals and opens under the welcome's key epoch, and refuses another epoch", async () => {
+		await startClient();
+		await joinLive();
+		const sealed = await client!.sealPayload('bot.reply', {
+			v: 1,
+			text: 'done',
+			elementIds: ['a'],
+		});
+		expect(sealed).not.toBeNull();
+		await expect(decryptPayload(key, 'bot.reply', ROOM_ID, EPOCH, sealed!)).resolves.toEqual({
+			ok: true,
+			payload: { v: 1, text: 'done', elementIds: ['a'] },
+		});
+
+		const chat = await encryptPayload(key, 'chat', ROOM_ID, EPOCH, { v: 1, text: '@bot hi' });
+		await expect(client!.openPayload('chat', chat)).resolves.toEqual({
+			ok: true,
+			payload: { v: 1, text: '@bot hi' },
+		});
+		const stale = await encryptPayload(key, 'chat', ROOM_ID, EPOCH - 1, { v: 1, text: 'old' });
+		await expect(client!.openPayload('chat', stale)).resolves.toMatchObject({ ok: false });
+	});
+});
+
 describe('snapshot baseline', () => {
 	it('sends, once live, every element newer than the snapshot main uploaded', async () => {
 		// The session moved on while main uploaded: a at 3 (snapshot has 2), b is new.

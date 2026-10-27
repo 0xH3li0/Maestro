@@ -112,6 +112,14 @@ describe('Sketch Book Preload API', () => {
 		});
 		await api.roomConnection(SKETCH_ID);
 		expect(mockInvoke).toHaveBeenLastCalledWith('sketch:roomConnection', SKETCH_ID);
+		const request = {
+			replyTo: 'msg-1',
+			ts: 1_000,
+			actor: { id: 'guest-1', kind: 'guest' as const, name: 'Sam', role: 'rw' as const },
+			text: 'add a box',
+		};
+		await api.screenBotRequest(SKETCH_ID, request);
+		expect(mockInvoke).toHaveBeenLastCalledWith('sketch:screenBotRequest', SKETCH_ID, request);
 	});
 
 	it("listens for main's remote commands and hands the request and reply channel on", () => {

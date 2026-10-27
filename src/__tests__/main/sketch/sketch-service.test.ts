@@ -14,6 +14,8 @@
  *     the agent that made it.
  *   - **The sharing verbs** are gated too; their behavior is covered in
  *     `sketch-share.test.ts`.
+ *   - **The bot screen** (`screenBotRequest`) takes guest requests only and
+ *     hands the gate a chat subject for the sketch's owning agent.
  *   - **The CLI verbs** (`new`, `open`, `read`, `export`): a tab opens on the
  *     sketch's own agent through the renderer bridge, a gone or SSH owner is
  *     refused before the window is asked, `read` summarizes or returns live
@@ -136,6 +138,16 @@ describe('SketchService', () => {
 				['rotateSketch', (s) => s.rotateSketch(SKETCH_ID)],
 				['uploadSnapshot', (s) => s.uploadSnapshot(SKETCH_ID, { scene, baseSeq: 0 })],
 				['roomConnection', (s) => s.roomConnection(SKETCH_ID)],
+				[
+					'screenBotRequest',
+					(s) =>
+						s.screenBotRequest(SKETCH_ID, {
+							replyTo: 'msg-1',
+							ts: 1,
+							actor: { id: 'g', kind: 'guest', name: 'Sam', role: 'rw' },
+							text: 'hi',
+						}),
+				],
 			];
 
 		it.each(calls)(
@@ -467,6 +479,55 @@ describe('SketchService', () => {
 				'format must be "png", "svg" or "json"'
 			);
 			expect(store.readScene).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('screenBotRequest', () => {
+		const guest = { id: 'guest-1', kind: 'guest' as const, name: 'Sam', role: 'rw' as const };
+		const verdict = {
+			status: 'clean' as const,
+			score: 0.04,
+			sourceLabel: 'Prompt Guard 2 22M',
+			locality: 'local' as const,
+		};
+
+		it("hands the gate a chat subject on behalf of the sketch's agent", async () => {
+			const screen = vi.fn(async () => verdict);
+			const s = createSketchService({ store: () => store, isEnabled: () => true, screen });
+			await expect(
+				s.screenBotRequest(SKETCH_ID, {
+					replyTo: 'msg-1',
+					ts: 1_000,
+					actor: { ...guest, capId: 'AAAAAAAAAAAA', capLabel: 'Team' },
+					text: 'add a box',
+				})
+			).resolves.toEqual(verdict);
+			expect(screen).toHaveBeenCalledWith({
+				sketchId: SKETCH_ID,
+				agentId: 'agent-1',
+				subject: { kind: 'chat', replyTo: 'msg-1', ts: 1_000 },
+				actor: { ...guest, capId: 'AAAAAAAAAAAA', capLabel: 'Team' },
+				text: 'add a box',
+			});
+		});
+
+		it('refuses anything but a guest request, so no caller can skip the gate', async () => {
+			const screen = vi.fn(async () => verdict);
+			const s = createSketchService({ store: () => store, isEnabled: () => true, screen });
+			const base = { replyTo: 'msg-1', ts: 1, text: 'hi' };
+			await expect(
+				s.screenBotRequest(SKETCH_ID, {
+					...base,
+					actor: { id: 'c', kind: 'conductor', name: 'Me', role: 'conductor' },
+				})
+			).rejects.toThrow('only a guest request');
+			await expect(
+				s.screenBotRequest(SKETCH_ID, { ...base, ts: -1, actor: guest })
+			).rejects.toThrow('ts must be');
+			await expect(
+				s.screenBotRequest(SKETCH_ID, { ...base, replyTo: '', actor: guest })
+			).rejects.toThrow('replyTo must be');
+			expect(screen).not.toHaveBeenCalled();
 		});
 	});
 });

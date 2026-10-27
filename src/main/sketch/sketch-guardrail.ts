@@ -60,7 +60,15 @@ import {
 import { createKeyedWriteQueue } from '../../shared/keyedWriteQueue';
 import { getAgentDefinition } from '../../shared/maestro-lib/providers/definitions';
 import { sketchRestrictedPostureBlocker } from '../../shared/sketch/restricted-posture';
-import type { SketchActor, SketchActorKind, WithheldReason } from '../../shared/sketch/types';
+import type {
+	SketchActor,
+	SketchActorKind,
+	SketchScreenLocality,
+	SketchScreenStatus,
+	SketchScreenVerdict,
+	SketchTurnPosture,
+	WithheldReason,
+} from '../../shared/sketch/types';
 import {
 	resolveInjectionSource,
 	resolveLocalInjectionClassifier,
@@ -97,11 +105,7 @@ const LABEL_SCREEN_OFF = 'Screen off';
 const LABEL_SCREEN_UNAVAILABLE = 'Screen unavailable';
 const LABEL_NO_LOCAL_CLASSIFIER = 'No local classifier';
 
-/** What the gate decides. */
-export type SketchScreenStatus = 'clean' | 'flagged' | 'unscreened';
-
-/** Where screened text went. */
-export type SketchScreenLocality = InjectionSourceInfo['locality'];
+export type { SketchScreenLocality, SketchScreenStatus, SketchScreenVerdict, SketchTurnPosture };
 
 /** The value being screened (spec section 8.2). */
 export type SketchScreenSubject =
@@ -133,23 +137,6 @@ export interface SketchScreenTextRequest {
 	text: string;
 	/** The agent the text is for, kept on the decision record. */
 	agentId?: string;
-}
-
-/** One decision (spec section 8.3). Never carries the text. */
-export interface SketchScreenVerdict {
-	status: SketchScreenStatus;
-	score?: number;
-	/** The source as a person reads it ("Prompt Guard 2 22M", "Screen off"). */
-	sourceLabel: string;
-	locality: SketchScreenLocality;
-	/** Why the text is `unscreened`. */
-	reason?: string;
-	/** `unscreened` because the task is `off` (D2 needs this; `unavailable` never sets it). */
-	off?: true;
-	/** Conductor or bot input: nothing was screened (spec section 8.2). */
-	skipped?: true;
-	/** Canvas only: this decision sent the one server report for `(actorId, elementId)`. */
-	reported?: true;
 }
 
 /** A canvas report the room client sends as `guardrail_rejected {opSeq, reason}`. */
@@ -191,9 +178,6 @@ export interface SketchAuditEntry {
 	locality: SketchScreenLocality;
 	reported: boolean;
 }
-
-/** Whether a conductor `@bot` turn runs restricted or with the agent's full access (spec section 5). */
-export type SketchTurnPosture = 'restricted' | 'full';
 
 export interface SketchGuardrailDeps {
 	score?: (request: InjectionScoreRequest) => Promise<InjectionScore>;

@@ -21,7 +21,12 @@
  *   `applyAgentChange()`), so a mounted view knows to pull the scene into
  *   Excalidraw. A view's own `onChange` never bumps it, so nothing echoes.
  * - `focusRequest` is an agent's `sketch_focus`, waiting for a view to scroll
- *   to it; `chat` is the local chat pane (T12; the room joins it in phase 06).
+ *   to it; `chat` is the chat pane: the agent's local posts (T12) and the
+ *   room's chat as the bot relay mirrors it (`sketchBotRelay.ts`).
+ * - `botRequests` are the `@bot` requests the bot relay holds (spec section
+ *   5): a guest request the gate passed, waiting on the approval chip (B2),
+ *   and every turn running for the sketch. Never a request still being
+ *   screened, so text the gate has not passed is never offered to Run.
  * - `approvedImages` are the guest images the conductor let the agent see
  *   (spec section 8.2, I3), each bound to the `fileId` approved. Every other
  *   guest image is withheld from the agent's reads and renders. Kept for the
@@ -53,7 +58,14 @@ import { createKeyedWriteQueue } from '../../shared/keyedWriteQueue';
 import type { SketchImageApprovals } from '../../shared/sketch/commands';
 import type { SketchWireElement } from '../../shared/sketch/payloads';
 import type { Screening } from '../../shared/sketch/protocol';
-import type { BotPolicy, SketchActor, SketchRole, SketchScene } from '../../shared/sketch/types';
+import type {
+	BotPolicy,
+	SketchActor,
+	SketchRole,
+	SketchScene,
+	SketchScreenVerdict,
+	SketchTurnPosture,
+} from '../../shared/sketch/types';
 import { ipcErrorMessage } from '../utils/ipcErrorMessage';
 
 /** How long a view waits after the last change before it autosaves. */
@@ -91,6 +103,28 @@ export interface SketchChatMessage {
 	actor: SketchActor;
 	text: string;
 	ts: number;
+}
+
+/** Where one `@bot` request stands in the bot relay. */
+export type SketchBotRequestStatus = 'awaiting_approval' | 'running';
+
+/** One `@bot` request the bot relay holds (spec section 5). */
+export interface SketchBotRequest {
+	/** The chat message id, or a local id for a conductor message on an unshared sketch. */
+	replyTo: string;
+	/** The server-stamped envelope actor (A2), never anything from the ciphertext. */
+	actor: SketchActor;
+	/** The decrypted request. */
+	text: string;
+	/** Server `chat.ts` for a room request; the local clock for a conductor message. */
+	ts: number;
+	status: SketchBotRequestStatus;
+	/** The gate's decision for a guest request; null for the conductor's own message. */
+	verdict: SketchScreenVerdict | null;
+	/** The posture the turn runs (or will run) under (spec section 5, Turn posture). */
+	posture: SketchTurnPosture;
+	/** The server expired it while it ran (Y3): the reply is still posted. */
+	expired?: true;
 }
 
 /** An agent's `sketch_focus`, until a view scrolls to it. */
@@ -187,6 +221,8 @@ export interface SketchSession {
 	focusRequest: SketchFocusRequest | null;
 	/** The chat pane, oldest first. */
 	chat: SketchChatMessage[];
+	/** The bot relay's open requests, oldest first. */
+	botRequests: SketchBotRequest[];
 	/** Guest images the conductor approved for the agent: element id -> `fileId` (I3). */
 	approvedImages: SketchImageApprovals;
 	/** The live room, or null when no room client runs for this sketch. */
@@ -242,11 +278,24 @@ interface SketchSessionState {
 	requestSketchFocus: (sketchId: string, elementIds: string[]) => SketchFocusRequest | null;
 	/** A view handled this focus request. A newer one is left alone. */
 	clearSketchFocus: (sketchId: string, nonce: number) => void;
-	/** Append a chat message. Returns it, or null when the sketch has no session. */
+	/**
+	 * Append a chat message. `ts` is the server's `chat.ts` for a room message;
+	 * the local clock otherwise. Returns it, or null when the sketch has no session.
+	 */
 	postSketchChat: (
 		sketchId: string,
-		message: { actor: SketchActor; text: string }
+		message: { actor: SketchActor; text: string; ts?: number }
 	) => SketchChatMessage | null;
+	/** Add a bot request, or replace the one with the same `replyTo`. */
+	putSketchBotRequest: (sketchId: string, request: SketchBotRequest) => void;
+	/** Change one bot request in place. Nothing happens when it is gone. */
+	updateSketchBotRequest: (
+		sketchId: string,
+		replyTo: string,
+		update: (request: SketchBotRequest) => SketchBotRequest
+	) => void;
+	/** Forget a bot request (answered, denied, failed or expired). */
+	removeSketchBotRequest: (sketchId: string, replyTo: string) => void;
 	/**
 	 * The conductor lets the agent see this image as it is now (spec section
 	 * 8.2, I3): the approval is bound to its current `fileId`. False when the
@@ -292,6 +341,7 @@ function newSession(sketchId: string): SketchSession {
 		externalRevision: 0,
 		focusRequest: null,
 		chat: [],
+		botRequests: [],
 		approvedImages: {},
 		room: null,
 	};
@@ -437,13 +487,13 @@ export const useSketchSessionStore = create<SketchSessionState>((set, get) => {
 			);
 		},
 
-		postSketchChat: (sketchId, { actor, text }) => {
+		postSketchChat: (sketchId, { actor, text, ts }) => {
 			if (!get().sessions[sketchId]) return null;
 			const message: SketchChatMessage = {
 				id: `chat-${nextChatId++}`,
 				actor,
 				text,
-				ts: Date.now(),
+				ts: ts ?? Date.now(),
 			};
 			patchSession(sketchId, (session) => ({
 				...session,
@@ -451,6 +501,34 @@ export const useSketchSessionStore = create<SketchSessionState>((set, get) => {
 			}));
 			return message;
 		},
+
+		putSketchBotRequest: (sketchId, request) =>
+			patchSession(sketchId, (session) => ({
+				...session,
+				botRequests: [
+					...session.botRequests.filter((existing) => existing.replyTo !== request.replyTo),
+					request,
+				],
+			})),
+
+		updateSketchBotRequest: (sketchId, replyTo, update) =>
+			patchSession(sketchId, (session) => {
+				const index = session.botRequests.findIndex((request) => request.replyTo === replyTo);
+				if (index < 0) return session;
+				const botRequests = [...session.botRequests];
+				botRequests[index] = update(botRequests[index]);
+				return { ...session, botRequests };
+			}),
+
+		removeSketchBotRequest: (sketchId, replyTo) =>
+			patchSession(sketchId, (session) =>
+				session.botRequests.some((request) => request.replyTo === replyTo)
+					? {
+							...session,
+							botRequests: session.botRequests.filter((request) => request.replyTo !== replyTo),
+						}
+					: session
+			),
 
 		approveSketchImage: (sketchId, elementId) => {
 			const element = get().sessions[sketchId]?.scene?.elements.find(
