@@ -32,6 +32,12 @@ const roomClient = vi.hoisted(() => ({
 }));
 vi.mock('../../../renderer/services/sketchRoomClient', () => roomClient);
 
+const botRelay = vi.hoisted(() => ({
+	attachSketchBotRelay: vi.fn(),
+	detachSketchBotRelay: vi.fn(),
+}));
+vi.mock('../../../renderer/services/sketchBotRelay', () => botRelay);
+
 import {
 	exportSketchImage,
 	runRemoteSketchCommand,
@@ -448,6 +454,8 @@ describe('runRemoteSketchCommand: sharing', () => {
 
 	it('joins the room with the baseline, and leaves it for a null connection', async () => {
 		const baseline = [{ id: 'unsaved', version: 3 }];
+		const client = { subscribe: vi.fn() };
+		roomClient.connectSketchRoom.mockResolvedValueOnce(client);
 		await expect(
 			runRemoteSketchCommand({
 				action: 'syncRoom',
@@ -464,8 +472,11 @@ describe('runRemoteSketchCommand: sharing', () => {
 			serverUrl: join.serverUrl,
 			baseline,
 		});
+		// The bot relay answers the joined room's `@bot` requests.
+		expect(botRelay.attachSketchBotRelay).toHaveBeenCalledWith('sketch-1', client);
 
 		await runRemoteSketchCommand({ action: 'syncRoom', sketchId: 'sketch-1', connection: null });
+		expect(botRelay.detachSketchBotRelay).toHaveBeenCalledWith('sketch-1');
 		expect(roomClient.disconnectSketchRoom).toHaveBeenCalledWith('sketch-1');
 	});
 
