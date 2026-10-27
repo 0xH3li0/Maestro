@@ -152,6 +152,7 @@ type SpawnOverrides = Pick<
 	| 'additionalDirectories'
 	| 'querySource'
 	| 'maestroPMaxWaitSeconds'
+	| 'acceptWorkspaceTrust'
 >;
 
 /**
@@ -599,6 +600,7 @@ async function spawnClaudeAgent(
 			interactiveModeArgs: def?.interactiveModeArgs,
 			remoteClaudeBin: spawnDecision.claudeRealBinPath,
 			maxWaitSeconds: overrides.maestroPMaxWaitSeconds,
+			acceptWorkspaceTrust: overrides.acceptWorkspaceTrust,
 		});
 		const remoteEnv = buildSshEnvForRemote(def, readOnlyMode, userCustomEnvVars);
 		const wrapped = await maybeWrapSpawnWithSsh(
@@ -632,6 +634,7 @@ async function spawnClaudeAgent(
 			execPath: packagedHost?.execPath,
 			resourcesPath: packagedHost?.resourcesPath,
 			maxWaitSeconds: overrides.maestroPMaxWaitSeconds,
+			acceptWorkspaceTrust: overrides.acceptWorkspaceTrust,
 		});
 		spawnCommand = applied.command;
 		spawnArgs = applied.args;
@@ -1112,6 +1115,10 @@ async function spawnJsonLineAgent(
 				errorText = event.text;
 			}
 
+			if (event.type === 'warning' && event.text) {
+				console.error(event.text);
+			}
+
 			const usage = parser.extractUsage(event);
 			if (usage) {
 				usageStats = mergeUsageStats(usageStats, {
@@ -1239,6 +1246,12 @@ export interface SpawnAgentOptions {
 	 */
 	maestroPMaxWaitSeconds?: number;
 	/**
+	 * `cwd` is the agent's own working directory, so a TUI turn may accept
+	 * claude's folder-trust prompt there (#1872). Leave unset for any other
+	 * folder.
+	 */
+	acceptWorkspaceTrust?: boolean;
+	/**
 	 * Who asked for this turn. Stamped into the agent's env as
 	 * MAESTRO_QUERY_SOURCE so tooling downstream of the spawn can tell a
 	 * playbook or Auto Run task apart from a `maestro send` the user typed -
@@ -1299,6 +1312,7 @@ async function spawnAgentOnce(
 		additionalDirectories: options?.additionalDirectories,
 		querySource: options?.querySource,
 		maestroPMaxWaitSeconds: options?.maestroPMaxWaitSeconds,
+		acceptWorkspaceTrust: options?.acceptWorkspaceTrust,
 	};
 	// Single source of truth for the token-source triple (never a partial forward).
 	const tokenSource = getClaudeTokenSourceFields(options);

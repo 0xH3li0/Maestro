@@ -1146,6 +1146,30 @@ Encore feature IDs: `directorNotes`, `usageStats`, `symphony`, `maestroCue`. Fri
 
 Gloss levels, least to most: `off` (the shipped flat look), `sheen`, `strong`, `max`. Gloss only adds highlights and shadows to the sidebars, headers, tab bar and composer, so it changes no theme color and leaves text exactly as legible. It has no effect on light themes.
 
+### Web Interface and Remote Access
+
+`maestro-cli live` does what the LIVE panel in the Left Bar header does: it starts the web interface on your local network and, optionally, a Cloudflare tunnel so you can reach it from anywhere.
+
+```bash
+# Start the web interface (prints the local URL)
+maestro-cli live on
+
+# Start the web interface and a Cloudflare tunnel in one step
+maestro-cli live on --tunnel
+
+# Start or stop only the tunnel (the web interface must be on)
+maestro-cli live tunnel on
+maestro-cli live tunnel off
+
+# Show the current state, URLs, and whether cloudflared is installed
+maestro-cli live status --json
+
+# Stop the tunnel and the web interface
+maestro-cli live off
+```
+
+The tunnel needs `cloudflared` on your PATH (macOS: `brew install cloudflared`). `live on` gives the web interface a new URL token each time unless Persistent Web Link is on in Settings. `live on` and `live off` restart the server that `maestro-cli` talks to, so each waits a moment for the app to come back before it reports.
+
 ### Custom Theme Palette
 
 `set-theme` only switches between built-in themes. The `theme` command group manages the user-configurable **Custom** theme palette (the same two settings the in-app Custom Theme Builder edits: `customThemeColors` and `customThemeBaseId`). Activate the result with `set-theme custom`.
@@ -1223,6 +1247,11 @@ maestro-cli settings agent reset codex model
 | `contextWindow`    | number | Context window size in tokens                                                                                     |
 | `reasoningEffort`  | string | Reasoning effort level (`low`, `medium`, `high`)                                                                  |
 | `reasoningSummary` | string | Codex only: reasoning shown in Thinking (`auto`, `concise`, `detailed`, `none`); empty inherits the Codex default |
+
+Codex configuration notices, such as an ignored setting, appear as `Codex warning:`
+diagnostics in the desktop transcript even with Thinking off. Headless CLI runs
+print them to stderr. These notices do not stop the turn or become part of the
+assistant's answer; actual turn failures still use normal error handling.
 
 <Info>
 Settings and agent config changes made via the CLI are automatically detected by the running Maestro desktop app. The app watches for file changes and reloads immediately - it's as if you toggled the setting in the Settings modal yourself.

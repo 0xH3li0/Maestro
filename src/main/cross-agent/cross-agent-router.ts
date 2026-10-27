@@ -50,6 +50,7 @@ import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { createIdleWatchdog, type IdleWatchdog } from '../utils/idle-watchdog';
 import { AGENT_LIVENESS_EVENTS } from '../utils/agent-liveness';
+import { MAESTRO_P_WORKSPACE_UNTRUSTED_EXIT_CODE } from '../agents/claudeSpawnCore';
 
 const LOG_CONTEXT = '[CrossAgentRouter]';
 
@@ -233,6 +234,20 @@ function cwdGrant(sourceCwd: string, writable: boolean): string {
 		'default and they can turn them into delegations in Settings > General > Cross-Agent ' +
 		'Mentions (set Consult or Delegate to Read/Write).'
 	);
+}
+
+/**
+ * The error a failed consult reports. maestro-p's exit 7 gets its own message:
+ * it names the folder claude has not trusted and how to fix it, where the
+ * generic "no visible output" left the caller guessing (#1872).
+ */
+function consultExitError(target: CrossAgentTargetSession, code: number, text: string): string {
+	if (target.toolType === 'claude-code' && code === MAESTRO_P_WORKSPACE_UNTRUSTED_EXIT_CODE) {
+		return `${target.name} could not start: Claude Code has not trusted the folder ${target.cwd} (exit code ${code}). Open claude in that folder once and choose "Yes, I trust this folder".`;
+	}
+	return text
+		? `${target.name} exited with code ${code}.`
+		: `${target.name} produced no visible output (exit code ${code}).`;
 }
 
 /**
@@ -542,9 +557,7 @@ export async function startCrossAgentRequest(
 					baseChunk({
 						chunk: text,
 						done: true,
-						error: text
-							? `${target.name} exited with code ${code}.`
-							: `${target.name} produced no visible output (exit code ${code}).`,
+						error: consultExitError(target, code, text),
 					})
 				);
 			} else if (text) {
@@ -667,6 +680,9 @@ export async function startCrossAgentRequest(
 			// Background/orchestrated caller: maestro-p otherwise applies its own 300s
 			// idle default and kills a still-working consult long before our budget.
 			maxWaitSeconds: Math.ceil(CROSS_AGENT_IDLE_TIMEOUT_MS / 1000),
+			// The consult runs in the target agent's own cwd, so a TUI target may
+			// accept claude's folder-trust prompt there (#1872).
+			acceptWorkspaceTrust: true,
 			debugLabel: `cross-agent:${target.name}`,
 		});
 		// The spawners CATCH their own failures and return `{ pid: -1, success: false }`

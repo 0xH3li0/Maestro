@@ -53,6 +53,7 @@ import {
 	wasParticipantRecentlyRemoved,
 } from './group-chat-agent';
 import { AgentDetector } from '../agents';
+import { isAgentOwnWorkingDirectory } from '../agents/claudeSpawnCore';
 import { powerManager } from '../power-manager';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
@@ -2054,6 +2055,9 @@ export async function routeModeratorResponse(
 					processManager: activeProcessManager,
 					readOnlyMode: readOnly ?? false, // Propagate read-only mode from caller
 					debugLabel: `participant: ${participantName}`,
+					// A participant runs in its own agent's cwd (the home-dir fallback is not),
+					// so a TUI participant may accept claude's folder-trust prompt there (#1872).
+					acceptWorkspaceTrust: isAgentOwnWorkingDirectory(cwd, matchingSession),
 					// Match maestro-p's idle budget to the participant supervising timeout
 					// so a still-working participant isn't killed at maestro-p's 300s default.
 					maxWaitSeconds: Math.ceil(PARTICIPANT_RESPONSE_TIMEOUT_MS / 1000),
@@ -2678,6 +2682,9 @@ export async function respawnParticipantWithRecovery(
 		processManager,
 		readOnlyMode: readOnly ?? false,
 		debugLabel: `recovery of ${participantName}`,
+		// A participant runs in its own agent's cwd (the home-dir fallback is not),
+		// so a TUI participant may accept claude's folder-trust prompt there (#1872).
+		acceptWorkspaceTrust: isAgentOwnWorkingDirectory(cwd, matchingSession),
 		// Match maestro-p's idle budget to the participant supervising timeout
 		// so a still-working recovery turn isn't killed at maestro-p's 300s default.
 		maxWaitSeconds: Math.ceil(PARTICIPANT_RESPONSE_TIMEOUT_MS / 1000),
