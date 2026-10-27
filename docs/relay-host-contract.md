@@ -2,14 +2,17 @@
 
 ## Desktop conversation continuity (1.31.0)
 
-Version allocation follows the open API1.29 generic-platform PR1881 and API1.30
-bounded-audio PR1883. This focused rc diff does not implement those preceding
-contracts. Integrate and qualify their documented prerequisites before releasing
-an API1.31 host; semver comparison alone is not runtime completeness enforcement.
+This source implements the merged API1.29 generic-platform contract (PR1881),
+API1.30 bounded original audio (PR1883), and API1.31 desktop continuity. The
+original-audio implementation is included here so the advertised API version
+corresponds to implemented methods. Original audio does not depend on the
+unmerged Dictation API allocation; STT orchestration remains plugin-owned.
+Installed migration, OS-keyring durability, compatible rollback and live
+provider acceptance still require separate release qualification.
 No installer or live archive activation is part of this change.
 
 The trusted, pinned Relay may call `agents.send(agentId, prompt, { conversationId,
-messageId, sessionId?, onProgress? })`. `conversationId` is its persistent real
+messageId, sessionId?, onProgress?, originalAttachments? })`. `conversationId` is its persistent real
 transport thread identity; `messageId` is the incoming transport message identity.
 Both are opaque strings of 1–256 characters and must be supplied together.
 `agentId` names the Maestro agent, `sessionId` remains the opaque provider session,
@@ -23,7 +26,10 @@ host writer reservation through process close; the renderer's normal queue still
 decides desktop ordering. A duplicate message returns the saved result with
 `replayed: true`; the plugin **must not send another transport response**. An
 interrupted receipt fails closed, because tools may already have run. A changed
-prompt under the same message identity is rejected. No automatic retry is safe.
+prompt or original-audio reference under the same message identity is rejected.
+An identical audio replay returns its saved staging receipt without opening or
+consuming the original recording again. Current export consent is checked even
+for replay; a receipt remains staging evidence, not proof that audio was inspected. No automatic retry is safe.
 
 At activation, Relay can register its explicitly stored real thread bindings with
 `agents.restoreConversation(agentId, { conversationId, sessionId })`. The host

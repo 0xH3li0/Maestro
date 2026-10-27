@@ -56,6 +56,14 @@ describe('durable Relay conversations', () => {
 		host = new RelayConversations(deps);
 	});
 	afterEach(() => fs.rmSync(baseDir, { recursive: true, force: true }));
+	it('separates attachment identity from a text prompt containing the same canonical metadata', async () => {
+		const originalAttachments = [{ jobId: 'job', audioId: 'audio' }] as const;
+		const text = '{"originalAttachments":[{"audioId":"audio","jobId":"job"}],"prompt":"hello"}';
+		await send(text);
+		await expect(send('hello', { originalAttachments })).rejects.toThrow(/different content/);
+		expect(deps.run).toHaveBeenCalledTimes(1);
+	});
+
 	it('rechecks authorization after the final worker persistence before starting a provider', async () => {
 		let allowed = true;
 		const update = deps.updateAgent;

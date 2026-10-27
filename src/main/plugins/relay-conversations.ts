@@ -32,6 +32,7 @@ export interface RelaySendOptions {
 	conversationId: string;
 	messageId: string;
 	sessionId?: string;
+	originalAttachments?: readonly [import('../../shared/plugins/media-tools').OriginalAttachmentRef];
 }
 type SendResult = Awaited<ReturnType<HeadlessAgentRunner>> & {
 	conversationId?: string;
@@ -269,8 +270,17 @@ export class RelayConversations {
 		opts: RelaySendOptions,
 		signal: AbortSignal,
 		onProgress: Parameters<HeadlessAgentRunner>[5],
-		authorize: () => void
+		authorize: () => void,
+		run: HeadlessAgentRunner = this.deps.run
 	): Promise<SendResult> {
+		opts = {
+			...opts,
+			...(opts.originalAttachments
+				? {
+						originalAttachments: [{ ...opts.originalAttachments[0] }] as const,
+					}
+				: {}),
+		};
 		this.assertAdmission();
 		const generation = this.generation;
 		const conversationKey = this.key('conversation', agentId, opts.conversationId);
@@ -281,7 +291,12 @@ export class RelayConversations {
 				authorize();
 				if (signal.aborted) throw new Error('Relay send cancelled');
 				const receiptKey = this.key('message', agentId, opts.conversationId, opts.messageId);
-				const hash = this.key(prompt);
+				const hash = opts.originalAttachments
+					? this.key(
+							'relay-original-attachments-v1',
+							canonicalJson({ prompt, originalAttachments: opts.originalAttachments })
+						)
+					: this.key(prompt);
 				const previous = await this.read<Receipt>(receiptKey);
 				authorize();
 				if (signal.aborted) throw Error('Relay send cancelled');
@@ -373,7 +388,7 @@ export class RelayConversations {
 					this.assertGeneration(generation);
 					if (controller.signal.aborted) throw new Error('Relay send cancelled');
 					runnerInvoked = true;
-					const result = await this.deps.run(
+					const result = await run(
 						agentId,
 						prompt,
 						mapping.providerSessionId,

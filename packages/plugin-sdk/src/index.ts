@@ -488,7 +488,8 @@ export function describeCapability(capability: PluginCapability): string {
 /**
  * The host API version this Maestro build implements. 1.31.0 adds durable Relay
  * conversation/message identity, replay receipts, and explicit task completion.
- * 1.29.0 adds generic verified invocations, consented TLS, opaque secrets,
+ * 1.30.0 adds separately consented bounded original-audio staging for supported
+ * local agent sends. 1.29.0 adds generic verified invocations, consented TLS, opaque secrets,
  * confirmed records, durable plugin Cue events and parentSessionId metadata.
  * 1.25.0 added resumable
  * agents.send with public progress, verified plugin-tool caller identity, and
@@ -1628,6 +1629,18 @@ export type AgentSendProgressEvent =
 			summary?: string;
 	  };
 
+/** One completed original from the authenticated plugin's own media job. */
+export interface OriginalAttachmentRef {
+	jobId: string;
+	audioId: string;
+}
+/** Staging evidence only; does not prove provider inspection of audio. */
+export interface OriginalAttachmentReceipt {
+	filename: string;
+	bytes: number;
+	sha256: string;
+}
+
 export interface MaestroAgentsApi {
 	list(): Promise<unknown>;
 	get(agentId: string): Promise<unknown>;
@@ -1643,6 +1656,7 @@ export interface MaestroAgentsApi {
 			conversationId?: string;
 			messageId?: string;
 			onProgress?: (event: AgentSendProgressEvent) => void;
+			originalAttachments?: readonly [OriginalAttachmentRef];
 		}
 	): Promise<{
 		success: boolean;
@@ -1652,6 +1666,7 @@ export interface MaestroAgentsApi {
 		tabId?: string;
 		replayed?: boolean;
 		error?: string;
+		originalAttachments?: readonly [OriginalAttachmentReceipt];
 	}>;
 	restoreConversation(
 		agentId: string,

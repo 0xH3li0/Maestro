@@ -25,7 +25,7 @@ import { PluginServiceHost, ServiceError } from './plugin-service-host';
 import { RELAY_PLUGIN_ID, isRelayConversationIdentity } from '../../shared/plugins/relay-identity';
 import type { PluginSignatureInfo } from '../../shared/plugins/plugin-registry';
 import type { PluginManifest } from '../../shared/plugins/plugin-manifest';
-import { PluginMediaTools, resolveMediaRuntime } from './plugin-media-tools';
+import { MediaError, PluginMediaTools, resolveMediaRuntime } from './plugin-media-tools';
 import type { HostCallHandler, HostCallHandlers } from './plugin-sandbox-host';
 import type { PermissionBroker } from './permission-broker';
 import type { AgentSendProgressEvent, HostMethod } from '../../shared/plugins/rpc-protocol';
@@ -329,19 +329,7 @@ export interface HostHandlerDeps {
 	 * calling; the sink resolves the agent id to a live session at call time. */
 	dispatch?: (agentId: string, prompt: string) => Promise<unknown>;
 	/** Headless, resumable provider turn. The host returns the provider session id. */
-	sendAgent?: (
-		agentId: string,
-		prompt: string,
-		sessionId?: string,
-		signal?: AbortSignal,
-		origin?: 'user' | 'auto' | 'relay',
-		onProgress?: (event: AgentSendProgressEvent) => void
-	) => Promise<{
-		success: boolean;
-		response: string | null;
-		sessionId: string | null;
-		error?: string;
-	}>;
+	sendAgent?: import('./plugin-manager-singleton').HeadlessAgentRunner;
 	/** Host-owned tab naming turn; resolves provider, cwd and auth by agent id. */
 	generateTitle?: (
 		agentId: string,
@@ -355,7 +343,8 @@ export interface HostHandlerDeps {
 	recordRelayTurn?: (
 		agentId: string,
 		prompt: string,
-		result: { success: boolean; response: string | null; sessionId: string | null; error?: string }
+		result: { success: boolean; response: string | null; sessionId: string | null; error?: string },
+		beforeWrite?: () => void
 	) => Promise<void>;
 	/** Whether the plugin holds the separate, revocable UNATTENDED consent for
 	 * `agents:dispatch` against `agentId`. Direct plugin dispatch is definitionally
@@ -1574,6 +1563,7 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 			const opts = p.opts === undefined ? {} : asObject(p.opts);
 			assertClosedSchema('agents.send opts', opts, {
 				sessionId: true,
+				originalAttachments: true,
 				conversationId: true,
 				messageId: true,
 			});
@@ -1582,6 +1572,26 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 				throw new Error(
 					'agents.send: conversationId and messageId must be supplied together (1-256 characters)'
 				);
+			const originalInput = opts.originalAttachments;
+			if (
+				originalInput !== undefined &&
+				(!Array.isArray(originalInput) ||
+					originalInput.length !== 1 ||
+					!originalInput[0] ||
+					typeof originalInput[0] !== 'object' ||
+					Array.isArray(originalInput[0]) ||
+					Object.keys(originalInput[0]).length !== 2 ||
+					!['jobId', 'audioId'].every(
+						(key) =>
+							typeof originalInput[0][key] === 'string' &&
+							/^[a-f0-9-]{36}$/.test(originalInput[0][key])
+					))
+			)
+				throw new MediaError('MediaInvalid');
+			const originals =
+				originalInput === undefined
+					? undefined
+					: originalInput.map((ref) => ({ jobId: ref.jobId, audioId: ref.audioId }));
 			const agentId = p.agentId;
 			const prompt = p.prompt;
 			if (
@@ -1620,6 +1630,32 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 			if (hasConversation && (!relayConversation || !deps.relayConversations))
 				throw new Error('Relay conversation transport unavailable for this caller');
 			if (!relayConversation) assertLowOrMediumRisk(prompt);
+			const authorizeOriginal = (): void => {
+				try {
+					assertBrokerAllowed(deps, pluginId, 'agents.send', p, { audit: false });
+					assertBrokerAllowed(deps, pluginId, 'media.open', {}, { audit: false });
+					assertTrustedActVerb(deps, pluginId);
+					if (
+						!deps.dispatchUnattendedAllowed?.(pluginId, agentId) ||
+						!deps.serviceAllowed?.(pluginId, 'media:tools', 'discord-original-audio') ||
+						(relayConversation &&
+							!isRelayConversationIdentity(pluginId, deps.getPluginSignature?.(pluginId)))
+					)
+						throw new MediaError('MediaDenied');
+					if (opts.sessionId)
+						deps.providerSessions?.assertOwned(pluginId, agentId, opts.sessionId as string);
+				} catch {
+					throw new MediaError('MediaDenied');
+				}
+			};
+			let commitOriginalOwnership: (() => void) | undefined;
+			if (originals !== undefined) {
+				authorizeOriginal();
+				context?.setResponseGuard?.(() => {
+					authorizeOriginal();
+					commitOriginalOwnership?.();
+				});
+			}
 			const providerSessions = deps.providerSessions;
 			if (!providerSessions) {
 				throw new Error('agents.send: provider session binding store unavailable');
@@ -1641,6 +1677,14 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 						/** Forward progress only while the run retains live grants, consent and Relay identity. */
 						const onProgress = (event: AgentSendProgressEvent): void => {
 							if (controller.signal.aborted) return;
+							if (originals !== undefined) {
+								try {
+									authorizeOriginal();
+								} catch {
+									controller.abort(new MediaError('MediaDenied'));
+									return;
+								}
+							}
 							if (
 								!deps.broker.authorize(pluginId, 'agents.send', p, { audit: false }).allowed ||
 								!deps.dispatchUnattendedAllowed?.(pluginId, agentId) ||
@@ -1652,6 +1696,98 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 							}
 							context?.onProgress(event);
 						};
+						const invoke = async (
+							attachment: import('./plugin-media-tools').OriginalAttachmentLease | undefined,
+							runnerArgs: Parameters<typeof sendAgent>
+						) => {
+							const args = [...runnerArgs] as Parameters<typeof sendAgent>;
+							if (attachment) args[9] = { originalAttachment: attachment };
+							const result = await sendAgent(...args);
+							const { success, response, sessionId, error, originalAttachments } = result;
+							attachment?.check();
+							if (attachment && !success)
+								throw new MediaError(
+									controller.signal.aborted ? 'MediaCancelled' : 'MediaProcessFailed'
+								);
+							// Stop/uninstall may have purged this plugin's bindings while the
+							// provider was closing. A late successful result must not restore them.
+							if (controller.signal.aborted) {
+								return {
+									success: false,
+									response: null,
+									sessionId: null,
+									error: 'Agent run timed out or was cancelled',
+								};
+							}
+							// Quiet providers may finish without any progress callbacks. Check
+							// current grants again before releasing text or recording ownership.
+							assertBrokerAllowed(deps, pluginId, 'agents.send', p);
+							if (!deps.dispatchUnattendedAllowed?.(pluginId, agentId)) {
+								throw new Error('agents.send requires separate unattended consent');
+							}
+							assertTrustedActVerb(deps, pluginId);
+							if (
+								relayConversation &&
+								!isRelayConversationIdentity(pluginId, deps.getPluginSignature?.(pluginId))
+							) {
+								throw new Error('Relay conversation identity was revoked');
+							}
+							if (success && sessionId && !attachment && !hasConversation) {
+								providerSessions.remember(pluginId, agentId, sessionId);
+							}
+							if (pluginId === RELAY_PLUGIN_ID && !hasConversation) {
+								try {
+									await deps.recordRelayTurn?.(
+										agentId,
+										prompt,
+										{
+											success,
+											response,
+											sessionId,
+											error,
+										},
+										...(attachment ? [() => attachment.check()] : [])
+									);
+								} catch (recordError) {
+									if (attachment && recordError instanceof MediaError) throw recordError;
+									attachment?.check();
+									logger.error(`Could not record Relay turn: ${String(recordError)}`, '[Plugins]');
+								}
+							}
+							return {
+								...result,
+								success,
+								response,
+								sessionId,
+								...(error ? { error } : {}),
+								...(originalAttachments ? { originalAttachments } : {}),
+							};
+						};
+						const execute: typeof sendAgent = async (...runnerArgs) => {
+							if (originals !== undefined) {
+								const result = await mediaTools.forwardOriginal(
+									pluginId,
+									originals[0],
+									authorizeOriginal,
+									async (lease) => {
+										const abort = () => controller.abort(lease.signal.reason);
+										lease.signal.addEventListener('abort', abort, { once: true });
+										try {
+											lease.check();
+											return await invoke(lease, runnerArgs);
+										} finally {
+											lease.signal.removeEventListener('abort', abort);
+										}
+									}
+								);
+								// Cleanup and history recording may await. Original resume authority
+								// is minted only once both have drained under current consent.
+								authorizeOriginal();
+								if (controller.signal.aborted) throw new MediaError('MediaCancelled');
+								return result;
+							}
+							return await invoke(undefined, runnerArgs);
+						};
 						const authorize = () => {
 							assertBrokerAllowed(deps, pluginId, 'agents.send', p);
 							assertTrustedActVerb(deps, pluginId);
@@ -1660,17 +1796,22 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 								!isRelayConversationIdentity(pluginId, deps.getPluginSignature?.(pluginId))
 							)
 								throw new Error('Relay conversation authorization revoked');
+							if (originals !== undefined) authorizeOriginal();
 						};
 						const result = hasConversation
 							? await deps.relayConversations!.send(
 									agentId,
 									prompt,
-									opts as unknown as RelaySendOptions,
+									{
+										...opts,
+										...(originals ? { originalAttachments: originals } : {}),
+									} as unknown as RelaySendOptions,
 									controller.signal,
 									onProgress,
-									authorize
+									authorize,
+									execute
 								)
-							: await sendAgent(
+							: await execute(
 									agentId,
 									prompt,
 									opts.sessionId as string | undefined,
@@ -1678,55 +1819,40 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 									pluginId === RELAY_PLUGIN_ID ? 'relay' : 'auto',
 									onProgress
 								);
-						const { success, response, sessionId, error } = result;
-						// Stop/uninstall may have purged this plugin's bindings while the
-						// provider was closing. A late successful result must not restore them.
-						if (controller.signal.aborted) {
+						if (hasConversation) authorize();
+						if (controller.signal.aborted)
 							return {
 								success: false,
 								response: null,
 								sessionId: null,
 								error: 'Agent run timed out or was cancelled',
 							};
-						}
-						// Quiet providers may finish without any progress callbacks. Check
-						// current grants again before releasing text or recording ownership.
-						assertBrokerAllowed(deps, pluginId, 'agents.send', p);
-						if (!deps.dispatchUnattendedAllowed?.(pluginId, agentId)) {
-							throw new Error('agents.send requires separate unattended consent');
-						}
-						assertTrustedActVerb(deps, pluginId);
-						if (
-							relayConversation &&
-							!isRelayConversationIdentity(pluginId, deps.getPluginSignature?.(pluginId))
-						) {
-							throw new Error('Relay conversation identity was revoked');
-						}
-						if (success && sessionId) {
-							providerSessions.remember(pluginId, agentId, sessionId);
-						}
-						if (pluginId === RELAY_PLUGIN_ID && !('replayed' in result && result.replayed)) {
-							try {
-								await deps.recordRelayTurn?.(agentId, prompt, {
-									success,
-									response,
-									sessionId,
-									error,
-								});
-							} catch (recordError) {
-								logger.error(`Could not record Relay turn: ${String(recordError)}`, '[Plugins]');
+						if (originals !== undefined) {
+							authorizeOriginal();
+							if (result.success && result.sessionId) {
+								const sessionId = result.sessionId;
+								commitOriginalOwnership = () =>
+									providerSessions.remember(pluginId, agentId, sessionId);
+								if (!context?.setResponseGuard) commitOriginalOwnership();
 							}
+						} else if (hasConversation && result.success && result.sessionId) {
+							providerSessions.remember(pluginId, agentId, result.sessionId);
 						}
 						return {
-							success,
-							response,
-							sessionId,
-							...(error ? { error } : {}),
-							...(relayConversation && {
-								conversationId: 'conversationId' in result ? result.conversationId : undefined,
-								tabId: 'tabId' in result ? result.tabId : undefined,
-								...('replayed' in result && result.replayed ? { replayed: true } : {}),
-							}),
+							success: result.success,
+							response: result.response,
+							sessionId: result.sessionId,
+							...(result.error ? { error: result.error } : {}),
+							...(result.originalAttachments
+								? { originalAttachments: result.originalAttachments }
+								: {}),
+							...(hasConversation
+								? {
+										conversationId: 'conversationId' in result ? result.conversationId : undefined,
+										tabId: 'tabId' in result ? result.tabId : undefined,
+										...('replayed' in result && result.replayed ? { replayed: true } : {}),
+									}
+								: {}),
 						};
 					} finally {
 						runs.delete(controller);
