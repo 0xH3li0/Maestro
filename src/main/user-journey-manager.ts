@@ -49,6 +49,12 @@ const PRUNE_AGE_SLACK_MS = DAY_MS;
 /** What the store remembers about a file between appends, so an append never reads it. */
 interface FileState {
 	count: number;
+	/**
+	 * The file does not end with a newline: a write was cut short by a crash.
+	 * The next append starts on a new line, so it is not glued onto the
+	 * fragment and lost with it.
+	 */
+	tornTail: boolean;
 	oldestTs: number | undefined;
 	last: UserJourneyEntry | undefined;
 }
@@ -69,18 +75,23 @@ function serializeLine(entry: UserJourneyEntry): string {
 	return `${JSON.stringify(entry)}\n`;
 }
 
-async function readFileEntries(agentId: string): Promise<UserJourneyEntry[]> {
+async function readFileText(agentId: string): Promise<string> {
 	try {
-		return parseJourneyJsonl(await fsp.readFile(getJourneyFilePath(agentId), 'utf-8'));
+		return await fsp.readFile(getJourneyFilePath(agentId), 'utf-8');
 	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+		if ((error as NodeJS.ErrnoException).code === 'ENOENT') return '';
 		throw error;
 	}
 }
 
-function stateOf(entries: UserJourneyEntry[]): FileState {
+async function readFileEntries(agentId: string): Promise<UserJourneyEntry[]> {
+	return parseJourneyJsonl(await readFileText(agentId));
+}
+
+function stateOf(entries: UserJourneyEntry[], text = ''): FileState {
 	return {
 		count: entries.length,
+		tornTail: text.length > 0 && !text.endsWith('\n'),
 		oldestTs: entries[0]?.ts,
 		last: entries[entries.length - 1],
 	};
@@ -108,14 +119,17 @@ export async function appendJourneyEntry(raw: UserJourneyEntry): Promise<boolean
 		try {
 			let state = fileStates.get(agentId);
 			if (!state) {
-				state = stateOf(await readFileEntries(agentId));
+				const text = await readFileText(agentId);
+				state = stateOf(parseJourneyJsonl(text), text);
 				fileStates.set(agentId, state);
 			}
 			if (shouldCollapseJourneyEntry(state.last, entry)) return false;
 
 			const filePath = getJourneyFilePath(agentId);
 			if (state.count === 0) await fsp.mkdir(path.dirname(filePath), { recursive: true });
-			await fsp.appendFile(filePath, serializeLine(entry), 'utf-8');
+			const line = serializeLine(entry);
+			await fsp.appendFile(filePath, state.tornTail ? `\n${line}` : line, 'utf-8');
+			state.tornTail = false;
 			state.count += 1;
 			state.oldestTs = state.oldestTs === undefined ? entry.ts : Math.min(state.oldestTs, entry.ts);
 			state.last = entry;
@@ -152,6 +166,69 @@ export async function readJourney(
 		return [];
 	}
 	return filterJourneyEntries(entries, options);
+}
+
+/** How often the running app re-applies retention to every journey file. */
+const PRUNE_SWEEP_INTERVAL_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * Rewrite one agent's file to its limits when it holds expired or excess
+ * entries. Queued with that agent's appends. Never throws.
+ */
+async function pruneJourneyFile(agentId: string, now: number): Promise<boolean> {
+	return writeQueue.enqueue(agentId, async () => {
+		try {
+			const text = await readFileText(agentId);
+			if (!text) return false;
+			const entries = parseJourneyJsonl(text);
+			const kept = applyJourneyLimits(entries, now);
+			if (kept.length === entries.length) return false;
+			const filePath = getJourneyFilePath(agentId);
+			if (kept.length === 0) await fsp.unlink(filePath);
+			else await atomicWriteFile(filePath, kept.map(serializeLine).join(''));
+			fileStates.set(agentId, stateOf(kept));
+			return true;
+		} catch (error) {
+			fileStates.delete(agentId);
+			logger.warn(`Failed to prune journey for agent ${agentId}: ${error}`, LOG_CONTEXT);
+			return false;
+		}
+	});
+}
+
+/**
+ * Apply retention to every journey file, so entries past
+ * `JOURNEY_RETENTION_DAYS` leave the disk even for an agent that records
+ * nothing new (idle, or recording switched off). Resolves to the number of
+ * files rewritten. Never throws.
+ */
+export async function pruneAllJourneys(now: number = Date.now()): Promise<number> {
+	let names: string[];
+	try {
+		names = await fsp.readdir(getJourneyDir());
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+			logger.warn(`Failed to list journey files: ${error}`, LOG_CONTEXT);
+		}
+		return 0;
+	}
+	let pruned = 0;
+	for (const name of names) {
+		if (!name.endsWith('.jsonl')) continue;
+		if (await pruneJourneyFile(name.slice(0, -'.jsonl'.length), now)) pruned++;
+	}
+	if (pruned > 0) logger.info(`Pruned ${pruned} journey file(s) to retention`, LOG_CONTEXT);
+	return pruned;
+}
+
+let pruneSweepTimer: ReturnType<typeof setInterval> | null = null;
+
+/** Sweep retention now and every few hours while the app runs. Idempotent. */
+export function startJourneyRetentionSweep(): void {
+	if (pruneSweepTimer) return;
+	void pruneAllJourneys();
+	pruneSweepTimer = setInterval(() => void pruneAllJourneys(), PRUNE_SWEEP_INTERVAL_MS);
+	pruneSweepTimer.unref?.();
 }
 
 /** Delete an agent's journey file. Called when the agent is removed. */

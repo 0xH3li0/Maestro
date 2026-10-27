@@ -104,14 +104,20 @@ describe('readTimeline', () => {
 		expect(runGit).toHaveBeenCalledWith('/repo', expect.arrayContaining(['log', '--first-parent']));
 	});
 
-	it('treats a failed or throwing git as no commits', async () => {
-		expect((await readTimeline(input({ runGit: async () => null }))).events).toHaveLength(2);
-		const throwing = input({
-			runGit: async () => {
-				throw new Error('spawn git ENOENT');
-			},
-		});
-		expect((await readTimeline(throwing)).events).toHaveLength(2);
+	it('reads a refusing git as no commits, and a git that never answered as a note', async () => {
+		const refused = await readTimeline(input({ runGit: async () => null }));
+		expect(refused.events).toHaveLength(2);
+		expect(refused.notes).toEqual([]);
+
+		const throwing = await readTimeline(
+			input({
+				runGit: async () => {
+					throw new Error('ETIMEDOUT');
+				},
+			})
+		);
+		expect(throwing.events).toHaveLength(2);
+		expect(throwing.notes).toEqual(['git: no commits from /repo (ETIMEDOUT)']);
 	});
 
 	it('greps the line text and applies the caps', async () => {
@@ -119,6 +125,33 @@ describe('readTimeline', () => {
 			'journey',
 		]);
 		expect((await readTimeline(input({ tail: 1 }))).events.map((e) => e.source)).toEqual(['git']);
+	});
+
+	it('searches and bounds the window before the read cap, so an older match survives', async () => {
+		// 600 journey saves in the window, only the OLDEST of which matches.
+		write(
+			journeyFilePath(dir, 'agent-1'),
+			jsonl(
+				Array.from({ length: 600 }, (_, i) => ({
+					ts: NOW - 50 * MIN + i,
+					agentId: 'agent-1',
+					kind: 'file.save',
+					target: i === 0 ? '/repo/needle.ts' : `/repo/f${i}.ts`,
+				}))
+			)
+		);
+		const searched = await readTimeline(input({ sources: ['journey'], grep: /needle/ }));
+		expect(searched.events.map((e) => e.text)).toEqual(['user saved needle.ts']);
+
+		// An --until before the newest 500 still finds the older entries.
+		const early = await readTimeline(input({ sources: ['journey'], untilMs: NOW - 50 * MIN + 10 }));
+		expect(early.events).toHaveLength(11);
+	});
+
+	it('greps commits after reading past the usual cap', async () => {
+		const runGit = vi.fn(async (_cwd: string, _args: string[]) => '');
+		await readTimeline(input({ sources: ['git'], grep: /x/, runGit }));
+		expect(runGit.mock.calls[0][1]).toContain('-n5000');
 	});
 
 	describe('Computer History', () => {

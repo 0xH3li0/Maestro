@@ -17,6 +17,7 @@ import {
 	appendJourneyEntry,
 	getJourneyFilePath,
 	readJourney,
+	startJourneyRetentionSweep,
 	type ReadJourneyOptions,
 } from '../../user-journey-manager';
 import { isUserJourneyKind, type UserJourneyEntry } from '../../../shared/userJourney';
@@ -52,6 +53,9 @@ function toReadOptions(raw: unknown): ReadJourneyOptions {
 }
 
 export function registerJourneyHandlers(): void {
+	// Retention holds for files that get no new entries too (idle agents,
+	// recording switched off), not only on append.
+	startJourneyRetentionSweep();
 	ipcMain.handle(
 		'journey:append',
 		withIpcErrorLogging(opts('append'), async (entry: UserJourneyEntry) =>

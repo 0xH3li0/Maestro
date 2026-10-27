@@ -7,6 +7,8 @@
  * cannot be read adds a note and no events.
  */
 
+import * as fs from 'fs';
+
 import { computerHistoryDir } from '../../computer-history/paths';
 import { queryEvents } from '../../computer-history/reader';
 import {
@@ -39,7 +41,11 @@ export interface TimelineAgent {
 	gitCwd?: string;
 }
 
-/** Runs `git` in `cwd` and resolves its stdout, or null when git failed or timed out. */
+/**
+ * Runs `git` in `cwd` and resolves its stdout, or null when git answered with
+ * a failure (not a repository, no commits). Throws when git could not answer
+ * at all (missing, timed out): the timeline reports that as a note.
+ */
 export type TimelineGitRunner = (cwd: string, args: string[]) => Promise<string | null>;
 
 export interface ReadTimelineInput extends SelectTimelineOptions {
@@ -69,15 +75,36 @@ export interface ReadTimelineResult {
 const GIT_TIMEOUT_MS = 5_000;
 
 /**
- * Most events read from one source of one agent before merging. The merge
- * applies the real caps; this only bounds the read.
+ * Most events kept from one source of one agent before merging, AFTER the
+ * window and the search are applied. The merge applies the real caps; this
+ * only bounds memory.
  */
 const READ_CAP_PER_SOURCE = 500;
 
+/** How many commits `git log` may return while a search narrows them afterwards. */
+const GIT_SEARCH_READ_CAP = 5_000;
+
 const defaultRunGit: TimelineGitRunner = async (cwd, args) => {
+	// A working directory that is gone (a removed agent's folder) has no
+	// commits; without this check its spawn ENOENT would read as git missing.
+	if (!fs.existsSync(cwd)) return null;
 	const result = await execFileNoThrow('git', args, cwd, { timeout: GIT_TIMEOUT_MS });
-	return result.exitCode === 0 ? result.stdout : null;
+	if (result.exitCode === 0) return result.stdout;
+	// A string code (ETIMEDOUT, ENOENT) means git never answered; a number is
+	// git's own refusal, such as a folder that is not a repository.
+	if (typeof result.exitCode === 'string') throw new Error(result.exitCode);
+	return null;
 };
+
+/** The newest `cap` events that match `grep`, oldest first. */
+function newestMatching(
+	events: TimelineEvent[],
+	grep: RegExp | undefined,
+	cap: number
+): TimelineEvent[] {
+	const matching = grep ? events.filter((event) => timelineEventMatches(event, grep)) : events;
+	return matching.length > cap ? matching.slice(-cap) : matching;
+}
 
 /** A read cap that still covers the caller's own caps. */
 function readCap(input: ReadTimelineInput): number {
@@ -85,7 +112,7 @@ function readCap(input: ReadTimelineInput): number {
 }
 
 export async function readTimeline(input: ReadTimelineInput): Promise<ReadTimelineResult> {
-	const { paths, agents, sources, sinceMs, untilMs } = input;
+	const { paths, agents, sources, sinceMs, untilMs, grep } = input;
 	const now = input.now ?? Date.now();
 	const wanted = new Set(sources);
 	const cap = readCap(input);
@@ -93,26 +120,33 @@ export async function readTimeline(input: ReadTimelineInput): Promise<ReadTimeli
 	const batches: Promise<TimelineEvent[]>[] = [];
 
 	for (const agent of agents) {
+		// The window and the search apply before the cap, so an older match is
+		// never cut for the sake of newer lines that do not match.
 		if (wanted.has('history')) {
 			batches.push(
-				readRecentHistory(paths, agent.id, { sinceMs, untilMs, limit: cap }).then((entries) =>
-					entries.map((entry) => historyEntryToTimelineEvent(entry, agent.id))
+				readRecentHistory(paths, agent.id, {
+					sinceMs,
+					untilMs,
+					limit: grep ? undefined : cap,
+				}).then((entries) =>
+					newestMatching(
+						entries.map((entry) => historyEntryToTimelineEvent(entry, agent.id)),
+						grep,
+						cap
+					)
 				)
 			);
 		}
 		if (wanted.has('journey')) {
 			const entries = readJourneyFile(
 				journeyFilePath(paths.userDataDir, agent.id),
-				{ since: sinceMs, tail: cap },
+				{ since: sinceMs },
 				now
 			);
-			batches.push(
-				Promise.resolve(
-					entries
-						.filter((entry) => untilMs === undefined || entry.ts <= untilMs)
-						.map((entry) => journeyEntryToTimelineEvent(entry, { cwd: agent.cwd }))
-				)
-			);
+			const events = entries
+				.filter((entry) => untilMs === undefined || entry.ts <= untilMs)
+				.map((entry) => journeyEntryToTimelineEvent(entry, { cwd: agent.cwd }));
+			batches.push(Promise.resolve(newestMatching(events, grep, cap)));
 		}
 	}
 
@@ -125,9 +159,15 @@ export async function readTimeline(input: ReadTimelineInput): Promise<ReadTimeli
 		}
 		for (const [cwd, agentId] of byCwd) {
 			batches.push(
-				runGit(cwd, gitTimelineArgs(sinceMs, untilMs, cap))
-					.catch(() => null)
-					.then((stdout) => (stdout === null ? [] : parseGitTimeline(stdout, agentId)))
+				runGit(cwd, gitTimelineArgs(sinceMs, untilMs, grep ? GIT_SEARCH_READ_CAP : cap))
+					.then((stdout) =>
+						stdout === null ? [] : newestMatching(parseGitTimeline(stdout, agentId), grep, cap)
+					)
+					.catch((error: unknown) => {
+						const reason = error instanceof Error ? error.message : String(error);
+						notes.push(`git: no commits from ${cwd} (${reason})`);
+						return [];
+					})
 			);
 		}
 	}
@@ -137,10 +177,10 @@ export async function readTimeline(input: ReadTimelineInput): Promise<ReadTimeli
 			queryEvents(computerHistoryDir(paths.userDataDir), {
 				sinceMs,
 				untilMs,
-				grep: input.grep,
+				grep,
 				// Without a search, app switches alone: everything else is too
 				// dense for a timeline and one `computer-history query` away.
-				kinds: input.grep ? undefined : ['app.activated'],
+				kinds: grep ? undefined : ['app.activated'],
 				limit: cap,
 			})
 				.then((result) =>
@@ -159,11 +199,9 @@ export async function readTimeline(input: ReadTimelineInput): Promise<ReadTimeli
 		);
 	}
 
-	// Computer History already searched the full captured text; its lines quote
-	// only the start of it, so they are not searched again here.
-	const { grep } = input;
-	const events = (await Promise.all(batches))
-		.flat()
-		.filter((event) => !grep || event.source === 'computer' || timelineEventMatches(event, grep));
+	// Every source searched its own events above. Computer History searched the
+	// full captured text, which its lines quote only the start of, so the merge
+	// does not search again.
+	const events = (await Promise.all(batches)).flat();
 	return { events: selectTimelineEvents(events, { ...input, grep: undefined }), notes };
 }

@@ -54,6 +54,13 @@ vi.mock('fs/promises', () => ({
 	unlink: vi.fn(async (p: string) => {
 		if (!files.delete(p)) throw enoent();
 	}),
+	readdir: vi.fn(async (dir: string) => {
+		const names = [...files.keys()]
+			.filter((p) => p.startsWith(`${dir}/`))
+			.map((p) => p.slice(dir.length + 1));
+		if (names.length === 0) throw enoent();
+		return names;
+	}),
 }));
 
 import * as fsp from 'fs/promises';
@@ -256,6 +263,51 @@ describe('user-journey-manager', () => {
 			expect(fsp.writeFile).not.toHaveBeenCalled();
 			// Readers still never see it.
 			expect((await m.readJourney('agent-1')).map((e) => e.target)).toEqual(['/new.ts']);
+		});
+	});
+
+	describe('a write cut short by a crash', () => {
+		it('starts the next entry on a new line, so the fragment costs only itself', async () => {
+			const filePath = m.getJourneyFilePath('agent-1');
+			files.set(filePath, `${JSON.stringify(entry({ target: '/a.ts' }))}\n{"ts":17`);
+
+			await expect(m.appendJourneyEntry(entry({ target: '/b.ts' }))).resolves.toBe(true);
+			await m.appendJourneyEntry(entry({ target: '/c.ts' }));
+
+			expect((await m.readJourney('agent-1')).map((e) => e.target)).toEqual([
+				'/a.ts',
+				'/b.ts',
+				'/c.ts',
+			]);
+		});
+	});
+
+	describe('pruneAllJourneys', () => {
+		const stale = () =>
+			entry({ ts: NOW - (JOURNEY_RETENTION_DAYS + 1) * DAY_MS, target: '/old.ts' });
+
+		it('drops expired entries from every file, with no new append needed', async () => {
+			const idle = m.getJourneyFilePath('agent-idle');
+			const gone = m.getJourneyFilePath('agent-gone');
+			const fresh = m.getJourneyFilePath('agent-fresh');
+			files.set(
+				idle,
+				`${JSON.stringify(stale())}\n${JSON.stringify(entry({ target: '/new.ts' }))}\n`
+			);
+			files.set(gone, `${JSON.stringify(stale())}\n`);
+			files.set(fresh, `${JSON.stringify(entry())}\n`);
+
+			await expect(m.pruneAllJourneys(NOW)).resolves.toBe(2);
+
+			expect(linesOf(idle).map((e) => e.target)).toEqual(['/new.ts']);
+			// Every entry expired: the file is removed, not left empty.
+			expect(files.has(gone)).toBe(false);
+			// A file with nothing expired is not rewritten.
+			expect(fsp.writeFile).toHaveBeenCalledTimes(1);
+		});
+
+		it('reads a missing journey folder as nothing to do', async () => {
+			await expect(m.pruneAllJourneys(NOW)).resolves.toBe(0);
 		});
 	});
 

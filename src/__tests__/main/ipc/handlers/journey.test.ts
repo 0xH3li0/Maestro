@@ -33,10 +33,12 @@ const manager = {
 	appendJourneyEntry: vi.fn(),
 	readJourney: vi.fn(),
 	getJourneyFilePath: vi.fn(),
+	startJourneyRetentionSweep: vi.fn(),
 };
 
 vi.mock('../../../../main/user-journey-manager', () => ({
 	appendJourneyEntry: (...args: unknown[]) => manager.appendJourneyEntry(...args),
+	startJourneyRetentionSweep: () => manager.startJourneyRetentionSweep(),
 	readJourney: (...args: unknown[]) => manager.readJourney(...args),
 	getJourneyFilePath: (...args: unknown[]) => manager.getJourneyFilePath(...args),
 }));
@@ -61,6 +63,10 @@ describe('journey handlers', () => {
 		manager.readJourney.mockResolvedValue([ENTRY]);
 		manager.getJourneyFilePath.mockReturnValue('/data/journey/agent-1.jsonl');
 		registerJourneyHandlers();
+	});
+
+	it('starts the retention sweep when the handlers register', () => {
+		expect(manager.startJourneyRetentionSweep).toHaveBeenCalledTimes(1);
 	});
 
 	it('registers exactly the three journey channels', () => {
