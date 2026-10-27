@@ -33,6 +33,12 @@
  * Reconnect with backoff on any close the server may lift; stop for good on
  * the ones it will not (auth, revoked, kicked, superseded, expired, archived).
  *
+ * Sleep and quit (spec section 5, contract obligation 5): main pushes
+ * `sketch:presence`, and {@link setSketchRoomsAway} suspends every client:
+ * `bot.presence {online:false}` goes out before the socket closes, and
+ * nothing retries until wake, which reconnects (the next `welcome` announces
+ * the bot again, D4).
+ *
  * Baseline: the room is assumed to hold the scene as it was when the client
  * started, or `options.baseline` when main just uploaded a snapshot (share,
  * rotate): then every element newer than the baseline goes out as a delta
@@ -70,7 +76,11 @@ import {
 } from '../../shared/sketch/protocol';
 import { sketchRoomSocketUrl } from '../../shared/sketch/server';
 import type { SketchScreeningChange } from '../../shared/sketch/cloud-consent';
-import type { SketchElementVersion, SketchSceneForSnapshot } from '../../shared/sketch/commands';
+import type {
+	SketchElementVersion,
+	SketchPresenceChange,
+	SketchSceneForSnapshot,
+} from '../../shared/sketch/commands';
 import { generateUUID } from '../../shared/uuid';
 import { loadExcalidraw } from '../components/SketchBook/excalidrawAssets';
 import {
@@ -136,6 +146,12 @@ export interface SketchRoomCloseAction {
 }
 
 const LOST_CONNECTION = 'Lost the connection to the room. Reconnecting.';
+
+/** The Sketch tab's notice while the client is suspended (sleep). */
+export const SKETCH_ROOM_SUSPENDED_NOTICE: SketchRoomNotice = {
+	tone: 'info',
+	text: 'Left the room while this computer sleeps. It reconnects on wake.',
+};
 
 /** Every close code of contract section 5, with the Sketch tab's message. */
 export const SKETCH_ROOM_CLOSE_ACTIONS: Readonly<Record<number, SketchRoomCloseAction>> = {
@@ -368,6 +384,10 @@ export class SketchRoomClient {
 
 	private reportedScreening: Screening | null = null;
 	private botAnnounced = false;
+	/** Set by {@link suspend}: no socket and no retry until {@link resume}. */
+	private suspended = false;
+	/** `start()` finished its setup, so {@link resume} may connect. */
+	private connectable = false;
 	private readonly listeners = new Set<SketchRoomFrameListener>();
 	private unsubscribeStore: (() => void) | null = null;
 	private unsubscribeScreening: (() => void) | null = null;
@@ -416,7 +436,9 @@ export class SketchRoomClient {
 			if (room) this.reportScreening(room.screening);
 		});
 		this.updateRoom(() => initialRoomState(this.roomId, this.syncedSeq));
-		this.connect();
+		this.connectable = true;
+		if (this.suspended) this.showSuspended();
+		else this.connect();
 	}
 
 	/** The newest op seq the scene includes. */
@@ -459,14 +481,38 @@ export class SketchRoomClient {
 		return () => this.listeners.delete(listener);
 	}
 
-	/** Announce or withdraw the bot (sleep, resume, quit). False without a bot or a room. */
-	setBotOnline(online: boolean): boolean {
-		const bot = this.options.bot;
-		if (!bot || !this.isJoined() || this.reportedScreening === null) return false;
-		if (!this.sendFrame({ t: 'bot.presence', ...bot, online })) return false;
-		this.botAnnounced = online;
-		if (online) this.scheduleFlush();
-		return true;
+	/**
+	 * Leave the room until {@link resume} (sleep, quit). An announced bot goes
+	 * offline before the socket closes (contract obligation 5), so the server
+	 * fails the pending requests with `bot_offline` at once. Nothing retries
+	 * meanwhile; edits made while suspended wait like offline edits.
+	 */
+	suspend(): void {
+		if (this.phase === 'stopped' || this.suspended) return;
+		this.suspended = true;
+		const wasJoined = this.isJoined();
+		if (wasJoined && this.botAnnounced && this.options.bot) {
+			this.sendFrame({ t: 'bot.presence', ...this.options.bot, online: false });
+		}
+		this.generation++;
+		this.clearTimers();
+		this.socket?.close(1000, 'suspended');
+		this.socket = null;
+		this.phase = 'idle';
+		this.heldDeltas = [];
+		this.reportedScreening = null;
+		this.botAnnounced = false;
+		if (wasJoined) this.leaveRoom();
+		if (this.connectable) this.showSuspended();
+	}
+
+	/** Reconnect after {@link suspend} (wake). The next `welcome` announces the bot (D4). */
+	resume(): void {
+		if (!this.suspended) return;
+		this.suspended = false;
+		if (this.phase !== 'idle' || !this.connectable) return;
+		this.reconnectAttempt = 0;
+		this.connect();
 	}
 
 	/**
@@ -570,6 +616,19 @@ export class SketchRoomClient {
 			this.reconnectTimer = null;
 			if (this.phase === 'idle') this.connect();
 		}, delay);
+	}
+
+	private showSuspended(): void {
+		this.updateRoom((room) =>
+			room
+				? {
+						...room,
+						connection: 'reconnecting',
+						notice: SKETCH_ROOM_SUSPENDED_NOTICE,
+						botOnline: false,
+					}
+				: room
+		);
 	}
 
 	/** Tell the consent module the room is no longer live (its socket left). */
@@ -999,6 +1058,38 @@ export class SketchRoomClient {
 
 const clients = new Map<string, SketchRoomClient>();
 
+/** The last `sketch:presence` push said offline (sleep, quit): new clients start suspended. */
+let roomsAway = false;
+let unsubscribePresence: (() => void) | null = null;
+
+/**
+ * Suspend every room (sleep, quit: the bot offline frame, then the socket
+ * closes) or resume them (wake). Main's `sketch:presence` push calls it.
+ */
+export function setSketchRoomsAway(away: boolean): void {
+	roomsAway = away;
+	for (const client of clients.values()) {
+		if (away) client.suspend();
+		else client.resume();
+	}
+}
+
+/** Follow main's sleep, wake and quit pushes while this window holds a room. */
+function followPresence(): void {
+	unsubscribePresence ??= window.maestro.sketch.onPresence((change: SketchPresenceChange) =>
+		setSketchRoomsAway(!change.online)
+	);
+}
+
+function forgetClient(sketchId: string, client?: SketchRoomClient): void {
+	if (client && clients.get(sketchId) !== client) return;
+	clients.delete(sketchId);
+	if (clients.size === 0) {
+		unsubscribePresence?.();
+		unsubscribePresence = null;
+	}
+}
+
 /**
  * Connect a shared sketch to its room. A client already running for the
  * sketch is stopped first, so one sketch never holds two sockets.
@@ -1010,11 +1101,13 @@ export async function connectSketchRoom(
 	clients.get(options.sketchId)?.stop();
 	const client = new SketchRoomClient(options, deps);
 	clients.set(options.sketchId, client);
+	followPresence();
+	if (roomsAway) client.suspend();
 	try {
 		await client.start();
 	} catch (error) {
 		client.stop();
-		if (clients.get(options.sketchId) === client) clients.delete(options.sketchId);
+		forgetClient(options.sketchId, client);
 		throw error;
 	}
 	return client;
@@ -1028,5 +1121,5 @@ export function getSketchRoomClient(sketchId: string): SketchRoomClient | undefi
 /** Stop the sketch's room client and forget it. */
 export function disconnectSketchRoom(sketchId: string): void {
 	clients.get(sketchId)?.stop();
-	clients.delete(sketchId);
+	forgetClient(sketchId);
 }

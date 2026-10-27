@@ -644,13 +644,14 @@ Managed by `src/main/app-lifecycle/quit-handler.ts`.
 
 The `performCleanup()` function runs synchronously from `before-quit` (async operations are fire-and-forget):
 
-1. **Stop history manager watcher** - `historyManager.stopWatching()`
-2. **Stop CLI activity watcher** - `cliWatcher.stop()`
-3. **Clean up grooming sessions** - Kill any active context merge/transfer operations
-4. **Kill all processes** - `processManager.killAll()`
-5. **Stop tunnel** - `tunnelManager.stop()` (fire and forget)
-6. **Stop web server** - `webServer.stop()` (fire and forget)
-7. **Close stats database** - `closeStatsDB()` (synchronous)
+1. **Take Sketch Book rooms offline** - `notifySketchRoomsQuitting()` pushes `sketch:presence {online:false}`; each window sends `bot.presence {online:false}` and closes its room sockets (`src/main/sketch/sketch-presence.ts`)
+2. **Stop history manager watcher** - `historyManager.stopWatching()`
+3. **Stop CLI activity watcher** - `cliWatcher.stop()`
+4. **Clean up grooming sessions** - Kill any active context merge/transfer operations
+5. **Kill all processes** - `processManager.killAll()`
+6. **Stop tunnel** - `tunnelManager.stop()` (fire and forget)
+7. **Stop web server** - `webServer.stop()` (fire and forget)
+8. **Close stats database** - `closeStatsDB()` (synchronous)
 
 ### Platform-Specific Quit Behavior
 

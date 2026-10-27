@@ -179,6 +179,19 @@ describe('Sketch Book Preload API', () => {
 		expect(mockRemoveListener).toHaveBeenCalledWith('sketch:botPolicyChanged', handler);
 	});
 
+	it('listens for sleep, wake and quit presence pushes and stops on unsubscribe', () => {
+		const callback = vi.fn();
+		const unsubscribe = api.onPresence(callback);
+
+		expect(mockOn).toHaveBeenCalledWith('sketch:presence', expect.any(Function));
+		const handler = mockOn.mock.calls[0][1] as (...args: unknown[]) => void;
+		handler({}, { online: false, reason: 'quit' });
+		expect(callback).toHaveBeenCalledWith({ online: false, reason: 'quit' });
+
+		unsubscribe();
+		expect(mockRemoveListener).toHaveBeenCalledWith('sketch:presence', handler);
+	});
+
 	it('answers on the response channel main named', () => {
 		api.sendRemoteCommandResponse('remote:sketchCommand:response:1', {
 			success: true,

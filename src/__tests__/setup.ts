@@ -656,6 +656,7 @@ const mockMaestro = {
 		}),
 		onScreeningChanged: vi.fn(() => () => {}),
 		onBotPolicyChanged: vi.fn(() => () => {}),
+		onPresence: vi.fn(() => () => {}),
 	},
 	web: {
 		onLiteReady: vi.fn(() => () => {}),

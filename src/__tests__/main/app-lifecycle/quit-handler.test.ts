@@ -472,6 +472,42 @@ describe('app-lifecycle/quit-handler', () => {
 			expect(secondFlush).toBeGreaterThan(killOrder);
 		});
 
+		it('takes the sketch rooms offline before any other cleanup', async () => {
+			const notifySketchRoomsQuitting = vi.fn();
+			const { createQuitHandler } = await import('../../../main/app-lifecycle/quit-handler');
+
+			const quitHandler = createQuitHandler({
+				...deps,
+				notifySketchRoomsQuitting,
+			} as Parameters<typeof createQuitHandler>[0]);
+			quitHandler.setup();
+			quitHandler.confirmQuit();
+
+			beforeQuitHandler!({ preventDefault: vi.fn() });
+
+			expect(notifySketchRoomsQuitting).toHaveBeenCalledTimes(1);
+			const notified = notifySketchRoomsQuitting.mock.invocationCallOrder[0];
+			expect(notified).toBeLessThan(mockHistoryManager.stopWatching.mock.invocationCallOrder[0]);
+			expect(notified).toBeLessThan(mockProcessManager.killAll.mock.invocationCallOrder[0]);
+		});
+
+		it('finishes cleanup when taking the sketch rooms offline throws', async () => {
+			const { createQuitHandler } = await import('../../../main/app-lifecycle/quit-handler');
+
+			const quitHandler = createQuitHandler({
+				...deps,
+				notifySketchRoomsQuitting: () => {
+					throw new Error('window gone');
+				},
+			} as Parameters<typeof createQuitHandler>[0]);
+			quitHandler.setup();
+			quitHandler.confirmQuit();
+
+			expect(() => beforeQuitHandler!({ preventDefault: vi.fn() })).not.toThrow();
+			expect(mockProcessManager.killAll).toHaveBeenCalled();
+			expect(deps.closeStatsDB).toHaveBeenCalled();
+		});
+
 		it('disposes the Dataview indexes during cleanup', async () => {
 			const { createQuitHandler } = await import('../../../main/app-lifecycle/quit-handler');
 

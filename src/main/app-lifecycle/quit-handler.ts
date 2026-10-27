@@ -106,6 +106,12 @@ export interface QuitHandlerDependencies {
 	stopModelServer?: () => void;
 	/** Synchronous permanent authority fence, only after quit is confirmed. */
 	stopPluginToolAuthority?: () => void;
+	/**
+	 * Tells every window to send `bot.presence {online:false}` for its shared
+	 * sketches and close their room sockets. Runs first in cleanup, so the
+	 * windows have the whole exit grace window to get the frame out.
+	 */
+	notifySketchRoomsQuitting?: () => void;
 	/** Function to stop CLI watcher (optional, may not be started yet) */
 	stopCliWatcher?: () => void;
 	/** Function to stop settings file watcher (optional, may not be started yet) */
@@ -186,6 +192,7 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 		closeEmbeddingStore,
 		stopModelServer,
 		stopPluginToolAuthority,
+		notifySketchRoomsQuitting,
 		stopCliWatcher,
 		stopSettingsWatcher,
 		releaseDataDirLock,
@@ -360,6 +367,15 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 			logger.warn('Plugin tool authority retirement failed', 'Shutdown');
 		}
 		logger.info('Application shutting down', 'Shutdown');
+
+		// Sketch Book rooms first: the windows send the bot offline frame and close
+		// their sockets while the rest of cleanup runs (wire contract obligation 5).
+		try {
+			notifySketchRoomsQuitting?.();
+		} catch (err) {
+			logger.error(`Error taking sketch rooms offline on quit: ${err}`, 'Shutdown');
+			void captureException(err, { operation: 'shutdown:sketchPresence' });
+		}
 
 		// Land the last sessions write before anything else. Session persistence is
 		// normally deferred behind a short coalescing timer so it can't block the

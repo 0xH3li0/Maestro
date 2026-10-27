@@ -13,6 +13,7 @@
 import { ipcRenderer } from 'electron';
 import type { SaveToProjectOptions } from '../sketch/sketch-store';
 import type {
+	SketchPresenceChange,
 	SketchRendererRequest,
 	SketchRendererResult,
 	SketchRoomJoin,
@@ -52,6 +53,9 @@ const SCREENING_CHANGED_CHANNEL = 'sketch:screeningChanged';
 
 /** Matches `SKETCH_BOT_POLICY_CHANGED_CHANNEL` in `src/main/sketch/sketch-bot-policy.ts`. */
 const BOT_POLICY_CHANGED_CHANNEL = 'sketch:botPolicyChanged';
+
+/** Matches `SKETCH_PRESENCE_CHANNEL` in `src/main/sketch/sketch-presence.ts`. */
+const PRESENCE_CHANNEL = 'sketch:presence';
 
 /** Creates the Sketch Book API object for contextBridge exposure. */
 export function createSketchApi() {
@@ -165,6 +169,12 @@ export function createSketchApi() {
 			const handler = (_: unknown, change: SketchScreeningChange) => callback(change);
 			ipcRenderer.on(SCREENING_CHANGED_CHANNEL, handler);
 			return () => ipcRenderer.removeListener(SCREENING_CHANGED_CHANNEL, handler);
+		},
+		/** Sleep and quit (`online:false`) or wake (`online:true`) for every room. Returns the unsubscribe. */
+		onPresence: (callback: (change: SketchPresenceChange) => void): (() => void) => {
+			const handler = (_: unknown, change: SketchPresenceChange) => callback(change);
+			ipcRenderer.on(PRESENCE_CHANNEL, handler);
+			return () => ipcRenderer.removeListener(PRESENCE_CHANNEL, handler);
 		},
 		/** The room's policy and whether B2 may be turned on (spec section 5). */
 		botPolicyStatus: (sketchId: string): Promise<SketchBotPolicyStatus> =>

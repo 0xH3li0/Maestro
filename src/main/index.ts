@@ -214,6 +214,7 @@ import { getSketchToolService } from './sketch/sketch-tools';
 import { syncSketchMcpServerOff, syncSketchMcpServerOn } from './sketch/sketch-mcp-install';
 import { refreshSketchCloudScreening } from './sketch/sketch-cloud-consent';
 import { refreshSketchBotPolicies } from './sketch/sketch-bot-policy';
+import { createSketchPresence } from './sketch/sketch-presence';
 import { initializeStatsDB, closeStatsDB } from './stats';
 import { evaluateCueGate } from './local-models/cue-gate';
 import { scoreCueInjectionText } from './local-models/cue-injection-screen';
@@ -616,6 +617,13 @@ let interactiveReplayController: InteractiveReplayController<ProcessSpawnConfig>
 // MULTI-WINDOW INVARIANT in safe-send.ts. Renderers filter agent-scoped
 // process:* events to the agents they own.
 const safeSend = createSafeSend(() => BrowserWindow.getAllWindows());
+
+// Sketch Book bot presence: sleep and quit take every shared sketch's bot
+// offline before its room socket closes, wake reconnects (spec section 5).
+const sketchPresence = createSketchPresence({
+	publish: safeSend,
+	isEnabled: () => isEncoreFeatureEnabled(store, 'sketchBook'),
+});
 
 // Hydrate capability snapshots from disk and wire IPC broadcaster so the
 // renderer status pills update live as detection / spawn-error events fire.
@@ -4188,6 +4196,7 @@ app
 		powerMonitor.on('suspend', () => {
 			logger.info('System suspending', 'PowerMonitor');
 			noteSystemSuspend();
+			sketchPresence.suspend();
 		});
 
 		// Listen for system resume (after sleep/suspend) and notify renderer
@@ -4211,6 +4220,8 @@ app
 			// code are right before the user looks, instead of up to one poll
 			// interval later.
 			void webServer?.recheckLocalAddress();
+			// Shared sketches reconnect; each room's welcome announces the bot again.
+			sketchPresence.resume();
 
 			// Apply any timezone change BEFORE reconciling: a laptop that flew
 			// across zones while asleep must measure the sleep gap and its missed
@@ -4270,6 +4281,7 @@ quitHandler = createQuitHandler({
 			if (manager && manager !== activeManager) manager.stopToolAuthority();
 		}
 	},
+	notifySketchRoomsQuitting: () => sketchPresence.quit(),
 	getMainWindow: () => mainWindow,
 	getProcessManager: () => processManager,
 	getWebServer: () => webServer,

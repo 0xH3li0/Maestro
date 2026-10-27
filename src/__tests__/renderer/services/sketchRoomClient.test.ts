@@ -17,9 +17,13 @@ import {
 	SKETCH_DELTA_MIN_INTERVAL_MS,
 	SKETCH_RATE_LIMITED_RECONNECT_MS,
 	SKETCH_ROOM_CLOSE_ACTIONS,
+	SKETCH_ROOM_SUSPENDED_NOTICE,
 	SKETCH_SNAPSHOT_EVERY_OPS,
 	SKETCH_SNAPSHOT_IDLE_MS,
 	SketchRoomClient,
+	connectSketchRoom,
+	disconnectSketchRoom,
+	setSketchRoomsAway,
 	sketchReconnectDelay,
 	type CreateSketchRoomSocket,
 	type ReconcileSketchElements,
@@ -32,7 +36,7 @@ import {
 	useSketchSessionStore,
 } from '../../../renderer/stores/sketchSessionStore';
 import type { SketchScreeningChange } from '../../../shared/sketch/cloud-consent';
-import type { SketchSceneForSnapshot } from '../../../shared/sketch/commands';
+import type { SketchPresenceChange, SketchSceneForSnapshot } from '../../../shared/sketch/commands';
 import {
 	decryptPayload,
 	encryptPayload,
@@ -109,7 +113,8 @@ interface FakeSocket {
 	url: string;
 	handlers: SketchRoomSocketHandlers;
 	sent: ClientFrame[];
-	closedByClient: { code?: number; reason?: string } | null;
+	/** `afterSent`: how many frames had been sent when the client closed it. */
+	closedByClient: { code?: number; reason?: string; afterSent: number } | null;
 }
 
 let sockets: FakeSocket[] = [];
@@ -120,7 +125,7 @@ const createSocket: CreateSketchRoomSocket = (url, handlers) => {
 	return {
 		send: (data) => socket.sent.push(JSON.parse(data) as ClientFrame),
 		close: (code, reason) => {
-			socket.closedByClient = { code, reason };
+			socket.closedByClient = { code, reason, afterSent: socket.sent.length };
 		},
 	};
 };
@@ -151,6 +156,7 @@ function sentTypes(target = socket()): ClientFrame['t'][] {
 const sketchApi = {
 	readScene: vi.fn<(id: string) => Promise<SketchScene>>(),
 	writeScene: vi.fn<(id: string, scene: SketchScene) => Promise<void>>(),
+	onPresence: vi.fn<(callback: (change: SketchPresenceChange) => void) => () => void>(),
 };
 
 let screeningValue: Screening;
@@ -867,5 +873,130 @@ describe('snapshots', () => {
 		await vi.advanceTimersByTimeAsync(SKETCH_SNAPSHOT_IDLE_MS);
 		await settle();
 		expect(uploadSnapshot).not.toHaveBeenCalled();
+	});
+});
+
+describe('sleep, wake and quit', () => {
+	const bot = { agentId: 'a1', name: 'Claude' };
+	let presence: ((change: SketchPresenceChange) => void) | null;
+
+	beforeEach(() => {
+		presence = null;
+		sketchApi.onPresence.mockReset().mockImplementation((callback) => {
+			presence = callback;
+			return () => {
+				presence = null;
+			};
+		});
+	});
+
+	afterEach(() => {
+		disconnectSketchRoom(SKETCH_ID);
+		setSketchRoomsAway(false);
+	});
+
+	/** Join through the registry, which follows main's `sketch:presence` pushes. */
+	async function connect(options: Partial<SketchRoomClientOptions> = { bot }): Promise<void> {
+		sketchApi.readScene.mockResolvedValueOnce(scene([el('a', 1)]));
+		client = await connectSketchRoom(
+			{
+				sketchId: SKETCH_ID,
+				roomId: ROOM_ID,
+				roomKey,
+				ownerToken: OWNER_TOKEN,
+				clientId: 'client-1',
+				...options,
+			},
+			{ createSocket, reconcile, screeningApi, uploadSnapshot, random: () => 0 }
+		);
+	}
+
+	function push(online: boolean, reason: SketchPresenceChange['reason']): void {
+		if (!presence) throw new Error('the registry does not follow presence');
+		presence({ online, reason });
+	}
+
+	it('before-quit sends bot.presence {online:false} before the socket closes, and nothing retries', async () => {
+		await connect();
+		await joinLive();
+		const joined = socket();
+		const sentBefore = joined.sent.length;
+
+		push(false, 'quit');
+
+		expect(joined.sent.slice(sentBefore)).toEqual([
+			{ t: 'bot.presence', agentId: 'a1', name: 'Claude', online: false },
+		]);
+		expect(joined.closedByClient).toEqual({
+			code: 1000,
+			reason: 'suspended',
+			afterSent: sentBefore + 1,
+		});
+		expect(screeningApi.setRoomLive).toHaveBeenLastCalledWith(SKETCH_ID, false);
+
+		await vi.advanceTimersByTimeAsync(60_000);
+		expect(sockets).toHaveLength(1);
+	});
+
+	it('sleep shows the room as away; wake reconnects and the next welcome announces the bot (D4)', async () => {
+		await connect();
+		await joinLive({ botOnline: true });
+
+		push(false, 'suspend');
+		expect(room()).toMatchObject({
+			connection: 'reconnecting',
+			notice: SKETCH_ROOM_SUSPENDED_NOTICE,
+			botOnline: false,
+		});
+		expect(room().screening.reported).toBeNull();
+
+		push(true, 'resume');
+		expect(sockets).toHaveLength(2);
+		await joinLive();
+
+		expect(sentTypes()).toEqual(['hello', 'screening.set', 'bot.presence']);
+		expect(sentOf('bot.presence')).toEqual([
+			{ t: 'bot.presence', agentId: 'a1', name: 'Claude', online: true },
+		]);
+		expect(room().notice).toBeNull();
+	});
+
+	it('a room without a bot, or not yet joined, just closes its socket', async () => {
+		await connect({});
+		await joinLive();
+		const joined = socket();
+		const sentBefore = joined.sent.length;
+
+		push(false, 'suspend');
+		expect(joined.sent).toHaveLength(sentBefore);
+		expect(joined.closedByClient).toMatchObject({ code: 1000 });
+
+		push(true, 'resume');
+		const opening = socket();
+		push(false, 'quit');
+		expect(opening.sent).toEqual([]);
+		expect(opening.closedByClient).toMatchObject({ code: 1000, afterSent: 0 });
+	});
+
+	it('a room joined while away opens no socket until wake', async () => {
+		await connect();
+		await joinLive();
+		push(false, 'suspend');
+		const before = sockets.length;
+
+		await connect();
+		expect(sockets).toHaveLength(before);
+		expect(room().notice).toEqual(SKETCH_ROOM_SUSPENDED_NOTICE);
+
+		push(true, 'resume');
+		expect(sockets).toHaveLength(before + 1);
+	});
+
+	it('stops following presence once the window holds no room', async () => {
+		await connect();
+		expect(presence).not.toBeNull();
+
+		disconnectSketchRoom(SKETCH_ID);
+		expect(presence).toBeNull();
 	});
 });

@@ -210,6 +210,19 @@ export interface SketchRoomJoin {
 	bot: { agentId: string; name: string } | null;
 }
 
+/** What made main take every room offline (`suspend`, `quit`) or back online (`resume`). */
+export type SketchPresenceReason = 'suspend' | 'resume' | 'quit';
+
+/**
+ * Main's push to every window on sleep, wake and quit (spec section 5,
+ * contract obligation 5): `online:false` sends `bot.presence {online:false}`
+ * and closes each room socket; `online:true` reconnects them.
+ */
+export interface SketchPresenceChange {
+	online: boolean;
+	reason: SketchPresenceReason;
+}
+
 /** One element's version: what the room is known to hold after a snapshot upload. */
 export interface SketchElementVersion {
 	id: string;
