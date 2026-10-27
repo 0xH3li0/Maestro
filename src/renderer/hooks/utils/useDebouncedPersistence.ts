@@ -32,6 +32,7 @@
  */
 
 import { useEffect, useRef, useCallback, useState } from 'react';
+import { flushSync } from 'react-dom';
 import type { Session } from '../../types';
 import { isLimitError } from '../../../shared/types';
 import {
@@ -406,9 +407,7 @@ export function useDebouncedPersistence(
 	initialLoadComplete: React.MutableRefObject<boolean>,
 	delay: number = DEFAULT_DEBOUNCE_DELAY
 ): UseDebouncedPersistenceReturn {
-	// Track if there are pending changes
 	const [isPending, setIsPending] = useState(false);
-	// Mirror isPending so the store subscription can avoid setState on every
 	// streaming tick after the first dirty mark (would re-render App).
 	const isPendingRef = useRef(false);
 
@@ -589,7 +588,6 @@ export function useDebouncedPersistence(
 		} finally {
 			flushingRef.current = false;
 			const waiters = rerunWaitersRef.current;
-			rerunWaitersRef.current = [];
 			const release = () => waiters.forEach((resolve) => resolve());
 			if (flushRequestedRef.current) {
 				flushRequestedRef.current = false;
@@ -660,7 +658,7 @@ export function useDebouncedPersistence(
 				previouslyPersistedRef.current = sessionsRef.current;
 				startupBaselineNeedsFullFlushRef.current = false;
 				isPendingRef.current = false;
-				setIsPending(false);
+				flushSync(() => setIsPending(false));
 			}
 			for (const session of sessions) {
 				peerBaselinesRef.current.set(session.id, structuredClone(session));
@@ -668,7 +666,6 @@ export function useDebouncedPersistence(
 		};
 		window.addEventListener(SESSION_PERSISTENCE_BASELINE_EVENT, rememberBootstrap);
 		const schedulePersist = () => {
-			// Skip persistence during initial load
 			if (!initialLoadComplete.current) {
 				return;
 			}
@@ -695,9 +692,11 @@ export function useDebouncedPersistence(
 			// Restoration writes the loaded tree BEFORE it marks the read as ok, so
 			// the read succeeding is the moment that tree becomes the baseline.
 			// Missing it left the first flush on setAll, which keeps every id the
+			const readJustSucceeded = state.sessionsReadOk && !prevState.sessionsReadOk;
+			if (state.sessions === prevState.sessions && !readJustSucceeded) return;
+			if (state.sessions === sessionsRef.current && !readJustSucceeded) return;
 			// client omits, so an agent removed during startup (a worktree child
 			// the startup scan found gone) came back on the next launch.
-			const readJustSucceeded = state.sessionsReadOk && !prevState.sessionsReadOk;
 			if (state.sessions === prevState.sessions && !readJustSucceeded) return;
 			sessionsRef.current = state.sessions;
 			if (initialLoadComplete.current && isWebDesktop()) {
