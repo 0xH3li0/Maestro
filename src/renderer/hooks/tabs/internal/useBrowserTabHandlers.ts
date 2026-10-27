@@ -27,15 +27,16 @@ import { sanitizeJourneyUrl } from '../../../../shared/userJourney';
 import { recordJourney } from '../../../services/userJourney';
 
 /**
- * Record that the user opened a browser tab. A private (ephemeral) tab leaves
- * no journey, and a title that only repeats the URL is dropped.
+ * Record that the user opened a browser tab. A private (ephemeral) tab and an
+ * empty one (`about:blank`, which says nothing until it navigates) leave no
+ * journey; a title that only repeats the URL is dropped by the store.
  */
 function recordBrowserOpen(
 	agentId: string,
 	tab: Pick<BrowserTab, 'id' | 'url' | 'ephemeral'>,
 	title?: string
 ) {
-	if (tab.ephemeral) return;
+	if (tab.ephemeral || tab.url === DEFAULT_BROWSER_TAB_URL) return;
 	recordJourney(agentId, {
 		kind: 'browser.open',
 		target: sanitizeJourneyUrl(tab.url),

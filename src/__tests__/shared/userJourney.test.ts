@@ -13,6 +13,7 @@ import {
 	parseJourneyJsonl,
 	isUserJourneyKind,
 	normalizeJourneyEntry,
+	sanitizeJourneyTitle,
 	sanitizeJourneyUrl,
 	shouldCollapseJourneyEntry,
 	type UserJourneyEntry,
@@ -79,6 +80,30 @@ describe('isUserJourneyKind', () => {
 	});
 });
 
+describe('sanitizeJourneyTitle', () => {
+	it('keeps a real page title', () => {
+		expect(sanitizeJourneyTitle('Example Domain')).toBe('Example Domain');
+		expect(sanitizeJourneyTitle('  Dashboard ')).toBe('Dashboard');
+	});
+
+	it('drops a title that is a URL, with or without a scheme', () => {
+		for (const title of [
+			'example.com/?token=SECRET#frag',
+			'https://example.com/a?b=c',
+			'localhost:3000/admin?key=1',
+			'about:blank',
+			'file:///tmp/a.html',
+		]) {
+			expect(sanitizeJourneyTitle(title)).toBeUndefined();
+		}
+	});
+
+	it('reads an empty title as none', () => {
+		expect(sanitizeJourneyTitle('')).toBeUndefined();
+		expect(sanitizeJourneyTitle(undefined)).toBeUndefined();
+	});
+});
+
 describe('normalizeJourneyEntry', () => {
 	it('keeps the known fields of a well-formed entry', () => {
 		const full = entry({
@@ -103,6 +128,19 @@ describe('normalizeJourneyEntry', () => {
 			)?.target
 		).toBe('https://a.test/p');
 		expect(normalizeJourneyEntry(entry({ target: '/repo/a?b.ts' }))?.target).toBe('/repo/a?b.ts');
+	});
+
+	it('drops a URL-shaped title, which would carry the query the target lost', () => {
+		const normalized = normalizeJourneyEntry(
+			entry({
+				kind: 'browser.navigate',
+				target: 'https://example.com/?token=SECRET#frag',
+				title: 'example.com/?token=SECRET#frag',
+			})
+		);
+		expect(normalized?.target).toBe('https://example.com/');
+		expect(normalized?.title).toBeUndefined();
+		expect(JSON.stringify(normalized)).not.toContain('SECRET');
 	});
 
 	it('drops malformed optional fields', () => {

@@ -233,6 +233,19 @@ describe('useBrowserTabHandlers', () => {
 			});
 		});
 
+		it('records nothing for an empty tab (about:blank says nothing until it navigates)', () => {
+			setupSession({ aiTabs: [createMockAITab({ id: 'ai-1' })] });
+			useSettingsStore.setState({ browserHomeUrl: '' } as any);
+			const { result } = renderHook(() => useBrowserTabHandlers());
+
+			act(() => {
+				result.current.handleNewBrowserTab();
+			});
+
+			expect(getSession().browserTabs[0].url).toBe('about:blank');
+			expect(recordJourney).not.toHaveBeenCalled();
+		});
+
 		it('records nothing for a private (ephemeral) tab', () => {
 			setupSession({ aiTabs: [createMockAITab({ id: 'ai-1' })] });
 			const { result } = renderHook(() => useBrowserTabHandlers());

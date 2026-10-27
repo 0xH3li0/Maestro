@@ -105,11 +105,32 @@ export function sanitizeJourneyUrl(url: string): string {
 }
 
 /**
+ * A browser page title fit to store, or undefined. A title with no spaces
+ * that reads as a URL (with or without a scheme) is dropped: Chromium reports
+ * the raw URL as the title until the page sets one, and that raw URL still
+ * carries the query and fragment `sanitizeJourneyUrl()` strips from `target`.
+ */
+export function sanitizeJourneyTitle(title: string | undefined): string | undefined {
+	const trimmed = title?.trim();
+	if (!trimmed) return undefined;
+	if (/\s/.test(trimmed)) return trimmed;
+	const candidate = /^[a-z][a-z0-9+.-]*:/i.test(trimmed) ? trimmed : `https://${trimmed}`;
+	try {
+		const parsed = new URL(candidate);
+		return parsed.hostname.includes('.') || parsed.protocol !== 'https:' ? undefined : trimmed;
+	} catch {
+		return trimmed;
+	}
+}
+
+/**
  * Rebuild an entry from untrusted input (an IPC payload or a line read back
  * from disk) with only the known fields, each type-checked. Unknown fields are
  * dropped, so nothing but metadata can reach the log. A `browser.*` target is
  * sanitized again here, so a recorder that forgot to strip a query cannot leak
- * a token. Returns null when a required field is missing or malformed.
+ * a token, and a URL-shaped title is dropped for the same reason
+ * (`sanitizeJourneyTitle`). Returns null when a required field is missing or
+ * malformed.
  */
 export function normalizeJourneyEntry(raw: unknown): UserJourneyEntry | null {
 	if (!raw || typeof raw !== 'object') return null;
@@ -129,6 +150,12 @@ export function normalizeJourneyEntry(raw: unknown): UserJourneyEntry | null {
 	for (const key of ['tabId', 'title', 'fromPath', 'sshRemoteId'] as const) {
 		const value = r[key];
 		if (typeof value === 'string' && value) entry[key] = value;
+	}
+	// A URL-shaped title would carry the query the target just lost.
+	if (entry.title !== undefined) {
+		const title = sanitizeJourneyTitle(entry.title);
+		if (title) entry.title = title;
+		else delete entry.title;
 	}
 	for (const key of ['dwellMs', 'linesAdded', 'linesRemoved'] as const) {
 		const value = r[key];
