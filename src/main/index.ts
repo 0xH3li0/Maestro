@@ -1824,7 +1824,9 @@ app
 				stopAll: () => {
 					pianolaSupervisor?.stopAll();
 					pianolaRelearnScheduler?.stop();
-					void pianolaMemoryHost?.stop();
+					void pianolaMemoryHost?.stop().catch((error) => {
+						logger.error(`Pianola memory drain failed: ${String(error)}`, '[Pianola]');
+					});
 				},
 			},
 			// [L3MaestroCue] cue engine lifecycle: reconcile (re)starts when the
@@ -3962,7 +3964,9 @@ quitHandler = createQuitHandler({
 		pianolaSupervisor?.stopAll();
 		// Stop the Pianola re-learn cadence.
 		pianolaRelearnScheduler?.stop();
-		void pianolaMemoryHost?.stop();
+		void pianolaMemoryHost?.stop().catch((error) => {
+			logger.error(`Pianola memory drain failed: ${String(error)}`, '[Pianola]');
+		});
 		// Stop the Computer History helper (it also exits on stdin EOF) and close
 		// the open segment. If quit outruns the close, the next start indexes it.
 		void getComputerHistoryService()

@@ -53,7 +53,8 @@ import {
 import { usePianolaSupervisor, type PianolaSupervisorState } from './usePianolaSupervisor';
 import type { PianolaSupervisedState } from '../../../main/pianola/pianola-supervisor';
 import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
-import { useSessionStore } from '../../stores/sessionStore';
+import { ipcErrorMessage } from '../../utils/ipcErrorMessage';
+import { updateSessionWith } from '../../stores/sessionStore';
 import { focusAiTabInSession } from '../../utils/tabHelpers';
 interface PianolaDashboardProps {
 	theme: Theme;
@@ -302,7 +303,7 @@ function usePianolaAction(onSettled: () => void): {
 			await action();
 			onSettled();
 		} catch (err) {
-			setError(err instanceof Error ? err.message : String(err));
+			setError(ipcErrorMessage(err));
 		} finally {
 			setBusy(false);
 		}
@@ -738,15 +739,7 @@ function NeedsRow({
 						onClick={() => {
 							const sessionId = row.sessionId;
 							if (!sessionId) return;
-							useSessionStore
-								.getState()
-								.setSessions((sessions) =>
-									sessions.map((session) =>
-										session.id === sessionId && session.aiTabs.some((tab) => tab.id === row.tabId)
-											? focusAiTabInSession(session, row.tabId)
-											: session
-									)
-								);
+							updateSessionWith(sessionId, (session) => focusAiTabInSession(session, row.tabId));
 							onJump(sessionId);
 						}}
 						className="text-sm truncate flex-1 text-left hover:underline"
