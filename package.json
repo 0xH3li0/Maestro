@@ -98,6 +98,7 @@
 		},
 		"files": [
 			"dist/**/*",
+			"!dist/renderer/**/*.map",
 			"package.json"
 		],
 		"asarUnpack": [
@@ -322,7 +323,8 @@
 			"artifactName": "${productName}-Setup-${version}-${arch}.${ext}"
 		},
 		"portable": {
-			"artifactName": "${productName}-Portable-${version}-${arch}.${ext}"
+			"artifactName": "${productName}-Portable-${version}-${arch}.${ext}",
+			"unpackDirName": true
 		}
 	},
 	"dependencies": {

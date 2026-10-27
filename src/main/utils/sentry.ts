@@ -42,6 +42,8 @@ interface SentryModule {
 		level?: SentrySeverityLevel;
 		data?: Record<string, unknown>;
 	}) => void;
+	setTags: (tags: Record<string, string>) => void;
+	setContext: (name: string, context: Record<string, unknown> | null) => void;
 }
 
 /** Cached Sentry module reference */
@@ -206,6 +208,31 @@ export function noteSentryWorkReasons(reasons: Iterable<string>): void {
 export function resetSentryScopeTagsForTests(): void {
 	for (const key of Object.keys(scopeTags)) delete scopeTags[key];
 	scopeTagSink = null;
+}
+
+/**
+ * Set tags and a named context on the main-process scope.
+ *
+ * Unlike a breadcrumb or a captured event, this outlives a native crash:
+ * @sentry/electron persists the main scope to disk as it changes and applies
+ * the last persisted scope to the minidump it uploads on the next launch. So
+ * whatever is set here describes the process at the moment it died.
+ */
+export async function setScopeContext(
+	tags: Record<string, string>,
+	contextName: string,
+	context: Record<string, unknown>
+): Promise<void> {
+	try {
+		if (!sentryModule) {
+			const sentry = await import('@sentry/electron/main');
+			sentryModule = sentry;
+		}
+		sentryModule.setTags(tags);
+		sentryModule.setContext(contextName, context);
+	} catch {
+		// Sentry not available - silently ignore
+	}
 }
 
 /**

@@ -26,7 +26,8 @@ import { WebServer } from './web-server';
 import { AgentDetector } from './agents';
 import { createAgentConfigLookup } from './agents/agent-config-lookup';
 import { shouldDropSentryEvent } from '../shared/sentryFilters';
-import { buildNativeCrashFingerprint, sentryUserForInstallation } from '../shared/sentryContext';
+import { sentryUserForInstallation } from '../shared/sentryContext';
+import { v8OomFingerprint } from '../shared/sentryGrouping';
 import { getBuildProvenance } from './utils/build-provenance';
 import {
 	initGlobalHotkey,
@@ -168,6 +169,7 @@ import { wireProcessListeners } from './process-listeners-wiring';
 import { createSafeSend, isWebContentsAvailable } from './utils/safe-send';
 import { capabilitySnapshots, createSnapshotBroadcaster } from './agents/capability-snapshot';
 import { createWebServerFactory } from './web-server/web-server-factory';
+import { configureLiveMode } from './web-server/live-mode';
 import type { DebugPackageDependencies } from './debug-package';
 // Phase 4 refactoring - app lifecycle
 import {
@@ -430,12 +432,13 @@ if (crashReportingEnabled && !isDevelopment && buildProvenance.sentryDsn) {
 						delete event.user.ip_address;
 						delete event.user.email;
 					}
-					// Group V8 heap OOM minidumps by process instead of by whichever
-					// allocation tipped the heap over (see buildNativeCrashFingerprint).
-					const nativeFingerprint = buildNativeCrashFingerprint(event);
-					if (nativeFingerprint) {
-						event.fingerprint = nativeFingerprint;
-						event.tags = { ...event.tags, 'native.crash': 'v8-heap-oom' };
+					// One issue per process type for V8 OOMs, not one per failing
+					// allocation site. See src/shared/sentryGrouping.ts. The tag lets one
+					// search find every OOM across those per-process issues.
+					const oomFingerprint = v8OomFingerprint(event);
+					if (oomFingerprint) {
+						event.fingerprint = oomFingerprint;
+						event.tags = { ...event.tags, 'native.crash': 'v8-oom' };
 					}
 					return event;
 				},
@@ -452,6 +455,18 @@ if (crashReportingEnabled && !isDevelopment && buildProvenance.sentryDsn) {
 				})
 				.catch((err) => {
 					logger.warn('Failed to start memory monitoring', 'Startup', { error: String(err) });
+				});
+			// Tag the scope with the main heap so a main-process OOM minidump says
+			// how much it was carrying when it died (#1862). Agent and Auto Run
+			// counts are written on change instead (see setSentryScopeTags).
+			import('./utils/heap-guard')
+				.then(({ startCrashContextSampling }) => {
+					startCrashContextSampling();
+				})
+				.catch((err) => {
+					logger.warn('Failed to start crash context sampling', 'Startup', {
+						error: String(err),
+					});
 				});
 		})
 		.catch((err) => {
@@ -1057,6 +1072,9 @@ app
 			createWebServer,
 			settingsStore: store,
 		};
+		// `maestro-cli live` reaches the server slot through the WS handlers,
+		// which run inside a WebServer and have no other route to it.
+		configureLiveMode(cliServerDeps);
 		await ensureCliServer(cliServerDeps);
 
 		// dispatch --notify-on-complete. Wired here because it needs the same
@@ -1884,6 +1902,9 @@ app
 			);
 		const setPluginSessionsRaw = (sessions: Array<Record<string, unknown>>): void => {
 			sessionsStore.set('sessions', sessions as never);
+			// Plugin create/delete changes the agent list without going through the
+			// sessions persistence handlers, so refresh the crash-report inventory here.
+			noteSentryAgentInventory(sessions);
 		};
 		const pluginTabsList = (sessionId?: string): PluginTabMetadata[] => {
 			const out: PluginTabMetadata[] = [];

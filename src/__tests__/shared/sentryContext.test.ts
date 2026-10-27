@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
 	agentInventoryTags,
-	buildNativeCrashFingerprint,
 	sentryUserForInstallation,
 	summarizeAgentInventory,
 	summarizeWorkReasons,
@@ -27,16 +26,17 @@ describe('summarizeWorkReasons / workContextTags', () => {
 		const context = summarizeWorkReasons([
 			'autorun:agent-1',
 			'autorun:agent-2',
-			'session:agent-3',
+			// session: reasons are per process: two busy tabs of one agent are two.
+			'session:agent-3-ai-tab-1',
+			'session:agent-3-ai-tab-2',
 			'cue:run:run-9',
 			'groupchat:chat-4',
 			'something-else',
 		]);
-		expect(context).toEqual({ autorunRuns: 2, busyAgents: 1, cueRuns: 1, groupChats: 1 });
+		expect(context).toEqual({ autorunRuns: 2, agentProcesses: 2, cueRuns: 1, groupChats: 1 });
 		expect(workContextTags(context)).toEqual({
-			'autorun.active': 'true',
 			'autorun.count': '2',
-			'agents.busy': '1',
+			'agents.processes': '2',
 			'cue.active': 'true',
 			'groupchat.active': 'true',
 		});
@@ -44,9 +44,8 @@ describe('summarizeWorkReasons / workContextTags', () => {
 
 	it('reports idle when nothing is in flight', () => {
 		expect(workContextTags(summarizeWorkReasons([]))).toEqual({
-			'autorun.active': 'false',
 			'autorun.count': '0',
-			'agents.busy': '0',
+			'agents.processes': '0',
 			'cue.active': 'false',
 			'groupchat.active': 'false',
 		});
@@ -87,78 +86,5 @@ describe('summarizeAgentInventory / agentInventoryTags', () => {
 			'agents.count': '0',
 			'agents.providers': 'none',
 		});
-	});
-});
-
-describe('buildNativeCrashFingerprint', () => {
-	// The shape @sentry/electron hands beforeSend for a minidump found at startup
-	// (sentry-minidump integration): no exception yet, the SDK's native tags, and
-	// the crashpad annotations copied onto contexts.electron with a `crashpad.`
-	// prefix. Values mirror MAESTRO-174's event as Sentry stored it.
-	const heapOomMinidump = () => ({
-		level: 'fatal',
-		platform: 'native',
-		tags: { 'event.environment': 'native', 'event.process': 'browser' },
-		contexts: {
-			electron: {
-				'crashpad.electron.v8-oom.is_heap_oom': '1',
-				'crashpad.electron.v8-oom.location': 'Ineffective mark-compacts near heap limit',
-				'crashpad.process_type': 'browser',
-			},
-		},
-	});
-
-	it('groups a V8 heap OOM minidump by process', () => {
-		expect(buildNativeCrashFingerprint(heapOomMinidump())).toEqual([
-			'native-crash',
-			'v8-heap-oom',
-			'browser',
-		]);
-	});
-
-	it('gives the same fingerprint whatever the OOM location, so allocation paths do not split it', () => {
-		const other = heapOomMinidump();
-		other.contexts.electron['crashpad.electron.v8-oom.location'] = 'Reached heap limit';
-		expect(buildNativeCrashFingerprint(other)).toEqual(
-			buildNativeCrashFingerprint(heapOomMinidump())
-		);
-	});
-
-	it('lowercases the process, since the SDK reports both "GPU" and "gpu"', () => {
-		const event = heapOomMinidump();
-		event.tags['event.process'] = 'GPU';
-		expect(buildNativeCrashFingerprint(event)).toEqual(['native-crash', 'v8-heap-oom', 'gpu']);
-	});
-
-	it('falls back to "unknown" when the process could not be determined', () => {
-		const event = heapOomMinidump();
-		delete (event.tags as Record<string, string>)['event.process'];
-		expect(buildNativeCrashFingerprint(event)).toEqual(['native-crash', 'v8-heap-oom', 'unknown']);
-	});
-
-	it('also matches the renderer-OOM event that already carries the parsed V8 stack', () => {
-		const event = {
-			...heapOomMinidump(),
-			tags: { 'event.environment': 'native', 'event.process': 'renderer' },
-			exception: { values: [{ type: 'OutOfMemoryError', value: 'Renderer reached heap limit' }] },
-		};
-		expect(buildNativeCrashFingerprint(event)).toEqual(['native-crash', 'v8-heap-oom', 'renderer']);
-	});
-
-	it('keeps default grouping for a native crash that is not a heap OOM', () => {
-		// e.g. MAESTRO-SG / MAESTRO-9K: no OOM annotation, the stack is the signal.
-		expect(
-			buildNativeCrashFingerprint({
-				tags: { 'event.environment': 'native', 'event.process': 'unknown' },
-				contexts: { electron: {} },
-			})
-		).toBeUndefined();
-	});
-
-	it('ignores JavaScript events entirely', () => {
-		const event = heapOomMinidump();
-		event.tags['event.environment'] = 'javascript';
-		expect(buildNativeCrashFingerprint(event)).toBeUndefined();
-		expect(buildNativeCrashFingerprint({})).toBeUndefined();
 	});
 });

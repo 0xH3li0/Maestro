@@ -18,7 +18,7 @@ describe('Sentry scope tags (main)', () => {
 	});
 
 	it('holds tags recorded before Sentry initializes and delivers them on attach', () => {
-		setSentryScopeTags({ 'autorun.active': 'true' });
+		setSentryScopeTags({ 'autorun.count': '1' });
 		noteSentryAgentInventory([{ toolType: 'codex' }]);
 
 		const setTags = vi.fn();
@@ -26,7 +26,7 @@ describe('Sentry scope tags (main)', () => {
 
 		expect(setTags).toHaveBeenCalledTimes(1);
 		expect(setTags).toHaveBeenCalledWith({
-			'autorun.active': 'true',
+			'autorun.count': '1',
 			'agents.count': '1',
 			'agents.providers': 'codex',
 		});
@@ -45,7 +45,7 @@ describe('Sentry scope tags (main)', () => {
 
 		noteSentryWorkReasons(['session:b', 'autorun:c']);
 		expect(setTags).toHaveBeenCalledTimes(2);
-		expect(setTags).toHaveBeenLastCalledWith({ 'autorun.active': 'true', 'autorun.count': '1' });
+		expect(setTags).toHaveBeenLastCalledWith({ 'autorun.count': '1' });
 	});
 
 	it('does not attach anything when Sentry never initializes', () => {

@@ -1766,6 +1766,10 @@ interface MaestroAPI {
 		clearPersistentToken: () => Promise<{ success: boolean; message?: string }>;
 		/** Fires when a network change moves the LAN address in the web URL. */
 		onUrlChanged: (handler: (data: { url: string }) => void) => () => void;
+		/** Fires when main starts or stops the web interface or the tunnel. */
+		onStateChanged: (
+			handler: (state: import('../shared/liveMode').LiveModeState) => void
+		) => () => void;
 	};
 	/**
 	 * Web Login accounts. Desktop-only: the web-desktop bridge refuses every

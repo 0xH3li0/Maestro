@@ -7,8 +7,9 @@
  * already the `installationId` tag, and the agent context is counts plus agent
  * TYPE ids drawn from the fixed `AGENT_IDS` list.
  *
- * Noise filtering lives in `sentryFilters.ts`; this module only adds context
- * and grouping to events that are going to be sent anyway.
+ * Noise filtering lives in `sentryFilters.ts` and issue grouping in
+ * `sentryGrouping.ts`; this module only adds context to events that are going
+ * to be sent anyway.
  */
 
 import { isValidAgentId } from './agentIds';
@@ -28,10 +29,19 @@ export function sentryUserForInstallation(
 
 /** Background work in flight, derived from the power manager's block reasons. */
 export interface SentryWorkContext {
-	/** Auto Run documents being processed right now (one per agent). */
+	/**
+	 * Agents running an Auto Run right now (one `autorun:` reason per agent, held
+	 * from the run's start to its end). Desktop Auto Runs only: a CLI playbook
+	 * run is a separate process and never registers a reason here.
+	 */
 	autorunRuns: number;
-	/** Agent turns in flight (one `session:` reason per busy agent). */
-	busyAgents: number;
+	/**
+	 * Agent processes running (one `session:` reason per spawned process, keyed
+	 * by the PROCESS id). An agent with two busy tabs counts twice, and Auto Run
+	 * tasks, consults and group chat participants count too, so this is load,
+	 * not a count of agents.
+	 */
+	agentProcesses: number;
 	/** Cue runs executing. */
 	cueRuns: number;
 	/** Group chat rounds in flight. */
@@ -47,10 +57,15 @@ export interface SentryWorkContext {
  * it never leave this function.
  */
 export function summarizeWorkReasons(reasons: Iterable<string>): SentryWorkContext {
-	const context: SentryWorkContext = { autorunRuns: 0, busyAgents: 0, cueRuns: 0, groupChats: 0 };
+	const context: SentryWorkContext = {
+		autorunRuns: 0,
+		agentProcesses: 0,
+		cueRuns: 0,
+		groupChats: 0,
+	};
 	for (const reason of reasons) {
 		if (reason.startsWith('autorun:')) context.autorunRuns += 1;
-		else if (reason.startsWith('session:')) context.busyAgents += 1;
+		else if (reason.startsWith('session:')) context.agentProcesses += 1;
 		else if (reason.startsWith('cue:run:')) context.cueRuns += 1;
 		else if (reason.startsWith('groupchat:')) context.groupChats += 1;
 	}
@@ -60,9 +75,8 @@ export function summarizeWorkReasons(reasons: Iterable<string>): SentryWorkConte
 /** Sentry tags for the work context. Tags (not contexts) so issues and alerts can filter on them. */
 export function workContextTags(context: SentryWorkContext): Record<string, string> {
 	return {
-		'autorun.active': context.autorunRuns > 0 ? 'true' : 'false',
 		'autorun.count': String(context.autorunRuns),
-		'agents.busy': String(context.busyAgents),
+		'agents.processes': String(context.agentProcesses),
 		'cue.active': context.cueRuns > 0 ? 'true' : 'false',
 		'groupchat.active': context.groupChats > 0 ? 'true' : 'false',
 	};
@@ -99,45 +113,4 @@ export function agentInventoryTags(inventory: SentryAgentInventory): Record<stri
 		'agents.count': String(inventory.count),
 		'agents.providers': inventory.providers.length > 0 ? inventory.providers.join(',') : 'none',
 	};
-}
-
-/** The subset of a Sentry event the native-crash grouping reads. */
-export interface NativeCrashEventLike {
-	tags?: Record<string, unknown>;
-	contexts?: Record<string, Record<string, unknown> | undefined>;
-}
-
-/**
- * Fingerprint for a native crash (minidump) whose cause is already known when
- * the event is built, or `undefined` to keep Sentry's default grouping.
- *
- * A minidump event reaches `beforeSend` WITHOUT a stack trace: `@sentry/electron`
- * attaches the dump as an `event.minidump` attachment and Sentry symbolicates it
- * server side, so the crashing frame is not available to group on here. What IS
- * available are the crashpad annotations Electron writes, copied onto
- * `contexts.electron` with a `crashpad.` prefix, plus the `event.environment` /
- * `event.process` tags the SDK sets on every native crash.
- *
- * The V8 heap OOM is the case that fragments: its stack is whatever allocation
- * tipped the heap over the limit, so server-side stack grouping scattered one
- * failure mode across dozens of `partition_alloc::internal::OnNoMemoryInternal`
- * issues (one per allocation path, per release). Electron marks it explicitly
- * with `electron.v8-oom.is_heap_oom = "1"`, so those are grouped by process
- * alone. Other native crashes keep default grouping, since there the stack is
- * the signal; consolidating those by top frame is a server-side fingerprint
- * rule, because only the server has the frames.
- *
- * The process name is lowercased because the SDK reports the same process as
- * both `GPU` and `gpu` depending on which crash path built the event.
- */
-export function buildNativeCrashFingerprint(event: NativeCrashEventLike): string[] | undefined {
-	if (event.tags?.['event.environment'] !== 'native') return undefined;
-	const electron = event.contexts?.electron;
-	if (electron?.['crashpad.electron.v8-oom.is_heap_oom'] !== '1') return undefined;
-	const rawProcess = event.tags?.['event.process'];
-	const processType =
-		typeof rawProcess === 'string' && rawProcess.trim()
-			? rawProcess.trim().toLowerCase()
-			: 'unknown';
-	return ['native-crash', 'v8-heap-oom', processType];
 }
