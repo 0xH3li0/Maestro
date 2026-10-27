@@ -4,10 +4,12 @@
  * gating that keep the two promises: maps never ship inside the app, and a
  * fork (no SENTRY_AUTH_TOKEN) or a Sentry outage never fails a release.
  */
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import yaml from 'js-yaml';
+import type { UserConfig } from 'vite';
+import viteConfig from '../../../vite.config.mts';
 
 const root = path.resolve(__dirname, '../../..');
 
@@ -64,11 +66,74 @@ describe('release workflow: renderer source maps', () => {
 
 		const removeStep = steps[remove];
 		expect(removeStep.if).toBeUndefined();
+		// A map that survives must stop the release, not be waved through.
+		expect(removeStep['continue-on-error']).toBeUndefined();
 		expect(removeStep.run).toContain("find dist/renderer -type f -name '*.map' -delete");
 	});
 
 	it('excludes renderer maps from the packaged files as a second guard', () => {
 		const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
 		expect(pkg.build.files).toContain('!dist/renderer/**/*.map');
+	});
+});
+
+describe('renderer vite config: source maps', () => {
+	const original = process.env.MAESTRO_RENDERER_SOURCEMAPS;
+
+	afterEach(() => {
+		if (original === undefined) delete process.env.MAESTRO_RENDERER_SOURCEMAPS;
+		else process.env.MAESTRO_RENDERER_SOURCEMAPS = original;
+	});
+
+	// The config reads the flag when Vite calls it, so each case builds a fresh one.
+	function resolveConfig(): UserConfig {
+		const factory = viteConfig as unknown as (env: {
+			mode: string;
+			command: 'build';
+		}) => UserConfig;
+		return factory({ mode: 'production', command: 'build' });
+	}
+
+	it('writes hidden maps only when the release flag is set', () => {
+		delete process.env.MAESTRO_RENDERER_SOURCEMAPS;
+		expect(resolveConfig().build?.sourcemap).toBe(false);
+
+		process.env.MAESTRO_RENDERER_SOURCEMAPS = '1';
+		// 'hidden', never true: a sourceMappingURL comment would point the shipped
+		// bundle at a map that the workflow deletes before packaging.
+		expect(resolveConfig().build?.sourcemap).toBe('hidden');
+	});
+
+	it('drops the xterm chunk map, which describes the minified code the plugin discards', () => {
+		interface Hooks {
+			name: string;
+			renderChunk(code: string, chunk: { name: string }): null;
+			generateBundle(options: unknown, bundle: Record<string, unknown>): void;
+		}
+		const plugins = resolveConfig().build?.rollupOptions?.plugins as unknown as Hooks[];
+		const plugin = plugins.find((p) => p.name === 'skip-xterm-minify');
+		expect(plugin).toBeDefined();
+
+		plugin!.renderChunk('const unminified = 1;\n', { name: 'vendor-xterm' });
+		const chunk = {
+			type: 'chunk',
+			name: 'vendor-xterm',
+			fileName: 'assets/vendor-xterm-abc.js',
+			code: 'const a=1;',
+			map: { mappings: 'AAAA' },
+		};
+		const otherMap = { type: 'asset', fileName: 'assets/index-def.js.map' };
+		const bundle: Record<string, unknown> = {
+			[chunk.fileName]: chunk,
+			[`${chunk.fileName}.map`]: { type: 'asset', fileName: `${chunk.fileName}.map` },
+			[otherMap.fileName]: otherMap,
+		};
+		plugin!.generateBundle({}, bundle);
+
+		expect(chunk.code).toBe('const unminified = 1;\n');
+		expect(chunk.map).toBeNull();
+		expect(bundle[`${chunk.fileName}.map`]).toBeUndefined();
+		// Every other chunk keeps its map for the upload.
+		expect(bundle[otherMap.fileName]).toBe(otherMap);
 	});
 });

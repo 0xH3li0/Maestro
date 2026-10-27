@@ -156,6 +156,14 @@ export default defineConfig(({ mode }) => ({
 									fixed = fixed.split(placeholder).join(`${prefix}-${resolvedMatch[1]}.${ext}`);
 								}
 								asset.code = fixed;
+								// The chunk's map describes the minified code just discarded, so
+								// with source maps on (release builds, for Sentry) it would point
+								// every xterm frame at the wrong line. Drop it rather than upload
+								// a lie; the shipped code is unminified and readable without one.
+								// Rolldown emits the map as its own bundle entry, so removing that
+								// entry is what keeps the file from being written.
+								asset.map = null;
+								delete bundle[`${asset.fileName}.map`];
 							}
 							xtermPreMinifyCache.clear();
 						},

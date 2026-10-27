@@ -123,6 +123,9 @@ runs `sentry-cli sourcemaps inject` + `upload` against `dist/renderer` when the
 `SENTRY_AUTH_TOKEN` secret is present (release = the tag version, url prefix
 `app://app/`), then deletes every `.map` before packaging. The token needs the
 `project:releases` scope. Without it the step skips and renderer frames stay minified.
+The `vendor-xterm` chunk is the one exception: `skip-xterm-minify` swaps in the
+unminified code after the map is built, so it drops that chunk's map rather than upload
+one that points at the wrong lines.
 
 Also starts memory monitoring for crash diagnostics (breadcrumbs every 60s, warns above 500MB heap).
 
