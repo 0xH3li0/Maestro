@@ -49,6 +49,7 @@ vi.mock('../../../main/utils/jsonl-stream', async () =>
 import fs from 'fs/promises';
 import { CodexSessionStorage } from '../../../main/storage/codex-session-storage';
 import { readDirRemote, readFileRemote, statRemote } from '../../../main/utils/remote-fs';
+import { readFirstJsonlLine } from '../../../main/utils/jsonl-stream';
 import type { SshRemoteConfig } from '../../../shared/types';
 
 /**
@@ -551,5 +552,38 @@ describe('CodexSessionStorage - readSessionMessages', () => {
 		expect(page.messages.some((m) => m.content === 'a.txt')).toBe(false);
 		const call = everything.messages[0].toolUse as any[];
 		expect(call[0].state).toMatchObject({ status: 'completed', output: 'a.txt' });
+	});
+
+	it('finds an ISO-named rollout by its header without reading other rollouts whole', async () => {
+		// Current rollout names carry an ISO timestamp the filename pattern does
+		// not match, so the lookup falls back to each file's header. It must read
+		// only that header: the fallback runs for every rollout until the match,
+		// and a rollout can be hundreds of MB (#1862).
+		const dir = '/home/user/.codex/sessions/2026/03/08';
+		const other = `${dir}/rollout-2026-03-08T03-10-28-019ccb6c-0000-7000-8000-000000000001.jsonl`;
+		const target = `${dir}/rollout-2026-03-08T03-12-00-019ccb6c-c0fd-7b70-92b7-558f514099c6.jsonl`;
+		vi.spyOn(storage as any, 'findAllSessionFiles').mockResolvedValue(
+			[other, target].map((filePath) => ({ filePath, filename: filePath.split('/').pop() }))
+		);
+		const headers: Record<string, string> = {
+			[other]: JSON.stringify({ type: 'session_meta', payload: { id: 'someone-else' } }),
+			[target]: JSON.stringify({
+				type: 'session_meta',
+				payload: { id: '019ccb6c-c0fd-7b70-92b7-558f514099c6' },
+			}),
+		};
+		vi.mocked(readFirstJsonlLine).mockImplementation(async (filePath) => headers[filePath]);
+		vi.mocked(fs.readFile).mockResolvedValue(createSessionContent());
+
+		const result = await storage.readSessionMessages(
+			'C:\\Users\\test\\project',
+			'019ccb6c-c0fd-7b70-92b7-558f514099c6',
+			{ offset: 0, limit: 50 }
+		);
+
+		expect(result.total).toBeGreaterThan(0);
+		expect(readFirstJsonlLine).toHaveBeenCalledWith(other);
+		// The only whole read is the transcript stream of the match.
+		expect(vi.mocked(fs.readFile).mock.calls.map(([p]) => p)).toEqual([target]);
 	});
 });

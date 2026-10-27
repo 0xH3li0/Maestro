@@ -36,7 +36,7 @@ import type {
 import type { ToolType, SshRemoteConfig } from '../../shared/types';
 import { BaseSessionStorage, MessagePageCollector } from './base-session-storage';
 import type { SearchableMessage } from './base-session-storage';
-import { forEachJsonlLine } from '../utils/jsonl-stream';
+import { forEachJsonlLine, readFirstJsonlLine } from '../utils/jsonl-stream';
 import { ModelUsageAccumulator } from '../../shared/modelUsage';
 import { CodexTokenCounts } from '../../shared/codexTokenUsage';
 import { CodexTokenSpeedTracker } from '../../shared/tokenSpeed';
@@ -1302,10 +1302,11 @@ export class CodexSessionStorage extends BaseSessionStorage {
 				return filePath;
 			}
 
-			// Also check by reading first line for session ID
+			// Also check by reading first line for session ID. Only that line: this
+			// runs for every rollout until the match, and a rollout can be hundreds
+			// of MB (#1862).
 			try {
-				const content = await fs.readFile(filePath, 'utf-8');
-				const firstLine = content.split('\n')[0];
+				const firstLine = await readFirstJsonlLine(filePath);
 				if (firstLine) {
 					const metadata = JSON.parse(firstLine) as CodexSessionMetadata;
 					const metadataId = metadata?.payload?.id || metadata.id;
