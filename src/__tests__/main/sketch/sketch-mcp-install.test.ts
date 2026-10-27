@@ -89,6 +89,8 @@ describe('sketch MCP install', () => {
 
 		const codex = fs.readFileSync(path.join(tmp, 'home', '.codex', 'config.toml'), 'utf8');
 		expect(codex).toContain('[mcp_servers.maestro-sketch]');
+		// Codex's read-only sandbox needs it for the sketch tools (risk K1).
+		expect(codex).toContain('default_tools_approval_mode = "approve"');
 
 		// Skipped providers get no config directory created.
 		expect(fs.existsSync(path.join(tmp, 'home', '.factory'))).toBe(false);

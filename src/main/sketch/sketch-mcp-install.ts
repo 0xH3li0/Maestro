@@ -11,6 +11,12 @@
  *   server name `maestro-sketch`, so the entry lands beside `maestro-coworking`
  *   in Claude Code, Codex, OpenCode and Factory Droid configs.
  *
+ * The entry auto-approves the server's tools (`autoApproveTools`): a Sketch
+ * Book restricted turn runs Codex in its read-only sandbox, which otherwise
+ * fails every sketch tool call for want of an approval (risk K1). The tools
+ * reach only the calling agent's own sketches, and every write passes the
+ * outbound screen, so no per-call approval is lost that guarded anything else.
+ *
  * Coworking installs only when the user presses Install in its settings panel.
  * Sketch Book has no such panel: switching the Encore flag on IS the user's
  * request. To keep that footprint small, an entry is written only into a
@@ -68,10 +74,13 @@ export async function installSketchMcpServer(): Promise<SketchMcpInstallResult[]
 		contents: getSketchServerScript(),
 		logCategory: 'SketchBook',
 	});
-	const spec = await buildMcpServerSpec(
-		{ [SKETCH_SOCKET_ENV_VAR]: getSketchBridgeSocketPath() },
-		scriptPath
-	);
+	const spec = {
+		...(await buildMcpServerSpec(
+			{ [SKETCH_SOCKET_ENV_VAR]: getSketchBridgeSocketPath() },
+			scriptPath
+		)),
+		autoApproveTools: true,
+	};
 	const results: SketchMcpInstallResult[] = [];
 	for (const agentId of COWORKING_SUPPORTED_AGENTS) {
 		const installer = getInstaller(agentId);

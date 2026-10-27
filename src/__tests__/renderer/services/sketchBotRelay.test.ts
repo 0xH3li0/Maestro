@@ -29,6 +29,8 @@ vi.mock('../../../renderer/utils/logger', () => ({
 	logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 vi.mock('../../../renderer/utils/sentry', () => ({ captureException: vi.fn() }));
+// The app's runner; every test here injects its own.
+vi.mock('../../../renderer/services/sketchBotTurns', () => ({ runSketchBotTurn: vi.fn() }));
 
 const SKETCH_ID = 'sketch-1';
 const IV = 'AAAAAAAAAAAAAAAA';

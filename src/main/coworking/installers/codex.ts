@@ -65,6 +65,9 @@ function buildBlock(spec: CoworkingMcpServerSpec, serverName: string): string {
 	if (Object.keys(spec.env).length > 0) {
 		lines.push(`env = ${tomlInlineEnv(spec.env)}`);
 	}
+	if (spec.autoApproveTools) {
+		lines.push('default_tools_approval_mode = "approve"');
+	}
 	lines.push(end);
 	return lines.join('\n');
 }

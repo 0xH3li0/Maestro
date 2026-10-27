@@ -623,6 +623,14 @@ pipeline` reaches the graph but cannot name what it shows. Pure view state
    `sketch list` cover showing and finding a sketch; closing its tab needs the
    remote close and rename paths to accept a sketch tab id and call
    `closeSketchTabInSession()` / `renameSketchTab()`.
+5. **Publish or discard a held Sketch Book bot reply.** The chat pane's
+   "Publish anyway" and "Discard" chip (`SketchHeldReplyChip`, a reply the
+   outbound screen's model pass held) calls `publishHeldSketchReply()` /
+   `discardHeldSketchReply()` in `services/sketchBotTurns.ts` and has no verb
+   yet. It lands with the B2 approval verbs (`sketch approve|deny|escalate`),
+   which add the renderer action those verbs and this one share. "Publish
+   anyway" from an agent caller is an A1 decision (the conductor's), so the
+   verb must raise the desktop confirmation.
 
 ### Acappella-specific audit notes
 

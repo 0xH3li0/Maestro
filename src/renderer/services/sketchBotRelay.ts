@@ -38,9 +38,10 @@
  * socket comes back if it has to wait.
  *
  * The turn itself (the "Sketch: <name>" tab, `enqueuePromptForTab()`, the
- * outbound screen, the reply cap) belongs to the runner registered with
- * {@link setSketchBotTurnRunner}. Until one is registered every approved
- * request ends as `bot.failed`.
+ * outbound screen, the reply cap) belongs to the runner: the app's relay uses
+ * `runSketchBotTurn` (`sketchBotTurns.ts`), and {@link setSketchBotTurnRunner}
+ * replaces it. A relay with no runner ends every approved request as
+ * `bot.failed`.
  *
  * The relay also mirrors the room's chat into the session's chat pane: every
  * message except the conductor's own, which the pane already shows from the
@@ -76,6 +77,7 @@ import {
 } from '../stores/sketchSessionStore';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
+import { runSketchBotTurn } from './sketchBotTurns';
 
 const LOG_CTX = '[SketchBook][BotRelay]';
 
@@ -561,7 +563,7 @@ export function createSketchBotRelay(deps: SketchBotRelayDeps = {}): SketchBotRe
 let appRelay: SketchBotRelay | null = null;
 
 function relay(): SketchBotRelay {
-	appRelay ??= createSketchBotRelay();
+	appRelay ??= createSketchBotRelay({ runTurn: runSketchBotTurn });
 	return appRelay;
 }
 
@@ -594,7 +596,7 @@ export function sendSketchConductorMessage(
 	return relay().sendConductorMessage(sketchId, text, options);
 }
 
-/** Register the turn delivery (the "Sketch: <name>" tab). Null to remove it. */
+/** Replace the turn delivery (default `runSketchBotTurn`). Null to remove it. */
 export function setSketchBotTurnRunner(runner: SketchBotTurnRunner | null): void {
 	relay().setTurnRunner(runner);
 }

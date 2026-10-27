@@ -187,6 +187,16 @@ sequenceDiagram
 
 Not installed here, so not run: Gemini CLI, Antigravity, Qwen3 Coder, Pi, Oh My Pi, Grok. Factory Droid has an empty `readOnlyArgs` and is unavailable by rule. The blockers live in `SKETCH_RESTRICTED_POSTURE_BLOCKERS` (`src/shared/sketch/restricted-posture.ts`), which `isB2Available()` reads through `sketchRestrictedPostureBlocker()`. No provider's `readOnlyArgs` changed. A restricted conductor turn (`guestEdited = true`) on Claude Code or OpenCode cannot draw on the sketch either; turn delivery must account for that.
 
+**Turn delivery (built 2026-10-27).** `src/renderer/services/sketchBotTurns.ts` is the bot relay's runner; main's half is `src/main/sketch/sketch-bot-turns.ts`.
+
+- **Posture first.** `sketch:prepareBotTurn` refuses a restricted turn on a provider in `SKETCH_RESTRICTED_POSTURE_BLOCKERS` before it builds the digest, so a refused turn does not count as the agent's read. The request ends `bot.failed`; a conductor message is told to send with full access (Q2). Restricted turns are never downgraded to "answer in text only".
+- **Codex approval.** The `maestro-sketch` entry in `~/.codex/config.toml` carries `default_tools_approval_mode = "approve"` (the installer's `autoApproveTools`), instead of a per-turn `-c` flag: the tools reach only the caller's own sketches and every write passes the outbound screen, so no approval that guarded anything else is lost.
+- **Prompt.** Digest first, then the request. A guest's request is JSON-quoted between `BEGIN/END UNTRUSTED SKETCH REQUEST` markers with the actor line (`describeSketchActor()`) and the gate verdict. The conductor's own message is not third-party text and goes in as typed.
+- **Tab.** One `sketchOrigin`-tagged AI tab per sketch, created in the background with History synopses off. Its provider session id is saved as `botSessionId`, so a closed tab comes back on the same conversation.
+- **End of a turn.** Followed with `readQueuedTurn()` until done. Stop, an error, a turn taken out of the queue, a closed tab, or no answer ends `bot.failed`. No timeout (Y3).
+- **Reply.** `sketch:screenBotReply` (purpose `bot-reply`). One refusal goes back to the agent as a retry prompt; a second ends `bot.failed`. A model hold sets the request to `held` and shows the "Publish anyway" / "Discard" chip in the chat pane; Discard ends `bot.failed`. Over 4,000 characters the chat reply is cut at a word with "Full answer is on the board." and the **whole** answer (not only the rest) goes on the board as one text element, so the note is true.
+- **Bot presence.** A room join now names the owner as the room's bot (`SketchRoomJoin.bot`), so the room client announces it after `screening.set` (D4). An owner that is gone or SSH-remote stays offline.
+
 ### B2 approval chip
 
 - Shown in the Sketch tab chat pane and raised as a toast whose click jumps to the sketch.

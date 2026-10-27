@@ -3,21 +3,36 @@
  * holds what the agent posts with `sketch_chat_post` (T12), the room's chat
  * as the bot relay mirrors it (`sketchBotRelay.ts`), and the conductor's own
  * `@bot` messages and their local replies. Names come from the posting actor,
- * never from the text.
+ * never from the text. Bot replies the outbound screen holds wait at the
+ * bottom with their "Publish anyway" chip (`SketchHeldReplyChip`).
  */
 
 import type { Theme } from '../../types';
 import { formatRelativeTime } from '../../../shared/formatters';
 import { useStickToBottom } from '../../hooks/ui/useStickToBottom';
-import type { SketchChatMessage } from '../../stores/sketchSessionStore';
+import type { SketchBotRequest, SketchChatMessage } from '../../stores/sketchSessionStore';
+import { SketchHeldReplyChip } from './SketchHeldReplyChip';
 
 export interface SketchChatPaneProps {
 	messages: readonly SketchChatMessage[];
 	theme: Theme;
+	/** Bot replies held for "Publish anyway" (`status: 'held'`). */
+	heldReplies?: readonly SketchBotRequest[];
+	onPublishHeld?: (replyTo: string) => void;
+	onDiscardHeld?: (replyTo: string) => void;
 }
 
-export function SketchChatPane({ messages, theme }: SketchChatPaneProps) {
-	const listRef = useStickToBottom<HTMLDivElement>(messages.length);
+const NO_HELD: readonly SketchBotRequest[] = [];
+const noop = () => {};
+
+export function SketchChatPane({
+	messages,
+	theme,
+	heldReplies = NO_HELD,
+	onPublishHeld = noop,
+	onDiscardHeld = noop,
+}: SketchChatPaneProps) {
+	const listRef = useStickToBottom<HTMLDivElement>(messages.length + heldReplies.length);
 	return (
 		<aside
 			className="w-72 shrink-0 flex flex-col min-h-0"
@@ -49,6 +64,15 @@ export function SketchChatPane({ messages, theme }: SketchChatPaneProps) {
 							{message.text}
 						</div>
 					</div>
+				))}
+				{heldReplies.map((request) => (
+					<SketchHeldReplyChip
+						key={request.replyTo}
+						request={request}
+						theme={theme}
+						onPublish={onPublishHeld}
+						onDiscard={onDiscardHeld}
+					/>
 				))}
 			</div>
 		</aside>

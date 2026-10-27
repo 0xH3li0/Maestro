@@ -23,16 +23,17 @@ import {
 	buildQueuedMessageItem,
 	enqueuePromptForTab,
 	mergeQueuedItemIntoAbove,
+	readQueuedTurn,
 	removeQueuedItem,
 	sendQueuedItemNow,
 	setQueuedItemPaused,
 	toggleQueuedItemPaused,
 } from '../../../renderer/services/queuedPrompt';
-import { registerDispatchDepsProvider } from '../../../renderer/stores/retryStore';
+import { registerDispatchDepsProvider, useRetryStore } from '../../../renderer/stores/retryStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { createMockSession } from '../../helpers/mockSession';
 import { createMockAITab } from '../../helpers/mockTab';
-import type { Session } from '../../../renderer/types';
+import type { LogEntry, Session } from '../../../renderer/types';
 
 function seed(overrides: Partial<Session> = {}): Session {
 	const session = createMockSession({
@@ -195,6 +196,24 @@ describe('enqueuePromptForTab', () => {
 		enqueuePromptForTab({ sessionId: 'session-1', tabId: 'b', text: 'second' });
 
 		expect(currentQueue().map((item) => item.text)).toEqual(['first', 'second']);
+	});
+
+	it('queues one turn read-only on a tab that is not, and never lifts a read-only tab', () => {
+		seed();
+		enqueuePromptForTab({ sessionId: 'session-1', tabId: 'a', text: 'look', readOnlyMode: true });
+		enqueuePromptForTab({ sessionId: 'session-1', tabId: 'a', text: 'act' });
+		expect(currentQueue().map((item) => item.readOnlyMode)).toEqual([true, false]);
+
+		const session = seed({
+			aiTabs: [createMockAITab({ id: 'a', name: 'Alpha', readOnlyMode: true })],
+		});
+		const item = buildQueuedMessageItem({
+			session,
+			tab: session.aiTabs[0],
+			text: 'x',
+			readOnlyMode: false,
+		});
+		expect(item.readOnlyMode).toBe(true);
 	});
 
 	it('queues the consult chain with the prompt', () => {
@@ -566,4 +585,76 @@ it('preserves a submitted provider capture across asynchronous queueing', () => 
 		turnSettings: settings,
 	});
 	expect(item?.turnSettings).toBe(settings);
+});
+
+describe('readQueuedTurn', () => {
+	const log = (id: string, source: LogEntry['source'], text: string, extra = {}): LogEntry => ({
+		id,
+		timestamp: 1,
+		source,
+		text,
+		...extra,
+	});
+
+	beforeEach(() => {
+		useRetryStore.setState({ retries: {} });
+	});
+
+	it('is queued while the item waits, and held while a recovery parks it', () => {
+		const session = seed({
+			executionQueue: [{ id: 'item-1', timestamp: 1, tabId: 'a', type: 'message', text: 'x' }],
+		});
+		expect(readQueuedTurn(session, 'a', 'item-1')).toEqual({ phase: 'queued' });
+
+		useRetryStore.setState({
+			retries: { 'session-1:a': { heldItemId: 'item-1' } as never },
+		});
+		expect(readQueuedTurn(session, 'a', 'item-1')).toEqual({ phase: 'held' });
+	});
+
+	it('is gone without the agent or the tab', () => {
+		expect(readQueuedTurn(undefined, 'a', 'item-1')).toEqual({ phase: 'gone' });
+		expect(readQueuedTurn(seed(), 'missing', 'item-1')).toEqual({ phase: 'gone' });
+	});
+
+	it('is starting with a busy tab and no card, unseen with an idle one', () => {
+		const busy = seed({ aiTabs: [createMockAITab({ id: 'a', state: 'busy' })] });
+		expect(readQueuedTurn(busy, 'a', 'item-1').phase).toBe('starting');
+		const idle = seed({ aiTabs: [createMockAITab({ id: 'a', state: 'idle' })] });
+		expect(readQueuedTurn(idle, 'a', 'item-1').phase).toBe('unseen');
+	});
+
+	it("returns the turn's logs, up to the next message sent to the tab", () => {
+		const logs = [
+			log('old', 'stdout', 'earlier answer'),
+			log('card', 'user', 'question', { queuedItemId: 'item-1' }),
+			log('r1', 'stdout', 'the answer'),
+			log('next', 'user', 'follow-up'),
+			log('r2', 'stdout', 'another answer'),
+		];
+		const session = seed({ aiTabs: [createMockAITab({ id: 'a', state: 'busy', logs })] });
+		const state = readQueuedTurn(session, 'a', 'item-1');
+		expect(state.phase).toBe('done');
+		expect(state.phase === 'done' && state.logs.map((entry) => entry.id)).toEqual(['r1']);
+	});
+
+	it('is running while the tab is busy or a retry counts down, done once idle', () => {
+		const logs = [log('card', 'user', 'q', { queuedItemId: 'item-1' }), log('r', 'stdout', 'a')];
+		const busy = seed({ aiTabs: [createMockAITab({ id: 'a', state: 'busy', logs })] });
+		expect(readQueuedTurn(busy, 'a', 'item-1').phase).toBe('running');
+
+		const idle = seed({ aiTabs: [createMockAITab({ id: 'a', state: 'idle', logs })] });
+		expect(readQueuedTurn(idle, 'a', 'item-1').phase).toBe('done');
+		useRetryStore.setState({ retries: { 'session-1:a': { status: 'scheduled' } as never } });
+		expect(readQueuedTurn(idle, 'a', 'item-1').phase).toBe('running');
+	});
+
+	it('follows a tab closed while it was still replying', () => {
+		const logs = [log('card', 'user', 'q', { queuedItemId: 'item-1' }), log('r', 'stdout', 'a')];
+		const session = seed({
+			aiTabs: [],
+			orphanedThinkingTabs: [createMockAITab({ id: 'a', state: 'idle', logs })],
+		});
+		expect(readQueuedTurn(session, 'a', 'item-1').phase).toBe('done');
+	});
 });

@@ -69,7 +69,12 @@ import { generateId } from '../utils/ids';
 import { downscaleImageDataUrl } from '../utils/imageData';
 import { captureException } from '../utils/sentry';
 import { jumpToAgent } from './agentNavigation';
-import { enqueuePromptForTab, removeQueuedItem, sendQueuedItemNow } from './queuedPrompt';
+import {
+	enqueuePromptForTab,
+	readQueuedTurn,
+	removeQueuedItem,
+	sendQueuedItemNow,
+} from './queuedPrompt';
 import { reopenClosedConversation, routeQuickChatMessage } from './quickChatRouter';
 import { collectNamingPrompt, requestTabAutoName } from './tabAutoNaming';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
@@ -410,43 +415,44 @@ function turnView(
 		turn.tabName = pillName(tab, turn.origin);
 		turn.agentSessionId = tab.agentSessionId ?? turn.agentSessionId;
 	}
-	if (session?.executionQueue?.some((item) => item.id === turn.queuedItemId)) {
-		// In the queue for one of two reasons. Waiting: it has not run. Or held:
-		// it ran, the provider refused it, and an automatic recovery parked it
-		// here until the resend. That one is still the agent's turn.
-		return isHeldByRecovery(turn.queuedItemId)
-			? {
-					route: route('running', tab, tab && session ? tabBusySince(session, tab) : null),
-					reply: [],
-				}
-			: { route: { ...route('queued', tab), canSteer: canSteerTurn(session, turn) }, reply: [] };
+	if (!session) return { route: route('done'), reply: turn.reply };
+	const state = readQueuedTurn(session, turn.tabId ?? '', turn.queuedItemId ?? '');
+	switch (state.phase) {
+		// Held: it ran, the provider refused it, and an automatic recovery parked
+		// it in the queue until the resend. That one is still the agent's turn.
+		case 'held':
+			return {
+				route: route('running', tab, tab ? tabBusySince(session, tab) : null),
+				reply: [],
+			};
+		case 'queued':
+			return {
+				route: { ...route('queued', tab), canSteer: canSteerTurn(session, turn) },
+				reply: [],
+			};
+		case 'gone':
+			return { route: route('done'), reply: turn.reply };
+		// Out of the queue with no card yet: a slash command until its prompt is expanded.
+		case 'starting':
+			if (turn.started) return { route: route('done', state.tab), reply: turn.reply };
+			return { route: route('running', state.tab, tabBusySince(session, state.tab)), reply: [] };
+		// Its card scrolled out of the tab's log buffer (show what was last read),
+		// or someone took it out of the queue.
+		case 'unseen':
+			return turn.started
+				? { route: route('done', state.tab), reply: turn.reply }
+				: { route: route('cancelled', state.tab), reply: [] };
+		case 'running':
+		case 'done': {
+			turn.started = true;
+			const running = state.phase === 'running';
+			turn.reply = logsToQuickChatMessages(state.logs, { thinking: thinkingMode(), running });
+			return {
+				route: route(state.phase, state.tab, running ? tabBusySince(session, state.tab) : null),
+				reply: turn.reply,
+			};
+		}
 	}
-	if (!session || !tab) return { route: route('done'), reply: turn.reply };
-
-	const card = tab.logs.findIndex((log) => log.queuedItemId === turn.queuedItemId);
-	if (card === -1) {
-		// Its card scrolled out of the tab's log buffer: show what was last read.
-		if (turn.started) return { route: route('done', tab), reply: turn.reply };
-		// Out of the queue with no card yet. A slash command is in that state from
-		// the moment it is dequeued until its prompt is expanded, with the tab
-		// already marked busy. Otherwise someone took it out of the queue.
-		return tab.state === 'busy'
-			? { route: route('running', tab, tabBusySince(session, tab)), reply: [] }
-			: { route: route('cancelled', tab), reply: [] };
-	}
-	turn.started = true;
-	const next = tab.logs.findIndex((log, index) => index > card && log.source === 'user');
-	// Still its turn only while nothing was sent to the tab after it. An Agent
-	// Resilience retry counting down reads idle, but the turn will run again.
-	const running = next === -1 && (tab.state === 'busy' || hasPendingRetry(session.id, tab.id));
-	turn.reply = logsToQuickChatMessages(tab.logs.slice(card + 1, next === -1 ? undefined : next), {
-		thinking: thinkingMode(),
-		running,
-	});
-	return {
-		route: route(running ? 'running' : 'done', tab, running ? tabBusySince(session, tab) : null),
-		reply: turn.reply,
-	};
 }
 
 /** Whether a turn is still in motion: a tab being found, queued, or being answered. */

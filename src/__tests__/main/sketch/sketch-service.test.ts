@@ -84,6 +84,7 @@ function fakeStore() {
 		deleteSketch: vi.fn(async () => {}),
 		saveSketchToProject: vi.fn(async () => '/project/Board.excalidraw'),
 		updateSketchShare: vi.fn(async () => record),
+		setBotSessionId: vi.fn(async () => record),
 		setSketchSecrets: vi.fn(async () => {}),
 		readSketchSecrets: vi.fn(async () => ({})),
 		sketchesDir: vi.fn(() => 'sketches'),

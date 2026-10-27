@@ -120,6 +120,45 @@ export interface SketchScreenVerdict {
 /** Whether a `@bot` turn runs restricted or with the agent's full access (spec section 5). */
 export type SketchTurnPosture = 'restricted' | 'full';
 
+/** What a bot turn starts from (`sketch:prepareBotTurn`), or why it cannot run. */
+export type SketchBotTurnContext =
+	| {
+			ok: true;
+			/** The owning agent, which runs the turn. */
+			agentId: string;
+			agentName: string;
+			sketchName: string;
+			/** The gated change digest since the agent's last read (spec section 4). */
+			digest: string;
+			sceneVersion: number;
+			/** The sketch's own provider session (Q3), once its first turn has run. */
+			botSessionId: string | null;
+	  }
+	| {
+			ok: false;
+			reason: string;
+			/** The owner's provider cannot run the turn's restricted posture (risk K1). */
+			blockedByPosture?: true;
+	  };
+
+/** The outbound screen's decision on a bot reply (spec section 8.5), as the renderer sees it. */
+export type SketchBotReplyScreen =
+	| {
+			ok: true;
+			/** The reply to post, after redaction. */
+			text: string;
+			/** The model pass flagged it: hold it for the conductor's "Publish anyway". */
+			held?: true;
+			heldReason?: string;
+			/** Why the model pass did not run. Never a block. */
+			note?: string;
+	  }
+	| {
+			ok: false;
+			/** Why the reply is refused, in words the agent can act on. */
+			reason: string;
+	  };
+
 /** A guest's `@bot` chat for the gate (spec section 8.2, I1), as the bot relay hands it over. */
 export interface SketchBotScreenRequest {
 	/** The chat message id: the `replyTo` of every frame that answers it. */

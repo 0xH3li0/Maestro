@@ -387,6 +387,26 @@ describe('renameSketch', () => {
 	});
 });
 
+describe('setBotSessionId', () => {
+	it('keeps the bot session on the record and forgets it with null', async () => {
+		const { sketchId } = await store.createSketch({ ownerAgentId: 'agent-a' });
+
+		const set = await store.setBotSessionId(sketchId, 'provider-session-1');
+		expect(set.botSessionId).toBe('provider-session-1');
+		expect((await store.getSketch(sketchId))?.botSessionId).toBe('provider-session-1');
+
+		const cleared = await store.setBotSessionId(sketchId, null);
+		expect(cleared.botSessionId).toBeUndefined();
+		expect((await store.getSketch(sketchId))?.botSessionId).toBeUndefined();
+	});
+
+	it('refuses a sketch that does not exist', async () => {
+		await expect(
+			store.setBotSessionId('00000000-0000-4000-8000-000000000000', 'x')
+		).rejects.toThrow(/No sketch/);
+	});
+});
+
 describe('updateSketchShare', () => {
 	const share = {
 		roomId: 'R'.repeat(22),

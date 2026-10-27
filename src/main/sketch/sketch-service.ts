@@ -487,6 +487,12 @@ export function createSketchService(deps: SketchServiceDeps = {}): SketchService
 		}
 	}
 
+	/** The agent a room's bot speaks for: the owner, while it is a live local agent. */
+	function botFor(record: SketchRecord): SketchRoomJoin['bot'] {
+		const agent = findAgent(record.ownerAgentId);
+		return agent && !agent.sshRemote ? { agentId: agent.id, name: agent.name } : null;
+	}
+
 	function connectionFor(
 		record: SketchRecord,
 		share: SketchShare,
@@ -499,8 +505,9 @@ export function createSketchService(deps: SketchServiceDeps = {}): SketchService
 			roomKey,
 			ownerToken: auth.ownerToken,
 			serverUrl: auth.serverUrl,
-			// The bot is announced once the bot relay can answer for it (spec section 5).
-			bot: null,
+			// The bot relay answers for the owner (spec section 5), so the room
+			// client announces it; with the owner gone the bot stays offline.
+			bot: botFor(record),
 		};
 	}
 

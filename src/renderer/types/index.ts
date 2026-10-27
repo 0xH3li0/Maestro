@@ -931,6 +931,15 @@ export interface AITab {
 		archived?: boolean;
 	};
 	/**
+	 * When set, this tab is the "Sketch: <name>" tab a Sketch Book's `@bot`
+	 * turns run in (spec section 5). It is the continuity key, like
+	 * `documentOrigin`: one tab per sketch, found again after a restart, on the
+	 * sketch's own provider session (Q3), never the tab that created the sketch.
+	 */
+	sketchOrigin?: {
+		sketchId: string;
+	};
+	/**
 	 * When true, the tab exists as a data container but is NOT surfaced in the tab
 	 * strip or reachable by tab-cycling shortcuts. Set on consult tabs created by an
 	 * inbound `@mention`: the consulted agent's workspace belongs to the user, and a

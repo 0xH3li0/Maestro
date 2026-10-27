@@ -331,7 +331,8 @@ describe('Sketch Book sharing', () => {
 					roomKey,
 					ownerToken: OWNER_TOKEN,
 					serverUrl: SERVER,
-					bot: null,
+					// The owner speaks as the room's bot (spec section 5).
+					bot: { agentId: agent.id, name: agent.name },
 				},
 				baseline: [
 					{ id: 'box', version: 4 },

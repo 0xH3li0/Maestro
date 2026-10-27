@@ -29,10 +29,13 @@ import type {
 } from '../../shared/sketch/cloud-consent';
 import type { Screening } from '../../shared/sketch/protocol';
 import type {
+	SketchBotReplyScreen,
 	SketchBotScreenRequest,
+	SketchBotTurnContext,
 	SketchRecord,
 	SketchScene,
 	SketchScreenVerdict,
+	SketchTurnPosture,
 } from '../../shared/sketch/types';
 
 /** Matches `SKETCH_REMOTE_COMMAND_CHANNEL` in `src/main/sketch/sketch-renderer-bridge.ts`. */
@@ -98,6 +101,15 @@ export function createSketchApi() {
 			request: SketchBotScreenRequest
 		): Promise<SketchScreenVerdict> =>
 			ipcRenderer.invoke('sketch:screenBotRequest', sketchId, request),
+		/** Check a bot turn's posture and build its change digest (spec section 5). */
+		prepareBotTurn: (sketchId: string, posture: SketchTurnPosture): Promise<SketchBotTurnContext> =>
+			ipcRenderer.invoke('sketch:prepareBotTurn', sketchId, posture),
+		/** The outbound screen on a bot turn's final reply (spec section 8.5). */
+		screenBotReply: (sketchId: string, text: string): Promise<SketchBotReplyScreen> =>
+			ipcRenderer.invoke('sketch:screenBotReply', sketchId, text),
+		/** Remember the sketch's own provider session for bot turns (Q3); null forgets it. */
+		setBotSessionId: (sketchId: string, botSessionId: string | null): Promise<SketchRecord> =>
+			ipcRenderer.invoke('sketch:setBotSessionId', sketchId, botSessionId),
 		/** Main's requests for this window (`maestro-cli sketch`). Returns the unsubscribe. */
 		onRemoteCommand: (
 			callback: (request: SketchRendererRequest, responseChannel: string) => void

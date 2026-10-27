@@ -12,6 +12,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const h = vi.hoisted(() => ({
 	handlers: new Map<string, (...args: unknown[]) => unknown>(),
 	service: null as Record<string, ReturnType<typeof vi.fn>> | null,
+	botTurns: null as Record<string, ReturnType<typeof vi.fn>> | null,
 	logError: vi.fn(),
 	setSketchWindowResolver: vi.fn(),
 	consent: null as Record<string, ReturnType<typeof vi.fn>> | null,
@@ -28,6 +29,9 @@ vi.mock('../../../../main/utils/logger', () => ({
 }));
 vi.mock('../../../../main/sketch/sketch-service', () => ({
 	getSketchService: () => h.service,
+}));
+vi.mock('../../../../main/sketch/sketch-bot-turns', () => ({
+	getSketchBotTurnService: () => h.botTurns,
 }));
 vi.mock('../../../../main/sketch/sketch-renderer-bridge', () => ({
 	setSketchWindowResolver: h.setSketchWindowResolver,
@@ -86,6 +90,11 @@ describe('sketch IPC handlers', () => {
 				locality: 'local' as const,
 			})),
 		};
+		h.botTurns = {
+			prepareBotTurn: vi.fn(async () => ({ ok: false, reason: 'The owner agent was removed.' })),
+			screenBotReply: vi.fn(async () => ({ ok: true, text: 'Done.' })),
+			setBotSessionId: vi.fn(async () => record),
+		};
 		registerSketchHandlers();
 	});
 
@@ -111,6 +120,7 @@ describe('sketch IPC handlers', () => {
 			'sketch:grantScreeningConsent',
 			'sketch:list',
 			'sketch:ownerStatus',
+			'sketch:prepareBotTurn',
 			'sketch:readScene',
 			'sketch:registerOwner',
 			'sketch:rename',
@@ -121,8 +131,10 @@ describe('sketch IPC handlers', () => {
 			'sketch:roomScreening',
 			'sketch:rotate',
 			'sketch:saveToProject',
+			'sketch:screenBotReply',
 			'sketch:screenBotRequest',
 			'sketch:screeningConsentStatus',
+			'sketch:setBotSessionId',
 			'sketch:setRoomLive',
 			'sketch:share',
 			'sketch:signOutOwner',
@@ -170,6 +182,22 @@ describe('sketch IPC handlers', () => {
 			status: 'clean',
 		});
 		expect(service.screenBotRequest).toHaveBeenCalledWith(SKETCH_ID, request);
+	});
+
+	it('passes each bot turn channel through to the bot turn service', async () => {
+		const botTurns = h.botTurns!;
+		await expect(invoke('sketch:prepareBotTurn', SKETCH_ID, 'restricted')).resolves.toEqual({
+			ok: false,
+			reason: 'The owner agent was removed.',
+		});
+		expect(botTurns.prepareBotTurn).toHaveBeenCalledWith(SKETCH_ID, 'restricted');
+		await expect(invoke('sketch:screenBotReply', SKETCH_ID, 'Done.')).resolves.toEqual({
+			ok: true,
+			text: 'Done.',
+		});
+		expect(botTurns.screenBotReply).toHaveBeenCalledWith(SKETCH_ID, 'Done.');
+		await expect(invoke('sketch:setBotSessionId', SKETCH_ID, 'session-1')).resolves.toBe(record);
+		expect(botTurns.setBotSessionId).toHaveBeenCalledWith(SKETCH_ID, 'session-1');
 	});
 
 	it('passes each consent channel through to the consent module', async () => {

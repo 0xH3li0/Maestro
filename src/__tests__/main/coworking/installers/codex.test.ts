@@ -101,6 +101,18 @@ auto_save = true
 		expect(fs.readFileSync(cfgPath(), 'utf8')).not.toContain('maestro-sketch');
 	});
 
+	it('writes default_tools_approval_mode only for a spec that auto-approves its tools', async () => {
+		await codexInstaller.install(SPEC);
+		await codexInstaller.install({ ...SPEC, autoApproveTools: true }, 'maestro-sketch');
+		const content = fs.readFileSync(cfgPath(), 'utf8');
+		const sketchBlock = content.slice(content.indexOf('# >>> maestro-sketch BEGIN'));
+		expect(sketchBlock).toContain('default_tools_approval_mode = "approve"');
+		expect(content.match(/default_tools_approval_mode/g)).toHaveLength(1);
+
+		await codexInstaller.uninstall('maestro-sketch');
+		expect(fs.readFileSync(cfgPath(), 'utf8')).not.toContain('default_tools_approval_mode');
+	});
+
 	it('uninstall on a non-installed config is a no-op', async () => {
 		await codexInstaller.uninstall();
 		expect(fs.existsSync(cfgPath())).toBe(false);

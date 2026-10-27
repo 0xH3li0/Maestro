@@ -19,6 +19,7 @@
 import { ipcMain } from 'electron';
 import { withIpcErrorLogging } from '../../utils/ipcHandler';
 import { getSketchService } from '../../sketch/sketch-service';
+import { getSketchBotTurnService } from '../../sketch/sketch-bot-turns';
 import {
 	setSketchWindowResolver,
 	type SketchWindowResolver,
@@ -29,7 +30,11 @@ import type { SafeSendFn } from '../../utils/safe-send';
 import type { SketchCloudEngine } from '../../../shared/sketch/cloud-consent';
 import type { SketchSceneForSnapshot, SketchShareOptions } from '../../../shared/sketch/commands';
 import type { Screening } from '../../../shared/sketch/protocol';
-import type { SketchBotScreenRequest, SketchScene } from '../../../shared/sketch/types';
+import type {
+	SketchBotScreenRequest,
+	SketchScene,
+	SketchTurnPosture,
+} from '../../../shared/sketch/types';
 
 const LOG_CONTEXT = '[SketchBook]';
 
@@ -163,6 +168,32 @@ export function registerSketchHandlers(deps: SketchHandlerDeps = {}): void {
 			opts('screenBotRequest'),
 			async (sketchId: string, request: SketchBotScreenRequest) =>
 				service.screenBotRequest(sketchId, request)
+		)
+	);
+
+	// Bot turns (spec section 5): the window runs the turn; main checks the
+	// posture, builds the digest, screens the reply, and keeps the session id.
+	const botTurns = getSketchBotTurnService();
+	ipcMain.handle(
+		'sketch:prepareBotTurn',
+		withIpcErrorLogging(
+			opts('prepareBotTurn'),
+			async (sketchId: string, posture: SketchTurnPosture) =>
+				botTurns.prepareBotTurn(sketchId, posture)
+		)
+	);
+	ipcMain.handle(
+		'sketch:screenBotReply',
+		withIpcErrorLogging(opts('screenBotReply'), async (sketchId: string, text: string) =>
+			botTurns.screenBotReply(sketchId, text)
+		)
+	);
+	ipcMain.handle(
+		'sketch:setBotSessionId',
+		withIpcErrorLogging(
+			opts('setBotSessionId'),
+			async (sketchId: string, botSessionId: string | null) =>
+				botTurns.setBotSessionId(sketchId, botSessionId)
 		)
 	);
 

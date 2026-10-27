@@ -400,7 +400,11 @@ function defaultAssignmentKey(): string {
 	);
 }
 
-function defaultRestrictedPostureBlocker(agentId: string): string | null {
+/**
+ * Why the agent `agentId` cannot run a restricted turn (risk K1), or null.
+ * Read by `isB2Available()` and by bot turn delivery (sketch-bot-turns.ts).
+ */
+export function sketchAgentRestrictedPostureBlocker(agentId: string): string | null {
 	const session = getLiveSessions().find((candidate) => candidate.id === agentId);
 	if (!session) return 'The owner agent was removed.';
 	return sketchRestrictedPostureBlocker(
@@ -417,7 +421,8 @@ export function createSketchGuardrail(deps: SketchGuardrailDeps = {}): SketchGua
 	const auditPath = deps.auditPath ?? defaultAuditPath;
 	const appendAudit =
 		deps.appendAudit ?? ((filePath: string, line: string) => fs.appendFile(filePath, line, 'utf8'));
-	const restrictedPostureBlocker = deps.restrictedPostureBlocker ?? defaultRestrictedPostureBlocker;
+	const restrictedPostureBlocker =
+		deps.restrictedPostureBlocker ?? sketchAgentRestrictedPostureBlocker;
 	const now = deps.now ?? Date.now;
 	const timeoutMs = deps.timeoutMs ?? SKETCH_SCREEN_TIMEOUT_MS;
 	const eagerDelayMs = deps.eagerDelayMs ?? SKETCH_EAGER_SCREEN_DELAY_MS;

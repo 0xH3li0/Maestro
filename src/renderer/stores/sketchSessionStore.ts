@@ -106,7 +106,8 @@ export interface SketchChatMessage {
 }
 
 /** Where one `@bot` request stands in the bot relay. */
-export type SketchBotRequestStatus = 'awaiting_approval' | 'running';
+/** `held`: the turn answered, and the outbound screen's model pass holds the reply for "Publish anyway". */
+export type SketchBotRequestStatus = 'awaiting_approval' | 'running' | 'held';
 
 /** One `@bot` request the bot relay holds (spec section 5). */
 export interface SketchBotRequest {
@@ -125,6 +126,8 @@ export interface SketchBotRequest {
 	posture: SketchTurnPosture;
 	/** The server expired it while it ran (Y3): the reply is still posted. */
 	expired?: true;
+	/** Why the outbound screen holds the reply (`held`), naming the model and its score. */
+	heldReason?: string;
 }
 
 /** An agent's `sketch_focus`, until a view scrolls to it. */

@@ -85,6 +85,30 @@ export function localConductorActor(name = 'Conductor', id = LOCAL_CONDUCTOR_ID)
 	return { id, kind: 'conductor', name, role: 'conductor' };
 }
 
+/** Longest actor name {@link describeSketchActor} quotes, in characters. */
+export const SKETCH_ACTOR_NAME_MAX_CHARS = 60;
+
+/**
+ * The server-stamped actor as one line (A2, M2): `"Sam" · guest, read-write
+ * link #3, not verified`. The name is chosen by a person, so it is capped and
+ * JSON-quoted: it cannot break out of its quotes or onto a line of its own.
+ * The link label is the conductor's own, kept on one line. Every guest is
+ * "not verified": v1 has no guest accounts.
+ */
+export function describeSketchActor(actor: SketchActor): string {
+	const chars = Array.from(actor.name);
+	const name =
+		chars.length > SKETCH_ACTOR_NAME_MAX_CHARS
+			? `${chars.slice(0, SKETCH_ACTOR_NAME_MAX_CHARS - 1).join('')}…`
+			: actor.name;
+	const quoted = JSON.stringify(name);
+	if (actor.kind !== 'guest') return `${quoted} · ${actor.kind}`;
+	const link = actor.role === 'rw' ? 'read-write link' : 'view-only link';
+	const capLabel = actor.capLabel?.replace(/\s+/g, ' ').trim();
+	const label = capLabel ? ` ${capLabel}` : '';
+	return `${quoted} · guest, ${link}${label}, not verified`;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

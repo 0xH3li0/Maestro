@@ -46,6 +46,7 @@ import { SketchChatPane } from './SketchChatPane';
 import { SketchSharePanel } from './SketchSharePanel';
 import { HeaderActionButton } from '../ui/HeaderActionButton';
 import { ensureSketchRoomConnected } from '../../services/sketchSharing';
+import { discardHeldSketchReply, publishHeldSketchReply } from '../../services/sketchBotTurns';
 
 const Excalidraw = React.lazy(() =>
 	loadExcalidraw().then((module) => ({ default: module.Excalidraw }))
@@ -83,6 +84,11 @@ export function SketchTabView({ sketchId, theme }: SketchTabViewProps) {
 	);
 	const focusRequest = useSketchSessionStore((s) => s.sessions[sketchId]?.focusRequest ?? null);
 	const chat = useSketchSessionStore((s) => s.sessions[sketchId]?.chat);
+	const botRequests = useSketchSessionStore((s) => s.sessions[sketchId]?.botRequests);
+	const heldReplies = React.useMemo(
+		() => (botRequests ?? []).filter((request) => request.status === 'held'),
+		[botRequests]
+	);
 	const roomNotice = useSketchSessionStore((s) => s.sessions[sketchId]?.room?.notice ?? null);
 	const roomConnection = useSketchSessionStore(
 		(s) => s.sessions[sketchId]?.room?.connection ?? null
@@ -281,7 +287,15 @@ export function SketchTabView({ sketchId, theme }: SketchTabViewProps) {
 						</React.Suspense>
 					</div>
 				</div>
-				{chat && chat.length > 0 && <SketchChatPane messages={chat} theme={theme} />}
+				{((chat && chat.length > 0) || heldReplies.length > 0) && (
+					<SketchChatPane
+						messages={chat ?? []}
+						theme={theme}
+						heldReplies={heldReplies}
+						onPublishHeld={(replyTo) => publishHeldSketchReply(sketchId, replyTo)}
+						onDiscardHeld={(replyTo) => discardHeldSketchReply(sketchId, replyTo)}
+					/>
+				)}
 				{shareOpen && (
 					<SketchSharePanel sketchId={sketchId} theme={theme} onClose={() => setShareOpen(false)} />
 				)}

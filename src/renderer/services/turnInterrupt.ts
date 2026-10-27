@@ -80,6 +80,10 @@ export interface InterruptTurnOptions {
 	confirmForceKill?: () => boolean;
 }
 
+/** The system notes a stopped turn ends with, so a reader can tell Stop from an answer. */
+export const TURN_CANCELED_NOTE = 'Canceled by user';
+export const TURN_FORCE_KILLED_NOTE = 'Process forcefully terminated';
+
 /** The question the desktop asks before it force-kills a turn that ignored Stop. */
 export const FORCE_KILL_PROMPT =
 	'Failed to interrupt the process gracefully. Would you like to force kill it?\n\n' +
@@ -217,7 +221,7 @@ export async function interruptTurn(
 	);
 	if (results[0].status === 'fulfilled') {
 		interrupted = interrupted || results.some((r) => r.status === 'fulfilled' && r.value === true);
-		settle(systemLog('Canceled by user'), true);
+		settle(systemLog(TURN_CANCELED_NOTE), true);
 		return done(interrupted);
 	}
 
@@ -238,7 +242,7 @@ export async function interruptTurn(
 			targets.map((id) => window.maestro.process.kill(id))
 		);
 		if (killResults[0].status === 'rejected') throw killResults[0].reason;
-		settle(systemLog('Process forcefully terminated'), true);
+		settle(systemLog(TURN_FORCE_KILLED_NOTE), true);
 		return done(true);
 	} catch (killError: unknown) {
 		logger.error('Failed to kill process:', undefined, killError);

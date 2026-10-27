@@ -136,6 +136,8 @@ export interface SketchStore {
 		sketchId: string,
 		change: (share: SketchShare | null) => SketchShare | null
 	): Promise<SketchRecord>;
+	/** Remember the sketch's own provider session for bot turns (Q3); `null` forgets it. */
+	setBotSessionId(sketchId: string, botSessionId: string | null): Promise<SketchRecord>;
 	/** Seal and store secrets; `null` removes one. */
 	setSketchSecrets(
 		sketchId: string,
@@ -482,6 +484,21 @@ export function createSketchStore(deps: SketchStoreDeps): SketchStore {
 			);
 		},
 
+		async setBotSessionId(sketchId, botSessionId) {
+			await requireRecord(sketchId);
+			return writes.enqueue(sketchId, () =>
+				updateIndex((index) => {
+					const record = index.sketches[sketchId];
+					if (!record) {
+						throw new SketchStoreError('not-found', `No sketch has the id "${sketchId}".`);
+					}
+					if (botSessionId) record.botSessionId = botSessionId;
+					else delete record.botSessionId;
+					return { ...record };
+				})
+			);
+		},
+
 		async setSketchSecrets(sketchId, secrets) {
 			await requireRecord(sketchId);
 			// Seal outside the queue: it is CPU work and may ask the OS for its key.
@@ -555,6 +572,8 @@ export const saveSketchToProject: SketchStore['saveSketchToProject'] = (
 ) => getSketchStore().saveSketchToProject(sketchId, destDir, options);
 export const updateSketchShare: SketchStore['updateSketchShare'] = (sketchId, change) =>
 	getSketchStore().updateSketchShare(sketchId, change);
+export const setBotSessionId: SketchStore['setBotSessionId'] = (sketchId, botSessionId) =>
+	getSketchStore().setBotSessionId(sketchId, botSessionId);
 export const setSketchSecrets: SketchStore['setSketchSecrets'] = (sketchId, secrets) =>
 	getSketchStore().setSketchSecrets(sketchId, secrets);
 export const readSketchSecrets: SketchStore['readSketchSecrets'] = (sketchId) =>

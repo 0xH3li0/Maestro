@@ -81,6 +81,13 @@ export interface CoworkingMcpServerSpec {
 	args: string[];
 	/** Env vars the agent's MCP client must inject when spawning the server. */
 	env: Record<string, string>;
+	/**
+	 * Run the server's tools without asking per call. Only Codex reads it
+	 * (`default_tools_approval_mode = "approve"`): its read-only sandbox
+	 * otherwise fails every MCP call with "requires approval, but approval
+	 * policy is never" (Sketch Book risk K1). The other providers ignore it.
+	 */
+	autoApproveTools?: boolean;
 }
 
 /** Per-agent install status for the Coworking Setup panel. */

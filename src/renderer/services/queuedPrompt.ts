@@ -21,10 +21,10 @@ import { getAgentCommands } from '../utils/agentCommands';
  * an IPC listener) run outside React.
  */
 
-import type { AITab, QueuedItem, QueuedTurnSettings, Session } from '../types';
+import type { AITab, LogEntry, QueuedItem, QueuedTurnSettings, Session } from '../types';
 import { useSessionStore, updateSessionWith } from '../stores/sessionStore';
 import { useAgentStore } from '../stores/agentStore';
-import { getDispatchDeps } from '../stores/retryStore';
+import { getDispatchDeps, hasPendingRetry, isHeldByRecovery } from '../stores/retryStore';
 import { getActiveTab, getTabDisplayName } from '../utils/tabHelpers';
 import {
 	applyQueuedItemDispatch,
@@ -62,6 +62,12 @@ export interface QueuedPromptOptions {
 	 * drain re-plans from the text and the text alone would route it by wording.
 	 */
 	mentionRouting?: MentionRouting;
+	/**
+	 * Run this one turn read-only whatever the tab's own mode (a Sketch Book
+	 * restricted turn). The spawn then applies the provider's `readOnlyArgs`.
+	 * Never lifts a tab that is read-only itself.
+	 */
+	readOnlyMode?: boolean;
 }
 
 /**
@@ -87,6 +93,7 @@ export function buildQueuedMessageItem({
 	slashCommand,
 	turnSettings,
 	mentionRouting,
+	readOnlyMode,
 }: QueuedPromptOptions): QueuedItem {
 	const commandText = slashCommand ? text.trim() : undefined;
 	const firstWhitespace = commandText?.search(/\s/) ?? -1;
@@ -106,7 +113,8 @@ export function buildQueuedMessageItem({
 			: { type: 'message' as const, text }),
 		...(images && images.length > 0 ? { images: [...images] } : {}),
 		tabName: getTabDisplayName(tab, session.agentSessionId),
-		readOnlyMode: tab.readOnlyMode === true || tab.permissionMode === 'readonly',
+		readOnlyMode:
+			readOnlyMode === true || tab.readOnlyMode === true || tab.permissionMode === 'readonly',
 		turnSettings: turnSettings ?? captureQueuedTurnSettings(tab, session),
 		...queuedMentionFields(mentionPlan),
 		...(mentionPlan && { crossAgentOnly: mentionPlan.suppressLocal }),
@@ -164,6 +172,8 @@ export function enqueuePromptForTab(options: {
 	turnSettings?: QueuedTurnSettings;
 	expandCommands?: boolean;
 	mentionRouting?: MentionRouting;
+	/** Run this one turn read-only (see {@link QueuedPromptOptions.readOnlyMode}). */
+	readOnlyMode?: boolean;
 }): QueuedItem | null {
 	const {
 		sessionId,
@@ -190,6 +200,7 @@ export function enqueuePromptForTab(options: {
 		slashCommand,
 		mentionRouting,
 		turnSettings: options.turnSettings,
+		readOnlyMode: options.readOnlyMode,
 	});
 	const command = expandCommands && !slashCommand ? matchSlashCommand(session, text, tab) : null;
 	const item: QueuedItem = command
@@ -214,6 +225,52 @@ export function enqueuePromptForTab(options: {
 	// like one the composer queues. A no-op on a named model.
 	routeQueuedAutoItem(sessionId, item);
 	return item;
+}
+
+/**
+ * Where a queued prompt's turn stands, read from the store as it is now.
+ *
+ * - `queued`: still waiting in the agent's queue.
+ * - `held`: in the queue again because it ran, the provider refused it, and an
+ *   automatic recovery parked it for the resend. Still the agent's turn.
+ * - `starting`: out of the queue, no card in the tab yet, the tab busy (a
+ *   slash command is in this state until its prompt is expanded).
+ * - `unseen`: out of the queue with no card and the tab idle: someone took it
+ *   out of the queue, or its card scrolled out of the tab's log buffer.
+ * - `running` / `done`: the card is in the tab. `logs` is everything the turn
+ *   wrote after it. `running` holds while nothing was sent to the tab after it
+ *   and the tab is busy, or an Agent Resilience retry is counting down (which
+ *   reads idle, but the turn will run again).
+ * - `gone`: the agent, or the tab (open or closed while still replying), is gone.
+ */
+export type QueuedTurnState =
+	| { phase: 'queued' | 'held' }
+	| { phase: 'starting' | 'unseen'; tab: AITab }
+	| { phase: 'running' | 'done'; tab: AITab; logs: LogEntry[] }
+	| { phase: 'gone' };
+
+/** Read the turn a queued item started on `tabId` (see {@link QueuedTurnState}). */
+export function readQueuedTurn(
+	session: Session | null | undefined,
+	tabId: string,
+	itemId: string
+): QueuedTurnState {
+	if (session?.executionQueue?.some((item) => item.id === itemId)) {
+		return { phase: isHeldByRecovery(itemId) ? 'held' : 'queued' };
+	}
+	const tab =
+		session?.aiTabs.find((t) => t.id === tabId) ??
+		session?.orphanedThinkingTabs?.find((t) => t.id === tabId);
+	if (!session || !tab) return { phase: 'gone' };
+	const card = tab.logs.findIndex((log) => log.queuedItemId === itemId);
+	if (card === -1) return { phase: tab.state === 'busy' ? 'starting' : 'unseen', tab };
+	const next = tab.logs.findIndex((log, index) => index > card && log.source === 'user');
+	const running = next === -1 && (tab.state === 'busy' || hasPendingRetry(session.id, tab.id));
+	return {
+		phase: running ? 'running' : 'done',
+		tab,
+		logs: tab.logs.slice(card + 1, next === -1 ? undefined : next),
+	};
 }
 
 /**

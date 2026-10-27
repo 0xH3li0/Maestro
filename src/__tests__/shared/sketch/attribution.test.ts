@@ -6,8 +6,10 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+	SKETCH_ACTOR_NAME_MAX_CHARS,
 	botEditor,
 	conductorEditor,
+	describeSketchActor,
 	nextElementAuthorship,
 	readElementStamp,
 	sketchTextFields,
@@ -279,5 +281,43 @@ describe('nextElementAuthorship', () => {
 
 		expect(restyled.guestTextAt).toBe(500);
 		expect(rewritten.guestTextAt).toBe(700);
+	});
+});
+
+describe('describeSketchActor', () => {
+	it('names a guest with the link and says it is not verified (A2)', () => {
+		expect(
+			describeSketchActor({
+				id: 'g1',
+				kind: 'guest',
+				name: 'Sam',
+				role: 'rw',
+				capId: 'cap-3',
+				capLabel: '#3',
+			})
+		).toBe('"Sam" · guest, read-write link #3, not verified');
+		expect(describeSketchActor({ id: 'g2', kind: 'guest', name: 'Ada', role: 'ro' })).toBe(
+			'"Ada" · guest, view-only link, not verified'
+		);
+	});
+
+	it('names the conductor and the bot by kind alone', () => {
+		expect(describeSketchActor(actor('conductor'))).toBe('"conductor" · conductor');
+		expect(describeSketchActor(actor('bot'))).toBe('"bot" · bot');
+	});
+
+	it('quotes and caps a chosen name so it cannot break the line', () => {
+		const line = describeSketchActor({
+			id: 'g1',
+			kind: 'guest',
+			name: `Sam"\n${'x'.repeat(200)}`,
+			role: 'rw',
+			capLabel: 'team\nlink',
+		});
+		expect(line).not.toContain('\n');
+		expect(line.startsWith('"Sam\\"')).toBe(true);
+		const quoted = JSON.parse(line.slice(0, line.indexOf(' · '))) as string;
+		expect(Array.from(quoted)).toHaveLength(SKETCH_ACTOR_NAME_MAX_CHARS);
+		expect(line).toContain('read-write link team link, not verified');
 	});
 });

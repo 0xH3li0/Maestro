@@ -120,6 +120,12 @@ describe('Sketch Book Preload API', () => {
 		};
 		await api.screenBotRequest(SKETCH_ID, request);
 		expect(mockInvoke).toHaveBeenLastCalledWith('sketch:screenBotRequest', SKETCH_ID, request);
+		await api.prepareBotTurn(SKETCH_ID, 'restricted');
+		expect(mockInvoke).toHaveBeenLastCalledWith('sketch:prepareBotTurn', SKETCH_ID, 'restricted');
+		await api.screenBotReply(SKETCH_ID, 'Done.');
+		expect(mockInvoke).toHaveBeenLastCalledWith('sketch:screenBotReply', SKETCH_ID, 'Done.');
+		await api.setBotSessionId(SKETCH_ID, null);
+		expect(mockInvoke).toHaveBeenLastCalledWith('sketch:setBotSessionId', SKETCH_ID, null);
 	});
 
 	it("listens for main's remote commands and hands the request and reply channel on", () => {
