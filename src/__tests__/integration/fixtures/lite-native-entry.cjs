@@ -777,6 +777,29 @@ async function main() {
 	check(
 		'renderer crash automatically recovers the same origin and persistent draft without manual reconnect'
 	);
+	const discoveredViewId = remote.id;
+	const discoveredClientUrl = remote.getURL();
+	await js(
+		remote,
+		'socket.addEventListener("close", () => { setTimeout(() => { const recovered = new WebSocket(location.origin.replace("http:", "ws:") + "' +
+			CONNECT +
+			'/ws"); recovered.onopen = () => { window.__MAESTRO_BRIDGE_STATE__ = "connected"; }; recovered.onclose = () => { window.__MAESTRO_BRIDGE_STATE__ = "disconnected"; }; }, 100); }, { once: true }); true'
+	);
+	await invoke(lite.webContents, 'lite:control', 'pair-cancel');
+	await until(
+		async () => (await state()).status.startsWith('connected'),
+		'same-host automatic recovery'
+	);
+	remote = lite.contentView.children[0].webContents;
+	assert.equal(remote.id, discoveredViewId);
+	assert.equal(remote.getURL(), discoveredClientUrl);
+	assert.equal(
+		await js(remote, 'document.querySelector("#draft").value'),
+		'Preserve this unsent draft'
+	);
+	check(
+		'same-host automatic recovery preserves the mounted view, client identity and unsent draft'
+	);
 	const recoveryWritesBefore = fixture.recoveryWriteFinished;
 	fixture.holdRecoveryWrite = true;
 	await js(lite.webContents, 'void window.__nativeProbe.invoke("lite:control", "reconnect")');

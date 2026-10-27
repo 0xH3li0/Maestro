@@ -331,6 +331,44 @@ describe('Lite host handshake and readiness', () => {
 			vi.useRealTimers();
 		}
 	});
+	it('does not let a late timed-out probe delete its newer replacement', async () => {
+		vi.useFakeTimers();
+		try {
+			installWorkflowFixture();
+			let finishFirst!: (value: unknown[]) => void;
+			handlers.set(
+				'sessions:getBootstrap',
+				() =>
+					new Promise<unknown[]>((resolve) => {
+						finishFirst = resolve;
+					})
+			);
+			const options = [
+				{ sessions: true, terminal: true, files: true, browserRelay: false },
+				{ id: 'probe', cli: false },
+			] as const;
+			const first = qualifyRemoteWorkflows(...options);
+			await vi.advanceTimersByTimeAsync(3001);
+			await first;
+			let secondCalls = 0;
+			let finishSecond!: (value: unknown[]) => void;
+			handlers.set('sessions:getBootstrap', () => {
+				secondCalls++;
+				return new Promise<unknown[]>((resolve) => {
+					finishSecond = resolve;
+				});
+			});
+			const second = qualifyRemoteWorkflows(...options);
+			finishFirst([]);
+			await Promise.resolve();
+			const third = qualifyRemoteWorkflows(...options);
+			expect(secondCalls).toBe(1);
+			finishSecond([]);
+			await Promise.all([second, third]);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
 	it('uses the local bootstrap identity without adopting synced installation identity', () => {
 		state.settings.set('installationId', 'synced-other-machine');
 		const firstStore = {

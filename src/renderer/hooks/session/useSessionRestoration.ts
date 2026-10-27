@@ -1016,8 +1016,9 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				deferredLoadsFailed.current.clear();
 				useSessionStore.setState((state) => {
 					const existing = new Map(state.sessions.map((session) => [session.id, session]));
-					const sessions = savedSessions.map((host: Session) => {
-						const current = existing.get(host.id) ?? additions.get(host.id)!;
+					const sessions = savedSessions.flatMap((host: Session) => {
+						const current = existing.get(host.id) ?? additions.get(host.id);
+						if (!current) return [];
 						const merged = mergeSessionPersistenceChanges(host, current, current, true, false);
 						const tabs = new Map(current.aiTabs.map((tab) => [tab.id, tab]));
 						const hostTabs = new Map(host.aiTabs.map((tab) => [tab.id, tab]));
@@ -1066,7 +1067,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 						if (!updated.aiTabs.some((tab) => tab.id === updated.activeTabId))
 							updated.activeTabId = updated.aiTabs[0]?.id ?? '';
 						updated.unifiedTabOrder = getRepairedUnifiedTabOrder(updated);
-						return normalizeTabGroups(updated);
+						return [normalizeTabGroups(updated)];
 					});
 					return {
 						sessions,

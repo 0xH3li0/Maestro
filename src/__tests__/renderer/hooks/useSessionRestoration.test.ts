@@ -2166,6 +2166,42 @@ describe('Session & Group loading effect', () => {
 		}
 	});
 
+	it('skips a host session removed locally while recovered additions restore', async () => {
+		runtime.web = true;
+		const kept = createMockSession({ id: 'kept' });
+		mockGetBootstrap.mockResolvedValueOnce([kept]);
+		(window.maestro as any).process = { getActiveProcesses: vi.fn().mockResolvedValue([]) };
+		renderHook(() => useSessionRestoration());
+		await vi.waitFor(() => expect(useSessionStore.getState().sessionsLoaded).toBe(true));
+		const added = createMockSession({ id: 'added' });
+		mockGetBootstrap.mockResolvedValueOnce([kept, added]);
+		let finishRestore!: (value: boolean) => void;
+		mockGitService.isRepo.mockImplementationOnce(
+			() =>
+				new Promise<boolean>((resolve) => {
+					finishRestore = resolve;
+				})
+		);
+		const work: Promise<void>[] = [];
+		act(() =>
+			window.dispatchEvent(
+				new CustomEvent(WEB_BRIDGE_RECONCILE_EVENT, {
+					detail: {
+						authoritative: true,
+						signal: new AbortController().signal,
+						waitUntil: (promise: Promise<void>) => work.push(promise),
+					},
+				})
+			)
+		);
+		await vi.waitFor(() => expect(finishRestore).toEqual(expect.any(Function)));
+		act(() => useSessionStore.getState().setSessions([]));
+		await act(async () => {
+			finishRestore(false);
+			await Promise.all(work);
+		});
+		expect(useSessionStore.getState().sessions.map((session) => session.id)).toEqual(['added']);
+	});
 	it.each([false, true])(
 		'keeps the current workflow on unavailable recovery: owner offline %s',
 		async (ownerOffline) => {

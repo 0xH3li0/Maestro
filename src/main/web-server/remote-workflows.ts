@@ -120,9 +120,12 @@ function probeRead(
 	if (existing) return existing;
 	const { promise, resolve } = Promise.withResolvers<boolean>();
 	probesInFlight.set(channel, promise);
+	let settled = false;
 	const finish = (result: boolean) => {
+		if (settled) return;
+		settled = true;
 		clearTimeout(timer);
-		probesInFlight.delete(channel);
+		if (probesInFlight.get(channel) === promise) probesInFlight.delete(channel);
 		resolve(result);
 	};
 	const timer = setTimeout(() => finish(false), 3000);

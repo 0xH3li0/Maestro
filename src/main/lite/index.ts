@@ -93,27 +93,32 @@ export async function startLite(): Promise<void> {
 	let rendererFailures: number[] = [];
 	let controlServer: { close(): Promise<void> } | undefined;
 	let discovered: DiscoveredConnection | undefined;
-	let lastDiscovered: { profile: LiteProfile } | undefined;
+	let lastDiscovered: Pick<DiscoveredConnection, 'profile' | 'peerId'> | undefined;
 	let discoveredSession: Session | undefined;
 	const discovery = new DiscoveryController(
 		publish,
 		() => profiles.list(),
 		(connection) => {
-			const previous = lastDiscovered?.profile;
-			const localPort =
-				previous &&
-				previous.instanceId === connection.profile.instanceId &&
-				previous.url === connection.profile.url &&
-				previous.transport === connection.profile.transport
-					? previous.localPort
-					: undefined;
+			const previous = lastDiscovered;
+			const sameVerifiedHost =
+				!!previous &&
+				previous?.profile.instanceId === connection.profile.instanceId &&
+				previous.profile.url === connection.profile.url &&
+				previous.profile.transport === connection.profile.transport &&
+				previous.peerId === connection.peerId;
 			const next = {
 				...connection,
-				profile: { ...connection.profile, ...(localPort ? { localPort } : {}) },
+				profile: {
+					...connection.profile,
+					...(previous && sameVerifiedHost
+						? { id: previous.profile.id, localPort: previous.profile.localPort }
+						: {}),
+				},
 			};
 			discovered = next;
 			lastDiscovered = next;
-			discoveredSession = session.fromPartition('maestro-lite-discovered-' + randomUUID());
+			if (!sameVerifiedHost || !discoveredSession)
+				discoveredSession = session.fromPartition('maestro-lite-discovered-' + randomUUID());
 			const automatic = directRecovery;
 			void connect(
 				next.profile.id,
@@ -124,7 +129,6 @@ export async function startLite(): Promise<void> {
 		},
 		(reason) => {
 			discovered = undefined;
-			discoveredSession = undefined;
 			recover(
 				reason === 'network-changed'
 					? 'Your network changed. Waiting to verify the same host again.'
@@ -640,7 +644,7 @@ export async function startLite(): Promise<void> {
 				discovered = { ...selectedDiscovery, profile };
 				void lastConnections.remember(profile, signal).catch(() => {});
 			}
-			if (selectedDiscovery) lastDiscovered = { profile };
+			if (selectedDiscovery) lastDiscovered = { ...selectedDiscovery, profile };
 			if (
 				!id.startsWith('discovered-') ||
 				profile.transport === 'lan' ||
@@ -676,7 +680,7 @@ export async function startLite(): Promise<void> {
 			const reuseView =
 				retainView &&
 				retainedView === view &&
-				profile.transport === 'ssh' &&
+				(profile.transport === 'ssh' || !!selectedDiscovery) &&
 				!view.webContents.isDestroyed() &&
 				new URL(view.webContents.getURL()).origin === base.origin;
 			if (!reuseView) {
@@ -690,6 +694,7 @@ export async function startLite(): Promise<void> {
 			status = `Opening Maestro on ${hostName}`;
 			error = undefined;
 			recovery = undefined;
+			rendererNeedsReload = false;
 			recoveryResetTimer = setTimeout(() => {
 				recoveryAttempt = 0;
 				rendererFailures = [];
@@ -777,6 +782,8 @@ export async function startLite(): Promise<void> {
 					autoRecover = false;
 					clearTimeout(recoveryTimer);
 					await lastConnections.disable().catch(() => {});
+					lastDiscovered = undefined;
+					discoveredSession = undefined;
 				}
 				await discovery.control(name, payload);
 				return { state: getState() };

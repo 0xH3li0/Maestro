@@ -588,6 +588,7 @@ export function useDebouncedPersistence(
 		} finally {
 			flushingRef.current = false;
 			const waiters = rerunWaitersRef.current;
+			rerunWaitersRef.current = [];
 			const release = () => waiters.forEach((resolve) => resolve());
 			if (flushRequestedRef.current) {
 				flushRequestedRef.current = false;
@@ -655,7 +656,7 @@ export function useDebouncedPersistence(
 				flushRequestedRef.current = false;
 				peerBaselinesRef.current.clear();
 				sessionsRef.current = useSessionStore.getState().sessions;
-				previouslyPersistedRef.current = sessionsRef.current;
+				previouslyPersistedRef.current = sessions;
 				startupBaselineNeedsFullFlushRef.current = false;
 				isPendingRef.current = false;
 				flushSync(() => setIsPending(false));

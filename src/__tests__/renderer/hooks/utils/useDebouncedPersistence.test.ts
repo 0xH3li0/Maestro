@@ -2988,6 +2988,44 @@ describe('useDebouncedPersistence', () => {
 			vi.mocked(window.maestro.sessions.setMany).mockResolvedValue(true);
 		}
 	});
+	it('persists a local edit made during recovery against the recovered host baseline', async () => {
+		const initialLoad = makeInitialLoadRef(true);
+		const original = makeSession({ id: 'recovery-edit', name: 'Before', cwd: '/original' });
+		useSessionStore.setState({
+			sessions: [original],
+			sessionsReadOk: true,
+			initialLoadComplete: true,
+		});
+		const view = renderHook(() => useDebouncedPersistence(initialLoad));
+		await act(async () => {
+			await vi.runAllTimersAsync();
+		});
+		const flushNow = view.result.current.flushNow;
+		try {
+			const recovered = { ...original, name: 'Recovered host', cwd: '/host-progressed' };
+			const edited = { ...recovered, name: 'Local edit during recovery' };
+			await act(async () => {
+				useSessionStore.getState().setSessions([edited]);
+				window.dispatchEvent(
+					new CustomEvent(SESSION_PERSISTENCE_BASELINE_EVENT, {
+						detail: { sessions: [recovered], recovered: true },
+					})
+				);
+			});
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+			await act(async () => {
+				await flushNow(useSessionStore.getState().sessions);
+			});
+			expect(window.maestro.sessions.setMany).toHaveBeenCalledTimes(1);
+			expect(vi.mocked(window.maestro.sessions.setMany).mock.calls[0][0][0].name).toBe(
+				'Local edit during recovery'
+			);
+		} finally {
+			view.unmount();
+		}
+	});
 	it('accepts the recovered host baseline without replaying an ambiguous save or its queued flush', async () => {
 		const initialLoad = makeInitialLoadRef(true);
 		let host = makeSession({ id: 'recovery', name: 'Before', cwd: '/original' });

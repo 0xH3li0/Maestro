@@ -29,6 +29,7 @@ vi.mock('../../../../main/web-server/live-mode', () => ({
 
 import { WebSocketMessageHandler } from '../../../../main/web-server/handlers/messageHandlers';
 import { logger } from '../../../../main/utils/logger';
+import type { WebClient } from '../../../../main/web-server/handlers/messageHandlers';
 import WebSocket from 'ws';
 import type { LiveModeStatus } from '../../../../shared/liveMode';
 
