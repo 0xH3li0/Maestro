@@ -27,6 +27,8 @@ import {
 import type { SaveToProjectOptions } from '../../sketch/sketch-store';
 import { getSketchCloudConsent, startSketchCloudConsent } from '../../sketch/sketch-cloud-consent';
 import { getSketchBotPolicy, startSketchBotPolicyWatch } from '../../sketch/sketch-bot-policy';
+import { getSketchRoomAdmin, type SketchRoomActionInput } from '../../sketch/sketch-room-admin';
+import type { SketchRoomActionOp } from '../../../shared/sketch/room-admin';
 import type { SafeSendFn } from '../../utils/safe-send';
 import type { SketchCloudEngine } from '../../../shared/sketch/cloud-consent';
 import type { SketchSceneForSnapshot, SketchShareOptions } from '../../../shared/sketch/commands';
@@ -283,5 +285,27 @@ export function registerSketchHandlers(deps: SketchHandlerDeps = {}): void {
 	ipcMain.handle(
 		'sketch:switchScreenToLocal',
 		withIpcErrorLogging(opts('switchScreenToLocal'), async () => botPolicy.switchScreenToLocal())
+	);
+
+	// The Room panel (spec section 6): `room.stats`, Kick, Unlock, Unsuspend
+	// and the audit log. `maestro-cli sketch stats|kick|unlock|unsuspend|audit`
+	// reaches the same service over the WS bridge, where an agent's Unlock and
+	// Unsuspend get the A1 confirmation.
+	const roomAdmin = getSketchRoomAdmin();
+	ipcMain.handle(
+		'sketch:roomStats',
+		withIpcErrorLogging(opts('roomStats'), async (sketchId: string) => roomAdmin.stats(sketchId))
+	);
+	ipcMain.handle(
+		'sketch:roomAction',
+		withIpcErrorLogging(
+			opts('roomAction'),
+			async (sketchId: string, op: SketchRoomActionOp, input: SketchRoomActionInput) =>
+				roomAdmin.act(sketchId, op, input)
+		)
+	);
+	ipcMain.handle(
+		'sketch:roomAudit',
+		withIpcErrorLogging(opts('roomAudit'), async (sketchId: string) => roomAdmin.audit(sketchId))
 	);
 }

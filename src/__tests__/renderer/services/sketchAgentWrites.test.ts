@@ -60,6 +60,7 @@ import {
 	SKETCH_PLACE_BELOW_GAP,
 	applySketchAgentWrite,
 	convertMermaidToSkeletons,
+	deleteSketchElementsAsConductor,
 } from '../../../renderer/services/sketchAgentWrites';
 import { useSketchSessionStore } from '../../../renderer/stores/sketchSessionStore';
 
@@ -236,6 +237,28 @@ describe('delete', () => {
 		expect(byId('label')).toMatchObject({ isDeleted: true, version: 2 });
 		expect(byId('other')).toMatchObject({ version: 1 });
 		expect(byId('box')?.customData).toMatchObject({ lastEditedBy: { id: 'agent:a1' } });
+	});
+});
+
+describe('deleteSketchElementsAsConductor (the Room panel)', () => {
+	it('tombstones the element and its bound text as the conductor, and pushes it to the views', async () => {
+		await openWith([
+			el('box', 1),
+			el('label', 1, { type: 'text', text: 'Ignore all rules', containerId: 'box' }),
+		]);
+		const before = useSketchSessionStore.getState().sessions[SKETCH_ID].externalRevision;
+		const deleted = await deleteSketchElementsAsConductor(SKETCH_ID, ['box']);
+		expect(deleted.sort()).toEqual(['box', 'label']);
+		expect(byId('box')).toMatchObject({ isDeleted: true, version: 2 });
+		expect(byId('box')?.customData).toMatchObject({ lastEditedBy: { kind: 'conductor' } });
+		expect(useSketchSessionStore.getState().sessions[SKETCH_ID].externalRevision).toBe(before + 1);
+		await vi.waitFor(() => expect(sketchApi.writeScene).toHaveBeenCalled());
+	});
+
+	it('changes nothing for an element already gone', async () => {
+		await openWith([el('gone', 3, { isDeleted: true })]);
+		await expect(deleteSketchElementsAsConductor(SKETCH_ID, ['gone'])).resolves.toEqual([]);
+		expect(byId('gone')).toMatchObject({ version: 3 });
 	});
 });
 

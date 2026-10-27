@@ -49,6 +49,16 @@
 //   person reads the trust warning and answers it (or passes `--yes`); an
 //   agent caller gets the desktop confirmation (A1). `conductor` runs.
 //
+// - `stats <sketchId>` prints the room's `room.stats` (hosted spec section 8):
+//   its screening value, every member with counters and lock state, and every
+//   link with expiry and `@bot` suspension. `kick <sketchId> <actorId>
+//   [--minutes n]` disconnects a guest and blocks that device for a while
+//   (revoking the link is the real fix), `unlock <sketchId> <actorId>` clears
+//   a guest's lockout, `unsuspend <sketchId> <capId>` gives a link back its
+//   `@bot` access. From an agent caller, unlock and unsuspend raise the
+//   desktop confirmation (A1); kick runs. `audit <sketchId>` prints the gate's
+//   audit log (spec section 8.8): every decision, never the text.
+//
 // `read` and `export` work from the SAVED scene, which the tab autosaves within
 // a second of an edit.
 //
@@ -102,6 +112,22 @@ import {
 	type SketchBotPolicyStatus,
 } from '../../shared/sketch/bot-policy';
 import type { SketchOwnerStatus } from '../../shared/sketch/server';
+import {
+	describeRoomStatsActor,
+	describeRoomStatsCap,
+	describeSketchAuditDecision,
+	sketchRoomAdminNeedsConfirmation,
+	SKETCH_KICK_NOTE,
+	type SketchAuditEntry,
+	type SketchRoomActionOp,
+	type SketchRoomAudit,
+	type SketchRoomStatsReading,
+} from '../../shared/sketch/room-admin';
+import {
+	sketchScreenOutageBanner,
+	sketchScreenOutageTotal,
+	sketchScreeningBadgeLabel,
+} from '../../shared/sketch/room-stats';
 import {
 	BOT_POLICIES,
 	type BotPolicy,
@@ -175,6 +201,20 @@ export interface SketchRequestsCliOptions {
 
 export interface SketchBotPolicyCliOptions {
 	yes?: boolean;
+	json?: boolean;
+}
+
+export interface SketchRoomCliOptions {
+	json?: boolean;
+}
+
+export interface SketchKickCliOptions {
+	minutes?: string;
+	json?: boolean;
+}
+
+export interface SketchAuditCliOptions {
+	flagged?: boolean;
 	json?: boolean;
 }
 
@@ -761,4 +801,180 @@ export async function sketchBotPolicy(
 	if (wanted === 'writers') console.log('Read-write guests may now ask the agent.');
 	else if (wanted === 'conductor') console.log('Only you may ask the agent now.');
 	console.log(formatBotPolicyStatus(status));
+}
+
+/** The human reading of a room: screening, the Y4 count, members, links. */
+export function formatRoomStats(reading: SketchRoomStatsReading, now = Date.now()): string {
+	const { stats } = reading;
+	const connection = reading.connection ?? 'no room client in the window';
+	if (!stats) return `Room: ${connection}. The server has not sent room stats yet.`;
+	const lines = [
+		`Room: ${connection}. Screening: ${stats.screening ? sketchScreeningBadgeLabel(stats.screening, null) : 'not set yet'}${stats.guestEdited ? '. A guest has edited the board.' : '.'}`,
+	];
+	const outage = sketchScreenOutageBanner(sketchScreenOutageTotal(stats.actors));
+	if (outage) lines.push(outage);
+	lines.push('', 'Members:');
+	if (stats.actors.length === 0) lines.push('  none');
+	for (const actor of stats.actors) {
+		const state = [actor.online ? 'online' : `last seen ${formatRelativeTime(actor.lastSeen)}`];
+		if (actor.lockedOut) state.push('LOCKED OUT');
+		lines.push(`  ${actor.actorId}  ${describeRoomStatsActor(actor)}  [${state.join(', ')}]`);
+		lines.push(
+			`    ops ${actor.ops}, @bot ${actor.toBot}, deny streak ${actor.denyStreak}, rejected ${actor.guardrailTotal}, screen failed ${actor.unavailableTotal}`
+		);
+	}
+	lines.push('', 'Links:');
+	if (stats.caps.length === 0) lines.push('  none');
+	for (const cap of stats.caps) {
+		const expiry =
+			cap.expiresAt === null || cap.revoked || cap.expiresAt <= now
+				? ''
+				: `, expires ${new Date(cap.expiresAt).toISOString().slice(0, 10)}`;
+		lines.push(
+			`  ${cap.capId}  ${cap.label || '(no label)'} (${cap.role === 'rw' ? 'can edit' : 'can view'})  [${describeRoomStatsCap(cap, now)}${expiry}]  ${cap.online} online, rejected ${cap.guardrailTotal}`
+		);
+	}
+	return lines.join('\n');
+}
+
+export async function sketchStats(sketchId: string, options: SketchRoomCliOptions): Promise<void> {
+	const id = requireSketchId(sketchId, options.json);
+	const reading = await request<SketchRoomStatsReading>('stats', { sketchId: id }, options.json);
+	if (options.json) {
+		printJson({ success: true, ...reading });
+		return;
+	}
+	console.log(formatRoomStats(reading));
+}
+
+/** What each room action did. */
+const ROOM_ACTION_DONE: Readonly<Record<SketchRoomActionOp, string>> = {
+	kick: `Kicked. ${SKETCH_KICK_NOTE}`,
+	unlock: 'Unlocked: the guest may ask the agent again; each request still needs your approval.',
+	unsuspend: 'Unsuspended: guests on the link may ask the agent again.',
+};
+
+async function sketchRoomAction(
+	op: SketchRoomActionOp,
+	sketchId: string,
+	target: string,
+	fields: Record<string, unknown>,
+	json: boolean | undefined
+): Promise<void> {
+	const id = requireSketchId(sketchId, json);
+	const targetId = target.trim();
+	if (!targetId) {
+		failCommand(
+			op === 'unsuspend' ? 'A link id is required.' : 'An actor id is required.',
+			json,
+			ExitCode.InvalidUsage
+		);
+	}
+	const caller = readCallerIdentity(process.env);
+	const reading = await request<SketchRoomStatsReading>(
+		op,
+		{
+			sketchId: id,
+			...(op === 'unsuspend' ? { capId: targetId } : { actorId: targetId }),
+			...fields,
+			...callerMessageFields(caller),
+		},
+		json,
+		caller && sketchRoomAdminNeedsConfirmation(op) ? CONSENT_CONFIRM_TIMEOUT_MS : undefined
+	);
+	if (json) {
+		printJson({ success: true, op, ...reading });
+		return;
+	}
+	console.log(ROOM_ACTION_DONE[op]);
+	console.log(formatRoomStats(reading));
+}
+
+export async function sketchKick(
+	sketchId: string,
+	actorId: string,
+	options: SketchKickCliOptions
+): Promise<void> {
+	let minutes: number | undefined;
+	if (options.minutes !== undefined) {
+		minutes = Number(options.minutes);
+		if (!Number.isSafeInteger(minutes)) {
+			failCommand(
+				`--minutes expects a whole number, got "${options.minutes}"`,
+				options.json,
+				ExitCode.InvalidUsage
+			);
+		}
+	}
+	await sketchRoomAction(
+		'kick',
+		sketchId,
+		actorId,
+		minutes !== undefined ? { minutes } : {},
+		options.json
+	);
+}
+
+export async function sketchUnlock(
+	sketchId: string,
+	actorId: string,
+	options: SketchRoomCliOptions
+): Promise<void> {
+	await sketchRoomAction('unlock', sketchId, actorId, {}, options.json);
+}
+
+export async function sketchUnsuspend(
+	sketchId: string,
+	capId: string,
+	options: SketchRoomCliOptions
+): Promise<void> {
+	await sketchRoomAction('unsuspend', sketchId, capId, {}, options.json);
+}
+
+/** One audit line as a person reads it. */
+export function formatAuditEntry(entry: SketchAuditEntry): string {
+	const subject =
+		'replyTo' in entry.subject
+			? `@bot request ${entry.subject.replyTo}`
+			: `element ${entry.subject.elementId} v${entry.subject.version}`;
+	const actor = entry.actor
+		? `${entry.actor.kind} ${entry.actor.id}${entry.actor.capId ? ` (link ${entry.actor.capId})` : ''}`
+		: 'unknown author';
+	return `${new Date(entry.ts).toISOString()}  ${subject}  by ${actor}: ${describeSketchAuditDecision(entry)}${entry.reported ? ', reported to the room' : ''}`;
+}
+
+/** The human reading of the audit log, or of its flagged elements alone. */
+export function formatRoomAudit(audit: SketchRoomAudit, flaggedOnly = false): string {
+	if (flaggedOnly) {
+		if (audit.flagged.length === 0) return 'No element is withheld as flagged.';
+		return audit.flagged
+			.map(
+				(element) =>
+					`${element.elementId} v${element.version}  by ${element.actor ? `${element.actor.kind} ${element.actor.id}` : 'unknown author'}: ${describeSketchAuditDecision({ ...element, status: 'flagged' })}`
+			)
+			.join('\n');
+	}
+	if (audit.entries.length === 0) return 'The gate has made no decision on this sketch yet.';
+	const lines = audit.entries.map(formatAuditEntry);
+	if (audit.flagged.length > 0) {
+		lines.push(
+			'',
+			`${audit.flagged.length} element(s) withheld as flagged. Delete them in the Room panel, or list them with --flagged.`
+		);
+	}
+	return lines.join('\n');
+}
+
+export async function sketchAudit(sketchId: string, options: SketchAuditCliOptions): Promise<void> {
+	const id = requireSketchId(sketchId, options.json);
+	const audit = await request<SketchRoomAudit>('audit', { sketchId: id }, options.json);
+	if (options.json) {
+		printJson({
+			success: true,
+			sketchId: audit.sketchId,
+			...(options.flagged ? { flagged: audit.flagged } : audit),
+		});
+		return;
+	}
+	console.log(formatRoomAudit(audit, options.flagged === true));
 }

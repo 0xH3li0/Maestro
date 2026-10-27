@@ -642,6 +642,11 @@ const mockMaestro = {
 		installScreen: vi.fn().mockResolvedValue({ installed: true, assigned: true }),
 		localScreenOption: vi.fn().mockResolvedValue({ installed: null }),
 		switchScreenToLocal: vi.fn().mockResolvedValue({ installed: true, assigned: true }),
+		roomStats: vi.fn().mockResolvedValue({ sketchId: '', connection: null, stats: null }),
+		roomAction: vi.fn().mockResolvedValue({ sketchId: '', connection: null, stats: null }),
+		roomAudit: vi.fn().mockResolvedValue({ sketchId: '', entries: [], flagged: [] }),
+		revokeLink: vi.fn().mockResolvedValue(null),
+		rotate: vi.fn().mockResolvedValue(null),
 		grantScreeningConsent: vi.fn().mockResolvedValue({
 			consent: {},
 			source: null,

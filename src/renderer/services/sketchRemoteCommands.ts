@@ -25,6 +25,8 @@
  * - `botPolicy`: send `policy.set` on the sketch's room (B2, `sketchBotPolicy.ts`).
  * - `botRequest`: list or decide the bot relay's `@bot` requests
  *   (`sketchBotRequestCommands.ts`), through the functions the chips call.
+ * - `roomAdmin`: read `room.stats`, or Kick, Unlock, Unsuspend on the room
+ *   (`sketchRoomAdmin.ts`), through the functions the Room panel calls.
  *
  * Every path answers, a thrown one included, so main never waits out its
  * timeout. Registered by `useRemoteIntegration`.
@@ -210,6 +212,10 @@ export async function runRemoteSketchCommand(
 				success: true,
 				botRequests: [runSketchBotRequestOp(request.op, request.sketchId, request.replyTo)],
 			};
+		}
+		if (request.action === 'roomAdmin') {
+			const { runRemoteSketchRoomAdmin } = await import('./sketchRoomAdmin');
+			return { success: true, roomStats: await runRemoteSketchRoomAdmin(request) };
 		}
 		if (request.action === 'readSession') {
 			return {

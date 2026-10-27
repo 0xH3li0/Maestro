@@ -18,7 +18,9 @@
  * The `@bot` decisions (`sketch requests|approve|deny|escalate|publish|
  * discard`) list and act on the bot relay's requests, which live in the
  * window that owns the sketch (`botRequest`). `sketch bot-policy` sends
- * `policy.set` through the room client that window runs (`botPolicy`).
+ * `policy.set` through the room client that window runs (`botPolicy`), and
+ * the Room panel verbs (`sketch stats|kick|unlock|unsuspend`) read
+ * `room.stats` and send the conductor frames through it too (`roomAdmin`).
  *
  * Also here: `summarizeSketchScene()`, the `read --format summary` view of a
  * saved scene. Bundled into the renderer and the CLI, so it imports nothing
@@ -27,6 +29,7 @@
 
 import type { ElementAuthorship } from './attribution';
 import type { SketchBotRequestInfo, SketchBotRequestOp } from './bot-requests';
+import type { SketchRoomAdminOp, SketchRoomStatsReading } from './room-admin';
 import type { SketchOwnerStatus } from './server';
 import type { SketchWireElement } from './payloads';
 import {
@@ -58,6 +61,11 @@ export const SKETCH_COMMAND_ACTIONS = [
 	'publish',
 	'discard',
 	'bot-policy',
+	'stats',
+	'kick',
+	'unlock',
+	'unsuspend',
+	'audit',
 ] as const;
 export type SketchCommandAction = (typeof SKETCH_COMMAND_ACTIONS)[number];
 
@@ -312,6 +320,21 @@ export type SketchRendererRequest =
 	  }
 	| {
 			/**
+			 * The Room panel on the sketch's live room (spec section 6): `stats`
+			 * reads the newest `room.stats` (asking the server again first), and
+			 * `kick`, `unlock` and `unsuspend` send the conductor frame, then read
+			 * it again. Main has already raised the desktop confirmation an agent
+			 * caller needs (A1).
+			 */
+			action: 'roomAdmin';
+			sketchId: string;
+			op: SketchRoomAdminOp;
+			actorId?: string;
+			capId?: string;
+			minutes?: number;
+	  }
+	| {
+			/**
 			 * Join the sketch's room, or leave it (`connection: null`). `baseline`
 			 * is what the room holds after the snapshot main just uploaded; edits
 			 * newer than it go out as deltas once the client is live.
@@ -400,6 +423,8 @@ export type SketchRendererResult =
 			snapshot?: SketchSceneForSnapshot;
 			/** `botRequest`: the listed requests, or the one an op acted on. */
 			botRequests?: SketchBotRequestInfo[];
+			/** `roomAdmin`: the room as it stands after the op. */
+			roomStats?: SketchRoomStatsReading;
 	  }
 	| { success: false; error: string };
 
@@ -513,7 +538,26 @@ export function normalizeSketchRendererResult(raw: unknown): SketchRendererResul
 		...(skeletons ? { skeletons } : {}),
 		...(snapshot ? { snapshot } : {}),
 		...(botRequests ? { botRequests } : {}),
+		...(isRoomStatsReading(reply.roomStats) ? { roomStats: reply.roomStats } : {}),
 	};
+}
+
+const ROOM_CONNECTIONS = ['connecting', 'catching-up', 'live', 'reconnecting', 'stopped'];
+
+/**
+ * A `roomAdmin` reply as main may trust it: the shape the Room panel reads.
+ * The stats are the server's frame, already parsed by the room client.
+ */
+function isRoomStatsReading(value: unknown): value is SketchRoomStatsReading {
+	if (!isObjectRecord(value) || typeof value.sketchId !== 'string') return false;
+	if (value.connection !== null && !ROOM_CONNECTIONS.includes(value.connection as string)) {
+		return false;
+	}
+	const stats = value.stats;
+	return (
+		stats === null ||
+		(isObjectRecord(stats) && Array.isArray(stats.actors) && Array.isArray(stats.caps))
+	);
 }
 
 function isRequestActor(value: unknown): value is SketchActor {

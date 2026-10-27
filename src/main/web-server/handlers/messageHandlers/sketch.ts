@@ -2,12 +2,12 @@
  * Sketch Book WebSocket handler: `sketch_command`, the CLI half of Sketch Book
  * (`maestro-cli sketch new|list|open|read|export|screening-consent|share|
  * unshare|revoke-link|rotate|owner|requests|approve|deny|escalate|publish|
- * discard|bot-policy`, spec section 9).
+ * discard|bot-policy|stats|kick|unlock|unsuspend|audit`, spec section 9).
  *
- * The sharing verbs, the `@bot` decisions and `bot-policy` pass the asking
- * agent's name when an agent called (A1): the service raises the desktop
- * confirmation (sharing, approve, escalate, publish, `bot-policy writers`)
- * and runs only on Allow.
+ * The sharing verbs, the `@bot` decisions, `bot-policy` and the Room panel
+ * verbs pass the asking agent's name when an agent called (A1): the service
+ * raises the desktop confirmation (sharing, approve, escalate, publish,
+ * `bot-policy writers`, unlock, unsuspend) and runs only on Allow.
  *
  * One message carrying an `action`, answered by the SAME SketchService the
  * `sketch:*` IPC handlers call, so the CLI and the UI cannot drift. The service
@@ -23,6 +23,7 @@ import { logger } from '../../../utils/logger';
 import { getSketchService } from '../../../sketch/sketch-service';
 import { getSketchCloudConsent } from '../../../sketch/sketch-cloud-consent';
 import { getSketchBotPolicy } from '../../../sketch/sketch-bot-policy';
+import { getSketchRoomAdmin } from '../../../sketch/sketch-room-admin';
 import {
 	isSketchCommandAction,
 	isSketchOwnerOp,
@@ -86,6 +87,19 @@ function run(action: SketchCommandAction, message: WebClientMessage): Promise<un
 			return service.decideBotRequest(action, message.replyTo as string, callerOf(message));
 		case 'bot-policy':
 			return botPolicy(message);
+		case 'stats':
+			return getSketchRoomAdmin().stats(sketchId);
+		case 'kick':
+		case 'unlock':
+		case 'unsuspend':
+			return getSketchRoomAdmin().act(
+				sketchId,
+				action,
+				{ actorId: message.actorId, capId: message.capId, minutes: message.minutes },
+				callerOf(message)
+			);
+		case 'audit':
+			return getSketchRoomAdmin().audit(sketchId);
 	}
 }
 

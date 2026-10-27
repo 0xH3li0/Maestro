@@ -20,6 +20,7 @@ const h = vi.hoisted(() => ({
 	startSketchCloudConsent: vi.fn(),
 	botPolicy: null as Record<string, ReturnType<typeof vi.fn>> | null,
 	startSketchBotPolicyWatch: vi.fn(),
+	roomAdmin: null as Record<string, ReturnType<typeof vi.fn>> | null,
 }));
 
 vi.mock('electron', () => ({
@@ -46,6 +47,10 @@ vi.mock('../../../../main/sketch/sketch-cloud-consent', () => ({
 vi.mock('../../../../main/sketch/sketch-bot-policy', () => ({
 	getSketchBotPolicy: () => h.botPolicy,
 	startSketchBotPolicyWatch: h.startSketchBotPolicyWatch,
+}));
+
+vi.mock('../../../../main/sketch/sketch-room-admin', () => ({
+	getSketchRoomAdmin: () => h.roomAdmin,
 }));
 
 import { registerSketchHandlers } from '../../../../main/ipc/handlers/sketch';
@@ -84,6 +89,11 @@ describe('sketch IPC handlers', () => {
 				installed: { modelId: 'prompt-guard-2-22m', label: 'Prompt Guard 2 22M' },
 			})),
 			switchScreenToLocal: vi.fn(async () => ({ installed: true, assigned: true })),
+		};
+		h.roomAdmin = {
+			stats: vi.fn(async () => ({ sketchId: SKETCH_ID, connection: 'live', stats: null })),
+			act: vi.fn(async () => ({ sketchId: SKETCH_ID, connection: 'live', stats: null })),
+			audit: vi.fn(async () => ({ sketchId: SKETCH_ID, entries: [], flagged: [] })),
 		};
 		h.consent = {
 			status: vi.fn(async () => ({ consent: {}, source: null, sourceCovered: false, rooms: [] })),
@@ -169,6 +179,24 @@ describe('sketch IPC handlers', () => {
 		expect(botPolicy.switchScreenToLocal).toHaveBeenCalledTimes(1);
 	});
 
+	it('passes the Room panel channels through with no caller (the person in the tab is the conductor)', async () => {
+		const roomAdmin = h.roomAdmin!;
+		await expect(invoke('sketch:roomStats', SKETCH_ID)).resolves.toEqual({
+			sketchId: SKETCH_ID,
+			connection: 'live',
+			stats: null,
+		});
+		expect(roomAdmin.stats).toHaveBeenCalledWith(SKETCH_ID);
+		await invoke('sketch:roomAction', SKETCH_ID, 'kick', { actorId: 'a1', minutes: 5 });
+		expect(roomAdmin.act).toHaveBeenCalledWith(SKETCH_ID, 'kick', { actorId: 'a1', minutes: 5 });
+		expect(roomAdmin.act.mock.calls[0]).toHaveLength(3);
+		await expect(invoke('sketch:roomAudit', SKETCH_ID)).resolves.toEqual({
+			sketchId: SKETCH_ID,
+			entries: [],
+			flagged: [],
+		});
+	});
+
 	it('registers exactly the sketch channels', () => {
 		expect([...h.handlers.keys()].sort()).toEqual([
 			'sketch:botPolicyStatus',
@@ -189,8 +217,11 @@ describe('sketch IPC handlers', () => {
 			'sketch:reportServerScreening',
 			'sketch:revokeLink',
 			'sketch:revokeScreeningConsent',
+			'sketch:roomAction',
+			'sketch:roomAudit',
 			'sketch:roomConnection',
 			'sketch:roomScreening',
+			'sketch:roomStats',
 			'sketch:rotate',
 			'sketch:saveToProject',
 			'sketch:screenBotReply',

@@ -239,12 +239,16 @@ async function updateElements(
 	);
 }
 
-/** T7: tombstone elements, with the text bound to them, as Excalidraw's own delete does. */
-async function deleteElements(
+/**
+ * Tombstone elements, with the text bound to them, as Excalidraw's own delete
+ * does, and fold the scene in through `apply`. Returns what was deleted and
+ * the named ids the scene does not hold live.
+ */
+async function tombstoneElements(
 	sketchId: string,
-	agent: SketchAgentIdentity,
-	ids: readonly string[]
-): Promise<SketchAgentWriteResult> {
+	ids: readonly string[],
+	apply: (next: SketchWireElement[]) => void
+): Promise<{ deleted: SketchWireElement[]; missing: string[] }> {
 	const module = await excalidraw();
 	const current = (await openReadySketchSession(sketchId)).scene.elements;
 	const byId = liveById(current);
@@ -270,16 +274,39 @@ async function deleteElements(
 			}) as unknown as SketchWireElement
 		);
 	}
-	if (deleted.size > 0) {
-		useSketchSessionStore
-			.getState()
-			.applyAgentChange(sketchId, replaceById(current, deleted), agent);
-	}
+	if (deleted.size > 0) apply(replaceById(current, deleted));
+	return { deleted: [...deleted.values()], missing };
+}
+
+/** T7: tombstone elements as the agent. */
+async function deleteElements(
+	sketchId: string,
+	agent: SketchAgentIdentity,
+	ids: readonly string[]
+): Promise<SketchAgentWriteResult> {
+	const { deleted, missing } = await tombstoneElements(sketchId, ids, (next) =>
+		useSketchSessionStore.getState().applyAgentChange(sketchId, next, agent)
+	);
 	return writeResult(
 		sketchId,
-		[...deleted.values()].map((element) => ({ id: element.id, type: typeOf(element) })),
+		deleted.map((element) => ({ id: element.id, type: typeOf(element) })),
 		missing
 	);
+}
+
+/**
+ * The Room panel's one-click delete of a flagged element (spec section 8.3,
+ * rule 5): the same tombstone as T7, stamped as the conductor. Returns the ids
+ * deleted, bound text included.
+ */
+export async function deleteSketchElementsAsConductor(
+	sketchId: string,
+	ids: readonly string[]
+): Promise<string[]> {
+	const { deleted } = await tombstoneElements(sketchId, ids, (next) =>
+		useSketchSessionStore.getState().applyConductorChange(sketchId, next)
+	);
+	return deleted.map((element) => element.id);
 }
 
 /** T11: ask the views to show these elements. A view scrolls when it is mounted. */

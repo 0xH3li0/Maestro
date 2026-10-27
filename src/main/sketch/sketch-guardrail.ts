@@ -61,9 +61,9 @@ import { createKeyedWriteQueue } from '../../shared/keyedWriteQueue';
 import { getAgentDefinition } from '../../shared/maestro-lib/providers/definitions';
 import { sketchRestrictedPostureBlocker } from '../../shared/sketch/restricted-posture';
 import type { SketchB2Availability } from '../../shared/sketch/bot-policy';
+import type { SketchAuditEntry } from '../../shared/sketch/room-admin';
 import type {
 	SketchActor,
-	SketchActorKind,
 	SketchScreenLocality,
 	SketchScreenStatus,
 	SketchScreenVerdict,
@@ -167,18 +167,7 @@ const NO_CLOUD_SCREENING: SketchCloudScreeningPolicy = {
 	cloudScreeningSince: () => null,
 };
 
-/** One audit line (spec section 8.8). Never the text, never an excerpt. */
-export interface SketchAuditEntry {
-	ts: number;
-	sketchId: string;
-	subject: { replyTo: string } | { elementId: string; version: number };
-	actor: { id: string; kind: SketchActorKind; capId?: string } | null;
-	status: SketchScreenStatus;
-	score?: number;
-	source: string;
-	locality: SketchScreenLocality;
-	reported: boolean;
-}
+export type { SketchAuditEntry };
 
 export interface SketchGuardrailDeps {
 	score?: (request: InjectionScoreRequest) => Promise<InjectionScore>;
@@ -382,8 +371,12 @@ export interface SketchGuardrail {
 	dispose(): void;
 }
 
-/** The default audit location: beside the scene, under the owning agent. */
-async function defaultAuditPath(sketchId: string): Promise<string | null> {
+/**
+ * Where a sketch's audit log lives: beside the scene, under the owning agent.
+ * Null when the sketch is unknown. The gate writes it; the Room panel and
+ * `maestro-cli sketch audit` read it (`sketch-room-admin.ts`).
+ */
+export async function sketchAuditPath(sketchId: string): Promise<string | null> {
 	const store = getSketchStore();
 	const record = await store.getSketch(sketchId);
 	if (!record) return null;
@@ -418,7 +411,7 @@ export function createSketchGuardrail(deps: SketchGuardrailDeps = {}): SketchGua
 	const resolveSource = deps.resolveSource ?? resolveInjectionSource;
 	const resolveLocalClassifier = deps.resolveLocalClassifier ?? resolveLocalInjectionClassifier;
 	const assignmentKey = deps.assignmentKey ?? defaultAssignmentKey;
-	const auditPath = deps.auditPath ?? defaultAuditPath;
+	const auditPath = deps.auditPath ?? sketchAuditPath;
 	const appendAudit =
 		deps.appendAudit ?? ((filePath: string, line: string) => fs.appendFile(filePath, line, 'utf8'));
 	const restrictedPostureBlocker =

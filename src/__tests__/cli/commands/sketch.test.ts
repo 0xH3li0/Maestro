@@ -12,7 +12,10 @@
  * on the desktop confirmation only for approve, escalate and publish (A1).
  * `bot-policy` reads the policy, asks a person at the terminal with the trust
  * warning before `writers`, and passes an agent caller on to the desktop
- * confirmation.
+ * confirmation. The Room panel verbs (`stats`, `kick`, `unlock`, `unsuspend`,
+ * `audit`) send their action with the target id, print the room and the
+ * audit log, and wait on the desktop confirmation only for an agent's unlock
+ * and unsuspend (A1).
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
@@ -39,10 +42,14 @@ vi.mock('../../../cli/utils/confirm', () => ({
 import {
 	exportFileBytes,
 	formatBotRequest,
+	formatRoomAudit,
+	formatRoomStats,
 	formatSketchSummary,
+	sketchAudit,
 	sketchBotDecision,
 	sketchBotPolicy,
 	sketchExport,
+	sketchKick,
 	sketchList,
 	sketchNew,
 	sketchOpen,
@@ -52,7 +59,10 @@ import {
 	sketchRotate,
 	sketchScreeningConsent,
 	sketchShare,
+	sketchStats,
+	sketchUnlock,
 	sketchUnshare,
+	sketchUnsuspend,
 } from '../../../cli/commands/sketch';
 import { canPrompt, confirmOnTerminal } from '../../../cli/utils/confirm';
 import { CALLER_AGENT_ID_ENV_VAR } from '../../../shared/agentDelegation';
@@ -63,6 +73,7 @@ import { summarizeSketchScene } from '../../../shared/sketch/commands';
 import type { SketchRecord } from '../../../shared/sketch/types';
 import type { SketchBotRequestInfo } from '../../../shared/sketch/bot-requests';
 import type { SketchBotPolicyStatus } from '../../../shared/sketch/bot-policy';
+import type { SketchRoomAudit, SketchRoomStatsReading } from '../../../shared/sketch/room-admin';
 
 const SKETCH_ID = '11111111-2222-4333-8444-555555555555';
 
@@ -887,6 +898,194 @@ describe('sketch command', () => {
 			expect(errors()).toContain('bot-policy expects conductor or writers');
 			expect(errors()).toContain('A sketch id is required.');
 			expect(exitSpy).toHaveBeenCalledWith(ExitCode.InvalidUsage);
+		});
+	});
+
+	describe('room', () => {
+		const NOW = Date.UTC(2026, 9, 27);
+		const reading: SketchRoomStatsReading = {
+			sketchId: SKETCH_ID,
+			connection: 'live',
+			stats: {
+				guestEdited: true,
+				actors: [
+					{
+						actorId: 'guest-1',
+						kind: 'guest',
+						name: 'Sam',
+						capId: 'Cap000000001',
+						capLabel: '#3',
+						role: 'rw',
+						online: true,
+						ops: 4,
+						toBot: 3,
+						denyStreak: 3,
+						denialsTotal: 3,
+						guardrailTotal: 3,
+						guardrailByReason: { injection: 3, other: 0 },
+						unavailableTotal: 2,
+						lockedOut: true,
+						lastSeen: NOW,
+					},
+				],
+				caps: [
+					{
+						capId: 'Cap000000001',
+						label: 'Review',
+						role: 'rw',
+						expiresAt: NOW + 2 * 86_400_000,
+						revoked: false,
+						botSuspended: true,
+						guardrailTotal: 5,
+						online: 1,
+					},
+				],
+				flaggedActors: ['guest-1'],
+				screening: 'cloud',
+				screeningSince: NOW,
+			},
+		};
+		const audit: SketchRoomAudit = {
+			sketchId: SKETCH_ID,
+			entries: [
+				{
+					ts: NOW,
+					sketchId: SKETCH_ID,
+					subject: { elementId: 'el-1', version: 2 },
+					actor: { id: 'guest-1', kind: 'guest', capId: 'Cap000000001' },
+					status: 'flagged',
+					score: 0.97,
+					source: 'Prompt Guard 2 22M',
+					locality: 'local',
+					reported: true,
+				},
+			],
+			flagged: [
+				{
+					elementId: 'el-1',
+					version: 2,
+					actor: { id: 'guest-1', kind: 'guest', capId: 'Cap000000001' },
+					score: 0.97,
+					source: 'Prompt Guard 2 22M',
+					locality: 'local',
+					ts: NOW,
+				},
+			],
+		};
+		let savedCaller: string | undefined;
+
+		beforeEach(() => {
+			savedCaller = process.env[CALLER_AGENT_ID_ENV_VAR];
+			delete process.env[CALLER_AGENT_ID_ENV_VAR];
+		});
+
+		afterEach(() => {
+			if (savedCaller === undefined) delete process.env[CALLER_AGENT_ID_ENV_VAR];
+			else process.env[CALLER_AGENT_ID_ENV_VAR] = savedCaller;
+		});
+
+		it('formats the room: screening, the Y4 count, members and links', () => {
+			const text = formatRoomStats(reading, NOW);
+			expect(text).toContain(
+				'Room: live. Screening: Cloud screening. A guest has edited the board.'
+			);
+			expect(text).toContain('Your screen failed 2 guest requests');
+			expect(text).toContain(
+				'guest-1  "Sam" · guest, read-write link #3, not verified  [online, LOCKED OUT]'
+			);
+			expect(text).toContain('ops 4, @bot 3, deny streak 3, rejected 3, screen failed 2');
+			expect(text).toContain(
+				'Cap000000001  Review (can edit)  [@bot suspended, expires 2026-10-29]  1 online, rejected 5'
+			);
+			expect(formatRoomStats({ sketchId: SKETCH_ID, connection: null, stats: null })).toContain(
+				'has not sent room stats yet'
+			);
+		});
+
+		it('stats sends the sketch id and prints the room, or JSON', async () => {
+			const sent = respond(reading);
+			await sketchStats(` ${SKETCH_ID} `, {});
+			expect(sent[0]).toMatchObject({
+				type: 'sketch_command',
+				action: 'stats',
+				sketchId: SKETCH_ID,
+			});
+			expect(logged()).toContain('Members:');
+
+			logSpy.mockClear();
+			respond(reading);
+			await sketchStats(SKETCH_ID, { json: true });
+			expect(json()).toMatchObject({ success: true, sketchId: SKETCH_ID, connection: 'live' });
+		});
+
+		it('kick sends the actor and minutes with no confirmation wait, and says it is temporary', async () => {
+			process.env[CALLER_AGENT_ID_ENV_VAR] = 'agent-7';
+			const sent = respond(reading);
+			await sketchKick(SKETCH_ID, ' guest-1 ', { minutes: '30' });
+			expect(sent[0]).toMatchObject({
+				action: 'kick',
+				sketchId: SKETCH_ID,
+				actorId: 'guest-1',
+				minutes: 30,
+				fromSessionId: 'agent-7',
+			});
+			expect(sent[0].timeout).toBeUndefined();
+			expect(logged()).toContain('Kick is temporary');
+		});
+
+		it('unlock and unsuspend wait on the desktop confirmation for an agent caller', async () => {
+			process.env[CALLER_AGENT_ID_ENV_VAR] = 'agent-7';
+			const sent = respond(reading);
+			await sketchUnlock(SKETCH_ID, 'guest-1', {});
+			await sketchUnsuspend(SKETCH_ID, 'Cap000000001', { json: true });
+			expect(sent[0]).toMatchObject({ action: 'unlock', actorId: 'guest-1' });
+			expect(sent[0].timeout).toBe(5 * 60_000);
+			expect(sent[1]).toMatchObject({ action: 'unsuspend', capId: 'Cap000000001' });
+			expect(sent[1]).not.toHaveProperty('actorId');
+			expect(sent[1].timeout).toBe(5 * 60_000);
+		});
+
+		it('a person unlocks with no caller and no long wait', async () => {
+			const sent = respond(reading);
+			await sketchUnlock(SKETCH_ID, 'guest-1', {});
+			expect(sent[0]).not.toHaveProperty('fromSessionId');
+			expect(sent[0].timeout).toBeUndefined();
+			expect(logged()).toContain('Unlocked');
+		});
+
+		it('refuses a missing target and a kick length that is not a number', async () => {
+			const sent = respond(reading);
+			await expect(sketchKick(SKETCH_ID, '  ', {})).rejects.toThrow('__exit__');
+			await expect(sketchUnsuspend(SKETCH_ID, ' ', {})).rejects.toThrow('__exit__');
+			await expect(sketchKick(SKETCH_ID, 'guest-1', { minutes: 'soon' })).rejects.toThrow(
+				'__exit__'
+			);
+			expect(sent).toHaveLength(0);
+			expect(errors()).toContain('An actor id is required.');
+			expect(errors()).toContain('A link id is required.');
+			expect(errors()).toContain('--minutes expects a whole number');
+			expect(exitSpy).toHaveBeenCalledWith(ExitCode.InvalidUsage);
+		});
+
+		it('audit prints every decision, or the flagged elements alone', async () => {
+			const sent = respond(audit);
+			await sketchAudit(SKETCH_ID, {});
+			expect(sent[0]).toMatchObject({ action: 'audit', sketchId: SKETCH_ID });
+			expect(logged()).toContain(
+				'element el-1 v2  by guest guest-1 (link Cap000000001): Flagged by Prompt Guard 2 22M, 0.97 (on this computer), reported to the room'
+			);
+			expect(logged()).toContain('1 element(s) withheld as flagged');
+			expect(formatRoomAudit(audit, true)).toBe(
+				'el-1 v2  by guest guest-1: Flagged by Prompt Guard 2 22M, 0.97 (on this computer)'
+			);
+			expect(formatRoomAudit({ sketchId: SKETCH_ID, entries: [], flagged: [] })).toBe(
+				'The gate has made no decision on this sketch yet.'
+			);
+
+			logSpy.mockClear();
+			respond(audit);
+			await sketchAudit(SKETCH_ID, { flagged: true, json: true });
+			expect(json()).toEqual({ success: true, sketchId: SKETCH_ID, flagged: audit.flagged });
 		});
 	});
 });

@@ -31,13 +31,15 @@
  * discard` reach.
  *
  * The Share button in the bar above the canvas opens the Share panel
- * (`SketchSharePanel.tsx`). Opening a shared sketch joins its room when this
+ * (`SketchSharePanel.tsx`); while the sketch has a room, the Room button
+ * opens the Room panel (`SketchRoomPanel.tsx`: members, links, flagged
+ * elements, Kick, Unlock, Unsuspend, Revoke, Reset). One panel shows at a time. Opening a shared sketch joins its room when this
  * window has no client for it yet (`ensureSketchRoomConnected()`), which is
  * how a room comes back after a restart.
  */
 
 import React from 'react';
-import { Share2, X } from 'lucide-react';
+import { Share2, Users, X } from 'lucide-react';
 import type {
 	AppState,
 	BinaryFiles,
@@ -59,6 +61,7 @@ import {
 import { loadExcalidraw } from './excalidrawAssets';
 import { SketchChatPane } from './SketchChatPane';
 import { SketchSharePanel } from './SketchSharePanel';
+import { SketchRoomPanel } from './SketchRoomPanel';
 import { SketchScreenOutageBanner, SketchScreeningBadge } from './SketchRoomScreening';
 import { HeaderActionButton } from '../ui/HeaderActionButton';
 import { ensureSketchRoomConnected } from '../../services/sketchSharing';
@@ -145,7 +148,7 @@ export function SketchTabView({ sketchId, theme }: SketchTabViewProps) {
 	});
 	const roomStats = useSketchSessionStore((s) => s.sessions[sketchId]?.room?.stats ?? null);
 	const [api, setApi] = React.useState<ExcalidrawImperativeAPI | null>(null);
-	const [shareOpen, setShareOpen] = React.useState(false);
+	const [panel, setPanel] = React.useState<'share' | 'room' | null>(null);
 
 	React.useEffect(() => {
 		void useSketchSessionStore.getState().openSketchSession(sketchId);
@@ -287,12 +290,23 @@ export function SketchTabView({ sketchId, theme }: SketchTabViewProps) {
 						Shared
 					</span>
 				)}
+				{roomConnection !== null && (
+					<HeaderActionButton
+						theme={theme}
+						variant={panel === 'room' ? 'primary' : 'ghost'}
+						icon={<Users />}
+						ariaLabel="Show the room"
+						onClick={() => setPanel((open) => (open === 'room' ? null : 'room'))}
+					>
+						Room
+					</HeaderActionButton>
+				)}
 				<HeaderActionButton
 					theme={theme}
-					variant={shareOpen ? 'primary' : 'ghost'}
+					variant={panel === 'share' ? 'primary' : 'ghost'}
 					icon={<Share2 />}
 					ariaLabel="Share this sketch"
-					onClick={() => setShareOpen((open) => !open)}
+					onClick={() => setPanel((open) => (open === 'share' ? null : 'share'))}
 				>
 					Share
 				</HeaderActionButton>
@@ -373,8 +387,11 @@ export function SketchTabView({ sketchId, theme }: SketchTabViewProps) {
 						onEscalate={(replyTo) => escalateSketchBotRequest(sketchId, replyTo)}
 					/>
 				)}
-				{shareOpen && (
-					<SketchSharePanel sketchId={sketchId} theme={theme} onClose={() => setShareOpen(false)} />
+				{panel === 'share' && (
+					<SketchSharePanel sketchId={sketchId} theme={theme} onClose={() => setPanel(null)} />
+				)}
+				{panel === 'room' && roomConnection !== null && (
+					<SketchRoomPanel sketchId={sketchId} theme={theme} onClose={() => setPanel(null)} />
 				)}
 			</div>
 		</div>

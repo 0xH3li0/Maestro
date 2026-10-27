@@ -62,6 +62,7 @@ import type { SketchImageApprovals } from '../../shared/sketch/commands';
 import type { SketchWireElement } from '../../shared/sketch/payloads';
 import type { Screening } from '../../shared/sketch/protocol';
 import type { SketchRoomStats } from '../../shared/sketch/room-stats';
+import type { SketchRoomConnection } from '../../shared/sketch/room-admin';
 import type {
 	BotPolicy,
 	SketchActor,
@@ -162,12 +163,7 @@ export interface SketchAgentIdentity {
 }
 
 /** Where the room socket stands. */
-export type SketchRoomConnection =
-	| 'connecting'
-	| 'catching-up'
-	| 'live'
-	| 'reconnecting'
-	| 'stopped';
+export type { SketchRoomConnection };
 
 /** A message for the Sketch tab about the room (a close code, a reconnect). */
 export interface SketchRoomNotice {
@@ -335,6 +331,16 @@ interface SketchSessionState {
 		elements: readonly SketchWireElement[],
 		agent: SketchAgentIdentity
 	) => SketchWireElement[];
+	/**
+	 * Fold a change the conductor made outside the canvas (the Room panel's
+	 * delete of a flagged element): `elements` is the whole next scene,
+	 * stamped as the conductor, saved, and pushed to mounted views the way an
+	 * agent's change is. Returns the stamped copies.
+	 */
+	applyConductorChange: (
+		sketchId: string,
+		elements: readonly SketchWireElement[]
+	) => SketchWireElement[];
 	/** Ask the views to scroll to these elements. Returns the request. */
 	requestSketchFocus: (sketchId: string, elementIds: string[]) => SketchFocusRequest | null;
 	/** A view handled this focus request. A newer one is left alone. */
@@ -453,6 +459,36 @@ export const useSketchSessionStore = create<SketchSessionState>((set, get) => {
 		});
 	}
 
+	/**
+	 * A whole next scene made outside every view (an agent's write, the Room
+	 * panel): folded in like a local change by `editor`, then pushed to the
+	 * mounted views through `externalRevision` and saved, since no view may be
+	 * mounted to autosave it.
+	 */
+	function applyPushedChange(
+		sketchId: string,
+		elements: readonly SketchWireElement[],
+		editor?: SketchEditor,
+		actor?: SketchActor
+	): SketchWireElement[] {
+		const session = get().sessions[sketchId];
+		if (!session?.scene) return [];
+		const { scene } = session;
+		const result = get().applyLocalChange(
+			sketchId,
+			{ elements, appState: scene.appState, files: scene.files },
+			editor,
+			actor
+		);
+		if (!result.changed) return [];
+		patchSession(sketchId, (current) => ({
+			...current,
+			externalRevision: current.externalRevision + 1,
+		}));
+		void get().saveSketchSession(sketchId);
+		return result.stamped;
+	}
+
 	return {
 		sessions: {},
 
@@ -521,25 +557,15 @@ export const useSketchSessionStore = create<SketchSessionState>((set, get) => {
 			return { changed: true, stamped };
 		},
 
-		applyAgentChange: (sketchId, elements, agent) => {
-			const session = get().sessions[sketchId];
-			if (!session?.scene) return [];
-			const { scene } = session;
-			const result = get().applyLocalChange(
+		applyAgentChange: (sketchId, elements, agent) =>
+			applyPushedChange(
 				sketchId,
-				{ elements, appState: scene.appState, files: scene.files },
+				elements,
 				botEditor(agent.id, agent.name),
 				botActor(agent.id, agent.name)
-			);
-			if (!result.changed) return [];
-			patchSession(sketchId, (current) => ({
-				...current,
-				externalRevision: current.externalRevision + 1,
-			}));
-			// No view may be mounted to autosave it, so the write saves itself.
-			void get().saveSketchSession(sketchId);
-			return result.stamped;
-		},
+			),
+
+		applyConductorChange: (sketchId, elements) => applyPushedChange(sketchId, elements),
 
 		requestSketchFocus: (sketchId, elementIds) => {
 			if (!get().sessions[sketchId]) return null;

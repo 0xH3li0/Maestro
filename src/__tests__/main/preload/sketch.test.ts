@@ -157,6 +157,17 @@ describe('Sketch Book Preload API', () => {
 		expect(mockInvoke).toHaveBeenLastCalledWith('sketch:switchScreenToLocal');
 	});
 
+	it('maps each Room panel method to its channel', async () => {
+		await api.roomStats(SKETCH_ID);
+		expect(mockInvoke).toHaveBeenLastCalledWith('sketch:roomStats', SKETCH_ID);
+		await api.roomAction(SKETCH_ID, 'unsuspend', { capId: 'Cap000000001' });
+		expect(mockInvoke).toHaveBeenLastCalledWith('sketch:roomAction', SKETCH_ID, 'unsuspend', {
+			capId: 'Cap000000001',
+		});
+		await api.roomAudit(SKETCH_ID);
+		expect(mockInvoke).toHaveBeenLastCalledWith('sketch:roomAudit', SKETCH_ID);
+	});
+
 	it('passes the host the confirmation named with a consent grant', async () => {
 		await api.grantScreeningConsent('openjev', 'jev.example.com');
 		expect(mockInvoke).toHaveBeenLastCalledWith(

@@ -46,6 +46,8 @@ const botPolicy = vi.hoisted(() => ({
 	dismissSketchBotPolicyNotice: vi.fn(),
 }));
 vi.mock('../../../renderer/services/sketchBotPolicy', () => botPolicy);
+const roomAdmin = vi.hoisted(() => ({ runRemoteSketchRoomAdmin: vi.fn() }));
+vi.mock('../../../renderer/services/sketchRoomAdmin', () => roomAdmin);
 
 import {
 	exportSketchImage,
@@ -506,6 +508,36 @@ describe('runRemoteSketchCommand: sharing', () => {
 			'conductor',
 			'Collaborators can no longer ask the agent: off.'
 		);
+	});
+
+	it('runs a Room panel op and returns the room', async () => {
+		const reading = { sketchId: 'sketch-1', connection: 'live', stats: null };
+		roomAdmin.runRemoteSketchRoomAdmin.mockResolvedValueOnce(reading);
+		const request = {
+			action: 'roomAdmin' as const,
+			sketchId: 'sketch-1',
+			op: 'kick' as const,
+			actorId: 'guest-1',
+		};
+		await expect(runRemoteSketchCommand(request)).resolves.toEqual({
+			success: true,
+			roomStats: reading,
+		});
+		expect(roomAdmin.runRemoteSketchRoomAdmin).toHaveBeenCalledWith(request);
+	});
+
+	it('answers a Room panel op the room refuses instead of throwing', async () => {
+		roomAdmin.runRemoteSketchRoomAdmin.mockRejectedValueOnce(
+			new Error('Sketch Book: only a guest can be kicked.')
+		);
+		await expect(
+			runRemoteSketchCommand({
+				action: 'roomAdmin',
+				sketchId: 'sketch-1',
+				op: 'kick',
+				actorId: 'x',
+			})
+		).resolves.toEqual({ success: false, error: 'Sketch Book: only a guest can be kicked.' });
 	});
 
 	it('answers a bot policy the room cannot send instead of throwing', async () => {

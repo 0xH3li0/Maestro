@@ -258,9 +258,11 @@ import {
 	dataviewQuery,
 } from './commands/dataview';
 import {
+	sketchAudit,
 	sketchBotDecision,
 	sketchBotPolicy,
 	sketchExport,
+	sketchKick,
 	sketchList,
 	sketchNew,
 	sketchOpen,
@@ -271,7 +273,10 @@ import {
 	sketchScreeningConsent,
 	sketchRequests,
 	sketchShare,
+	sketchStats,
+	sketchUnlock,
 	sketchUnshare,
+	sketchUnsuspend,
 } from './commands/sketch';
 import { cadenzaOpen, cadenzaUpdate, cadenzaClose } from './commands/cadenza';
 import {
@@ -4631,7 +4636,7 @@ dataviewCmd
 // Sketch Book commands - the verbs that need no room (spec section 9). Each
 // rides `sketch_command` to the SketchService the Sketch tab uses.
 const sketchCmd = encoreCommand(program, 'sketch', 'sketchBook', encoreFlags).description(
-	'Sketch Book: create, list, open, read, export and share Excalidraw whiteboards owned by an agent, answer @bot requests, and manage cloud screening consent'
+	'Sketch Book: create, list, open, read, export and share Excalidraw whiteboards owned by an agent, answer @bot requests, run the shared room (stats, kick, unlock, unsuspend, audit), and manage cloud screening consent'
 );
 
 sketchCmd
@@ -4782,6 +4787,48 @@ sketchCmd
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((sketchId, policy, options) => sketchBotPolicy(sketchId, policy, options));
+
+sketchCmd
+	.command('stats <sketchId>')
+	.description(
+		"Print the shared sketch's room (the Room panel): screening, members with their counters and lock state, links with expiry and @bot suspension"
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((sketchId, options) => sketchStats(sketchId, options));
+
+sketchCmd
+	.command('kick <sketchId> <actorId>')
+	.description(
+		'Disconnect a guest and block that device for a while (60 minutes by default). Temporary: revoke the link to keep someone out'
+	)
+	.option('--minutes <minutes>', 'How long the device stays blocked, 1 to 1440 (default 60)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((sketchId, actorId, options) => sketchKick(sketchId, actorId, options));
+
+sketchCmd
+	.command('unlock <sketchId> <actorId>')
+	.description(
+		"Clear a guest's lockout (3 rejected @bot requests in a row) so they may ask the agent again. An agent caller gets a desktop confirmation"
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((sketchId, actorId, options) => sketchUnlock(sketchId, actorId, options));
+
+sketchCmd
+	.command('unsuspend <sketchId> <capId>')
+	.description(
+		'Give a link back its @bot access after the server suspended it (5 rejected requests). An agent caller gets a desktop confirmation'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((sketchId, capId, options) => sketchUnsuspend(sketchId, capId, options));
+
+sketchCmd
+	.command('audit <sketchId>')
+	.description(
+		"Print the guardrail's audit log for a sketch: every screening decision (never the text), and the elements withheld as flagged"
+	)
+	.option('--flagged', 'Only the elements whose newest decision is flagged')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((sketchId, options) => sketchAudit(sketchId, options));
 
 // Quick Chat commands - the hotkey-summoned floating chat window. Each verb is
 // the same action as the matching button in the window.

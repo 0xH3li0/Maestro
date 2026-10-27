@@ -30,6 +30,12 @@ import type {
 } from '../../shared/sketch/cloud-consent';
 import type { Screening } from '../../shared/sketch/protocol';
 import type {
+	SketchRoomAction,
+	SketchRoomActionOp,
+	SketchRoomAudit,
+	SketchRoomStatsReading,
+} from '../../shared/sketch/room-admin';
+import type {
 	SketchBotPolicyStatus,
 	SketchLocalScreenOption,
 	SketchScreenInstallResult,
@@ -194,6 +200,19 @@ export function createSketchApi() {
 		/** Point the screen back at a local classifier (downloading Prompt Guard 2 when none is installed). */
 		switchScreenToLocal: (): Promise<SketchScreenInstallResult> =>
 			ipcRenderer.invoke('sketch:switchScreenToLocal'),
+		/** The room's newest `room.stats`, asked of the server first (the Room panel). */
+		roomStats: (sketchId: string): Promise<SketchRoomStatsReading> =>
+			ipcRenderer.invoke('sketch:roomStats', sketchId),
+		/** Kick, Unlock or Unsuspend on the room. Resolves with the room as it stands after. */
+		roomAction: (
+			sketchId: string,
+			op: SketchRoomActionOp,
+			input: Omit<SketchRoomAction, 'op'>
+		): Promise<SketchRoomStatsReading> =>
+			ipcRenderer.invoke('sketch:roomAction', sketchId, op, input),
+		/** The sketch's audit log (spec section 8.8): every decision, and the flagged elements. */
+		roomAudit: (sketchId: string): Promise<SketchRoomAudit> =>
+			ipcRenderer.invoke('sketch:roomAudit', sketchId),
 		/** A policy or B2 availability may have changed. Returns the unsubscribe. */
 		onBotPolicyChanged: (callback: (change: { sketchId?: string }) => void): (() => void) => {
 			const handler = (_: unknown, change: { sketchId?: string }) => callback(change);
