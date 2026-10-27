@@ -512,6 +512,8 @@ export interface QueuedItem {
 	timestamp: number; // When it was queued (for ordering)
 	tabId: string; // Target tab for this item
 	type: QueuedItemType; // 'message' or 'command'
+	/** Set by known send paths; absent on legacy/programmatic items, which remain unattended. */
+	querySource?: ProcessConfig['querySource'];
 	// For messages
 	text?: string; // Message text
 	images?: string[]; // Attached images (base64)

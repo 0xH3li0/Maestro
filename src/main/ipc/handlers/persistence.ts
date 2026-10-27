@@ -806,6 +806,8 @@ export function registerPersistenceHandlers(
 								mergeDeferredSessionContent(update, prev),
 								prev,
 								baselineMap.get(prev.id),
+								remote,
+								false,
 								remote
 							)
 						);
@@ -816,7 +818,16 @@ export function registerPersistenceHandlers(
 				}
 				for (const newSession of updateMap.values()) {
 					if (removeSet.has(newSession.id)) continue;
-					merged.push(mergeDeferredSessionContent(newSession, undefined));
+					merged.push(
+						mergeSessionPersistenceChanges(
+							mergeDeferredSessionContent(newSession, undefined),
+							undefined,
+							undefined,
+							remote,
+							false,
+							remote
+						)
+					);
 				}
 				// Normalize after the merge, never before: a peer baseline can hold a
 				// stack in a form the stored side would not, and normalizing only one
@@ -1004,6 +1015,8 @@ export function registerPersistenceHandlers(
 									mergeDeferredSessionContent(session, previousSessionMap.get(session.id)),
 									previousSessionMap.get(session.id),
 									baselineMap.get(session.id),
+									remote,
+									false,
 									remote
 								)
 							)

@@ -1794,6 +1794,50 @@ describe('persistence IPC handlers', () => {
 			toolType: 'claude-code',
 		};
 
+		it.each(['sessions:setAll', 'sessions:setMany'])(
+			'%s cannot persist a new remote human queue claim',
+			async (channel) => {
+				mockSessionsStore.get.mockReturnValue([]);
+				const incoming = {
+					...baseSession,
+					executionQueue: [
+						{ id: 'remote-item', type: 'message', text: 'Read mail', querySource: 'user' },
+					],
+				};
+				await handlers.get(channel)!({ type: 'bridge' } as any, [incoming], []);
+				const saved = mockSessionsStore.set.mock.calls.at(-1)![1] as (typeof incoming)[];
+				expect(saved[0].executionQueue[0].querySource).toBe('auto');
+			}
+		);
+
+		it.each(['sessions:setAll', 'sessions:setMany'])(
+			'%s demotes changed remote queue claims with an observed baseline',
+			async (channel) => {
+				const item = { id: 'host-item', type: 'message', text: 'Read mail', querySource: 'user' };
+				const untouched = { ...item, id: 'unchanged-item' };
+				const stored = { ...baseSession, executionQueue: [item, untouched] };
+				const baseline = structuredClone(stored);
+				const incoming = {
+					...stored,
+					executionQueue: [{ ...item, text: 'Different operation' }, untouched],
+				};
+				mockSessionsStore.get.mockReturnValue([stored]);
+				const handler = handlers.get(channel)!;
+				const result =
+					channel === 'sessions:setAll'
+						? await handler({ type: 'bridge' } as any, [incoming], [baseline])
+						: await handler({ type: 'bridge' } as any, [incoming], [], [baseline]);
+				expect(result).toBe(true);
+				const saved = mockSessionsStore.set.mock.calls.at(-1)![1] as (typeof stored)[];
+				expect(saved[0].executionQueue).toEqual([
+					{ ...item, text: 'Different operation', querySource: 'auto' },
+					untouched,
+				]);
+				expect(stored.executionQueue).toEqual([item, untouched]);
+				expect(baseline.executionQueue).toEqual([item, untouched]);
+			}
+		);
+
 		it('notifies Pianola of added and removed agents only after a durable write', async () => {
 			const onSessionsPersisted = vi.fn(() => {
 				expect(mockFlushSessionWrites).toHaveBeenCalledOnce();

@@ -524,7 +524,7 @@ export function describeCapability(capability: PluginCapability): string {
  * `ui:contribute` / `ui:panel` / `ui:render-unsafe`; 1.3.0 added `tools` +
  * `keybindings`; 1.2.0 added `transcripts:read`.
  */
-export const HOST_API_VERSION = '1.29.0';
+export const HOST_API_VERSION = '1.29.1';
 
 /** Result of checking a plugin's declared host-API requirement. */
 export interface HostApiCompatibility {

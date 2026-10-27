@@ -238,6 +238,14 @@ export async function handleBridgeInvoke<TClient extends Pick<WebClient, 'id' | 
 		// handler performs still reads the same account from `getActingUser()`.
 		// `client.user` is undefined for maestro-cli (admitted by its secret) and
 		// for every client when the gate is off, which reads as "the desktop".
+		if (channel === 'process:spawn') {
+			const config = args[0];
+			if (!config || typeof config !== 'object' || Array.isArray(config) || args.length !== 1)
+				throw new Error('Invalid remote spawn configuration');
+			// Admission to the generic bridge proves no human origin for this turn.
+			// Override caller claims before the native handler can mint its proof.
+			args = [{ ...config, querySource: 'auto' }];
+		}
 		if (channel === 'agents:setConfig') {
 			const incoming = args[1];
 			if (
