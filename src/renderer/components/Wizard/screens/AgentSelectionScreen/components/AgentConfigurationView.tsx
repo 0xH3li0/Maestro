@@ -2,6 +2,7 @@ import { ArrowLeft } from 'lucide-react';
 import type { RefObject } from 'react';
 import type { AgentSshRemoteConfig, SshRemoteConfig } from '../../../../../../shared/types';
 import type { CodexTransport } from '../../../../../../shared/codexTransport';
+import type { HarnessControlMode } from '../../../../../../shared/maestro-lib/providers/native-control';
 import type { AgentConfig, Theme } from '../../../../../types';
 import { AgentConfigPanel } from '../../../../shared/AgentConfigPanel';
 import type { AgentTile } from '../types';
@@ -50,6 +51,8 @@ interface AgentConfigurationViewProps {
 	// Codex Transport (codex only; AgentConfigPanel gates on agent.id)
 	codexTransport?: CodexTransport;
 	onCodexTransportChange: (transport: CodexTransport) => void;
+	harnessControlMode?: HarnessControlMode;
+	onHarnessControlModeChange: (mode: HarnessControlMode) => void;
 }
 
 export function AgentConfigurationView({
@@ -93,6 +96,8 @@ export function AgentConfigurationView({
 	detectedMaestroPPath,
 	codexTransport,
 	onCodexTransportChange,
+	harnessControlMode,
+	onHarnessControlModeChange,
 }: AgentConfigurationViewProps): JSX.Element {
 	const isSshEnabled = !!(sshRemoteConfig?.enabled && sshRemoteConfig?.remoteId);
 	const sshRemoteId = sshRemoteConfig?.remoteId ?? undefined;
@@ -186,6 +191,8 @@ export function AgentConfigurationView({
 						detectedMaestroPPath={detectedMaestroPPath}
 						codexTransport={codexTransport}
 						onCodexTransportChange={onCodexTransportChange}
+						harnessControlMode={harnessControlMode}
+						onHarnessControlModeChange={onHarnessControlModeChange}
 					/>
 				</div>
 			</div>
