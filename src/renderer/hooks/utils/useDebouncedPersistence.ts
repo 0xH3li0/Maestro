@@ -32,6 +32,7 @@
  */
 
 import { useEffect, useRef, useCallback, useState } from 'react';
+import { flushSync } from 'react-dom';
 import type { Session } from '../../types';
 import { isLimitError } from '../../../shared/types';
 import {
@@ -348,6 +349,10 @@ export interface UseDebouncedPersistenceReturn {
 /** Default debounce delay in milliseconds */
 export const DEFAULT_DEBOUNCE_DELAY = 2000;
 export const SESSION_PERSISTENCE_BASELINE_EVENT = 'maestro:session-persistence-baseline';
+export interface SessionPersistenceBaseline {
+	sessions: Session[];
+	recovered?: boolean;
+}
 
 /**
  * Diff two sessions arrays by reference identity per element.
@@ -402,9 +407,7 @@ export function useDebouncedPersistence(
 	initialLoadComplete: React.MutableRefObject<boolean>,
 	delay: number = DEFAULT_DEBOUNCE_DELAY
 ): UseDebouncedPersistenceReturn {
-	// Track if there are pending changes
 	const [isPending, setIsPending] = useState(false);
-	// Mirror isPending so the store subscription can avoid setState on every
 	// streaming tick after the first dirty mark (would re-render App).
 	const isPendingRef = useRef(false);
 
@@ -440,6 +443,7 @@ export function useDebouncedPersistence(
 	// Retain its wire snapshot until our first successful save; restoration must
 	// not turn that host-owned row into a client-created row without a baseline.
 	const peerBaselinesRef = useRef(new Map<string, Session>());
+	const recoveryGenerationRef = useRef(0);
 
 	/**
 	 * Run one persistence pass. Throws on failure so callers can decide
@@ -475,6 +479,7 @@ export function useDebouncedPersistence(
 		if (!useSessionStore.getState().sessionsReadOk) {
 			throw new Error(SESSIONS_NOT_READ_MESSAGE);
 		}
+		const recoveryGeneration = recoveryGenerationRef.current;
 		const current = sessionsRef.current;
 		const peerBaselines = peerBaselinesRef.current;
 		const observedBaselines = (previous: Session[] | null, toPersist: Session[]): Session[] => {
@@ -505,6 +510,7 @@ export function useDebouncedPersistence(
 							sessionsForPersistence,
 							observedBaselines(mountedSessionsRef.current, current)
 						);
+			if (recoveryGeneration !== recoveryGenerationRef.current) return;
 			if (ok === false) {
 				throw new Error('Session persistence returned false (recoverable disk error)');
 			}
@@ -525,6 +531,7 @@ export function useDebouncedPersistence(
 		const dirtyForPersistence = sessionsToPersist.map(prepareSessionForPersistence);
 		const baselines = observedBaselines(previouslyPersistedRef.current, sessionsToPersist);
 		const ok = await window.maestro.sessions.setMany(dirtyForPersistence, tombstones, baselines);
+		if (recoveryGeneration !== recoveryGenerationRef.current) return;
 		if (ok === false) {
 			throw new Error('sessions:setMany returned false (recoverable disk error)');
 		}
@@ -641,13 +648,25 @@ export function useDebouncedPersistence(
 			for (const id of payload.removedIds ?? []) peerBaselinesRef.current.delete(id);
 		});
 		const rememberBootstrap = (event: Event) => {
-			for (const session of (event as CustomEvent<Session[]>).detail) {
+			const { sessions, recovered } = (event as CustomEvent<SessionPersistenceBaseline>).detail;
+			if (recovered) {
+				recoveryGenerationRef.current++;
+				if (timerRef.current) clearTimeout(timerRef.current);
+				timerRef.current = null;
+				flushRequestedRef.current = false;
+				peerBaselinesRef.current.clear();
+				sessionsRef.current = useSessionStore.getState().sessions;
+				previouslyPersistedRef.current = sessions;
+				startupBaselineNeedsFullFlushRef.current = false;
+				isPendingRef.current = false;
+				flushSync(() => setIsPending(false));
+			}
+			for (const session of sessions) {
 				peerBaselinesRef.current.set(session.id, structuredClone(session));
 			}
 		};
 		window.addEventListener(SESSION_PERSISTENCE_BASELINE_EVENT, rememberBootstrap);
 		const schedulePersist = () => {
-			// Skip persistence during initial load
 			if (!initialLoadComplete.current) {
 				return;
 			}
@@ -674,9 +693,11 @@ export function useDebouncedPersistence(
 			// Restoration writes the loaded tree BEFORE it marks the read as ok, so
 			// the read succeeding is the moment that tree becomes the baseline.
 			// Missing it left the first flush on setAll, which keeps every id the
+			const readJustSucceeded = state.sessionsReadOk && !prevState.sessionsReadOk;
+			if (state.sessions === prevState.sessions && !readJustSucceeded) return;
+			if (state.sessions === sessionsRef.current && !readJustSucceeded) return;
 			// client omits, so an agent removed during startup (a worktree child
 			// the startup scan found gone) came back on the next launch.
-			const readJustSucceeded = state.sessionsReadOk && !prevState.sessionsReadOk;
 			if (state.sessions === prevState.sessions && !readJustSucceeded) return;
 			sessionsRef.current = state.sessions;
 			if (initialLoadComplete.current && isWebDesktop()) {
