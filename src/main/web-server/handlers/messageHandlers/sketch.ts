@@ -2,11 +2,12 @@
  * Sketch Book WebSocket handler: `sketch_command`, the CLI half of Sketch Book
  * (`maestro-cli sketch new|list|open|read|export|screening-consent|share|
  * unshare|revoke-link|rotate|owner|requests|approve|deny|escalate|publish|
- * discard`, spec section 9).
+ * discard|bot-policy`, spec section 9).
  *
- * The sharing verbs and the `@bot` decisions pass the asking agent's name
- * when an agent called (A1): the service raises the desktop confirmation
- * (sharing, approve, escalate, publish) and runs only on Allow.
+ * The sharing verbs, the `@bot` decisions and `bot-policy` pass the asking
+ * agent's name when an agent called (A1): the service raises the desktop
+ * confirmation (sharing, approve, escalate, publish, `bot-policy writers`)
+ * and runs only on Allow.
  *
  * One message carrying an `action`, answered by the SAME SketchService the
  * `sketch:*` IPC handlers call, so the CLI and the UI cannot drift. The service
@@ -21,6 +22,7 @@
 import { logger } from '../../../utils/logger';
 import { getSketchService } from '../../../sketch/sketch-service';
 import { getSketchCloudConsent } from '../../../sketch/sketch-cloud-consent';
+import { getSketchBotPolicy } from '../../../sketch/sketch-bot-policy';
 import {
 	isSketchCommandAction,
 	isSketchOwnerOp,
@@ -82,7 +84,22 @@ function run(action: SketchCommandAction, message: WebClientMessage): Promise<un
 		case 'publish':
 		case 'discard':
 			return service.decideBotRequest(action, message.replyTo as string, callerOf(message));
+		case 'bot-policy':
+			return botPolicy(message);
 	}
+}
+
+/**
+ * `maestro-cli sketch bot-policy <sketchId> [conductor|writers]` (spec section
+ * 5, B2): the status without a policy, else `policy.set` on the room. The
+ * service checks the policy, refuses `writers` while B2 is unavailable, and
+ * raises the desktop confirmation for an agent's `writers` (A1).
+ */
+function botPolicy(message: WebClientMessage): Promise<unknown> {
+	const service = getSketchBotPolicy();
+	const sketchId = message.sketchId as string;
+	if (message.policy === undefined || message.policy === null) return service.status(sketchId);
+	return service.setPolicy(sketchId, message.policy as 'conductor' | 'writers', callerOf(message));
 }
 
 /** The asking agent's name (or id), when an agent called through the CLI (A1). */

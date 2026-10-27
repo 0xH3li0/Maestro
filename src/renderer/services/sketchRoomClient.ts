@@ -310,6 +310,7 @@ function initialRoomState(roomId: string, syncedSeq: number): SketchRoomState {
 		keyEpoch: null,
 		syncedSeq,
 		screening: { reported: null, server: null, since: null },
+		botPolicyNotice: null,
 	};
 }
 

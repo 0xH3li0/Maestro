@@ -29,6 +29,11 @@ import type {
 } from '../../shared/sketch/cloud-consent';
 import type { Screening } from '../../shared/sketch/protocol';
 import type {
+	SketchBotPolicyStatus,
+	SketchScreenInstallResult,
+} from '../../shared/sketch/bot-policy';
+import type {
+	BotPolicy,
 	SketchBotReplyScreen,
 	SketchBotScreenRequest,
 	SketchBotTurnContext,
@@ -43,6 +48,9 @@ const REMOTE_COMMAND_CHANNEL = 'remote:sketchCommand';
 
 /** Matches `SKETCH_SCREENING_CHANGED_CHANNEL` in `src/main/sketch/sketch-cloud-consent.ts`. */
 const SCREENING_CHANGED_CHANNEL = 'sketch:screeningChanged';
+
+/** Matches `SKETCH_BOT_POLICY_CHANGED_CHANNEL` in `src/main/sketch/sketch-bot-policy.ts`. */
+const BOT_POLICY_CHANGED_CHANNEL = 'sketch:botPolicyChanged';
 
 /** Creates the Sketch Book API object for contextBridge exposure. */
 export function createSketchApi() {
@@ -150,6 +158,24 @@ export function createSketchApi() {
 			const handler = (_: unknown, change: SketchScreeningChange) => callback(change);
 			ipcRenderer.on(SCREENING_CHANGED_CHANNEL, handler);
 			return () => ipcRenderer.removeListener(SCREENING_CHANGED_CHANNEL, handler);
+		},
+		/** The room's policy and whether B2 may be turned on (spec section 5). */
+		botPolicyStatus: (sketchId: string): Promise<SketchBotPolicyStatus> =>
+			ipcRenderer.invoke('sketch:botPolicyStatus', sketchId),
+		/** Send `policy.set`. `writers` is refused while B2 is unavailable. */
+		setBotPolicy: (sketchId: string, policy: BotPolicy): Promise<SketchBotPolicyStatus> =>
+			ipcRenderer.invoke('sketch:setBotPolicy', sketchId, policy),
+		/** The room's `welcome` or `policy` frame said this policy. */
+		noteRoomBotPolicy: (sketchId: string, policy: BotPolicy): Promise<SketchBotPolicyStatus> =>
+			ipcRenderer.invoke('sketch:noteRoomBotPolicy', sketchId, policy),
+		/** Download Prompt Guard 2 with its runtime and assign it to the screen. */
+		installScreen: (): Promise<SketchScreenInstallResult> =>
+			ipcRenderer.invoke('sketch:installScreen'),
+		/** A policy or B2 availability may have changed. Returns the unsubscribe. */
+		onBotPolicyChanged: (callback: (change: { sketchId?: string }) => void): (() => void) => {
+			const handler = (_: unknown, change: { sketchId?: string }) => callback(change);
+			ipcRenderer.on(BOT_POLICY_CHANGED_CHANNEL, handler);
+			return () => ipcRenderer.removeListener(BOT_POLICY_CHANGED_CHANNEL, handler);
 		},
 	};
 }

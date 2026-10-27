@@ -60,6 +60,7 @@ import {
 import { createKeyedWriteQueue } from '../../shared/keyedWriteQueue';
 import { getAgentDefinition } from '../../shared/maestro-lib/providers/definitions';
 import { sketchRestrictedPostureBlocker } from '../../shared/sketch/restricted-posture';
+import type { SketchB2Availability } from '../../shared/sketch/bot-policy';
 import type {
 	SketchActor,
 	SketchActorKind,
@@ -321,8 +322,7 @@ function isSourceInfo(resolution: InjectionSourceResolution): resolution is Inje
 	return !('status' in resolution);
 }
 
-/** Why `isB2Available()` says no. */
-export type SketchB2Availability = { ok: true } | { ok: false; reason: string };
+export type { SketchB2Availability };
 
 /** One element version the batch entry decides (spec section 8.2, I2 and I3). */
 export interface AgentScreenSubject {
@@ -752,6 +752,7 @@ export function createSketchGuardrail(deps: SketchGuardrailDeps = {}): SketchGua
 						ok: false,
 						reason:
 							'The prompt-injection screen is off. Assign it a model in Settings > Models, or download Prompt Guard 2.',
+						offerScreenDownload: true,
 					}
 				: { ok: false, reason: resolved.reason };
 		}

@@ -4,7 +4,8 @@
  * (the Encore gate, a bad argument, a missing sketch) is logged and rethrown
  * to the renderer unchanged. Registration hands the window resolver to the
  * renderer bridge, so the CLI reaches the window that owns an agent, and
- * starts the cloud screening consent module, whose channels pass through to it.
+ * starts the cloud screening consent module and the B2 policy watch, whose
+ * channels pass through to them.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -17,6 +18,8 @@ const h = vi.hoisted(() => ({
 	setSketchWindowResolver: vi.fn(),
 	consent: null as Record<string, ReturnType<typeof vi.fn>> | null,
 	startSketchCloudConsent: vi.fn(),
+	botPolicy: null as Record<string, ReturnType<typeof vi.fn>> | null,
+	startSketchBotPolicyWatch: vi.fn(),
 }));
 
 vi.mock('electron', () => ({
@@ -40,6 +43,10 @@ vi.mock('../../../../main/sketch/sketch-cloud-consent', () => ({
 	getSketchCloudConsent: () => h.consent,
 	startSketchCloudConsent: h.startSketchCloudConsent,
 }));
+vi.mock('../../../../main/sketch/sketch-bot-policy', () => ({
+	getSketchBotPolicy: () => h.botPolicy,
+	startSketchBotPolicyWatch: h.startSketchBotPolicyWatch,
+}));
 
 import { registerSketchHandlers } from '../../../../main/ipc/handlers/sketch';
 
@@ -55,6 +62,25 @@ describe('sketch IPC handlers', () => {
 		h.logError.mockReset();
 		h.setSketchWindowResolver.mockReset();
 		h.startSketchCloudConsent.mockReset();
+		h.startSketchBotPolicyWatch.mockReset();
+		h.botPolicy = {
+			status: vi.fn(async () => ({
+				sketchId: SKETCH_ID,
+				policy: 'conductor',
+				availability: { ok: true },
+			})),
+			setPolicy: vi.fn(async () => ({
+				sketchId: SKETCH_ID,
+				policy: 'writers',
+				availability: { ok: true },
+			})),
+			noteRoomPolicy: vi.fn(async () => ({
+				sketchId: SKETCH_ID,
+				policy: 'writers',
+				availability: { ok: true },
+			})),
+			installScreen: vi.fn(async () => ({ installed: true, assigned: true })),
+		};
 		h.consent = {
 			status: vi.fn(async () => ({ consent: {}, source: null, sourceCovered: false, rooms: [] })),
 			grantConsent: vi.fn(async () => ({ consent: { jev: { grantedAt: 1 } } })),
@@ -111,14 +137,37 @@ describe('sketch IPC handlers', () => {
 		expect(h.startSketchCloudConsent).toHaveBeenLastCalledWith({ safeSend });
 	});
 
+	it('starts the B2 policy watch with the same push', () => {
+		const safeSend = vi.fn();
+		registerSketchHandlers({ safeSend });
+		expect(h.startSketchBotPolicyWatch).toHaveBeenLastCalledWith({ safeSend });
+	});
+
+	it('passes the B2 policy channels through with no caller (the person in the tab is the conductor)', async () => {
+		const botPolicy = h.botPolicy!;
+		await invoke('sketch:botPolicyStatus', SKETCH_ID);
+		expect(botPolicy.status).toHaveBeenCalledWith(SKETCH_ID);
+		await invoke('sketch:setBotPolicy', SKETCH_ID, 'writers');
+		expect(botPolicy.setPolicy).toHaveBeenCalledWith(SKETCH_ID, 'writers');
+		await invoke('sketch:noteRoomBotPolicy', SKETCH_ID, 'writers');
+		expect(botPolicy.noteRoomPolicy).toHaveBeenCalledWith(SKETCH_ID, 'writers');
+		await expect(invoke('sketch:installScreen')).resolves.toEqual({
+			installed: true,
+			assigned: true,
+		});
+	});
+
 	it('registers exactly the sketch channels', () => {
 		expect([...h.handlers.keys()].sort()).toEqual([
+			'sketch:botPolicyStatus',
 			'sketch:confirmCloudScreening',
 			'sketch:create',
 			'sketch:delete',
 			'sketch:get',
 			'sketch:grantScreeningConsent',
+			'sketch:installScreen',
 			'sketch:list',
+			'sketch:noteRoomBotPolicy',
 			'sketch:ownerStatus',
 			'sketch:prepareBotTurn',
 			'sketch:readScene',
@@ -134,6 +183,7 @@ describe('sketch IPC handlers', () => {
 			'sketch:screenBotReply',
 			'sketch:screenBotRequest',
 			'sketch:screeningConsentStatus',
+			'sketch:setBotPolicy',
 			'sketch:setBotSessionId',
 			'sketch:setRoomLive',
 			'sketch:share',

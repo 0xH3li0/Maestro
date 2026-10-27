@@ -628,6 +628,19 @@ const mockMaestro = {
 		saveToProject: vi.fn().mockResolvedValue(''),
 		onRemoteCommand: vi.fn(() => () => {}),
 		sendRemoteCommandResponse: vi.fn(),
+		botPolicyStatus: vi.fn().mockResolvedValue({
+			sketchId: '',
+			policy: null,
+			availability: { ok: true },
+		}),
+		setBotPolicy: vi.fn().mockResolvedValue({
+			sketchId: '',
+			policy: 'conductor',
+			availability: { ok: true },
+		}),
+		noteRoomBotPolicy: vi.fn().mockResolvedValue(undefined),
+		installScreen: vi.fn().mockResolvedValue({ installed: true, assigned: true }),
+		onBotPolicyChanged: vi.fn(() => () => {}),
 	},
 	web: {
 		onLiteReady: vi.fn(() => () => {}),

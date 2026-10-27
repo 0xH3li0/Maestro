@@ -142,6 +142,30 @@ describe('Sketch Book Preload API', () => {
 		expect(mockRemoveListener).toHaveBeenCalledWith('remote:sketchCommand', handler);
 	});
 
+	it('maps each B2 policy method to its channel', async () => {
+		await api.botPolicyStatus(SKETCH_ID);
+		expect(mockInvoke).toHaveBeenLastCalledWith('sketch:botPolicyStatus', SKETCH_ID);
+		await api.setBotPolicy(SKETCH_ID, 'writers');
+		expect(mockInvoke).toHaveBeenLastCalledWith('sketch:setBotPolicy', SKETCH_ID, 'writers');
+		await api.noteRoomBotPolicy(SKETCH_ID, 'conductor');
+		expect(mockInvoke).toHaveBeenLastCalledWith('sketch:noteRoomBotPolicy', SKETCH_ID, 'conductor');
+		await api.installScreen();
+		expect(mockInvoke).toHaveBeenLastCalledWith('sketch:installScreen');
+	});
+
+	it('listens for B2 policy changes and stops on unsubscribe', () => {
+		const callback = vi.fn();
+		const unsubscribe = api.onBotPolicyChanged(callback);
+
+		expect(mockOn).toHaveBeenCalledWith('sketch:botPolicyChanged', expect.any(Function));
+		const handler = mockOn.mock.calls[0][1] as (...args: unknown[]) => void;
+		handler({}, { sketchId: SKETCH_ID });
+		expect(callback).toHaveBeenCalledWith({ sketchId: SKETCH_ID });
+
+		unsubscribe();
+		expect(mockRemoveListener).toHaveBeenCalledWith('sketch:botPolicyChanged', handler);
+	});
+
 	it('answers on the response channel main named', () => {
 		api.sendRemoteCommandResponse('remote:sketchCommand:response:1', {
 			success: true,

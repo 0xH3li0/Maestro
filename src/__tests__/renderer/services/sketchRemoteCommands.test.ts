@@ -5,7 +5,8 @@
  * `agentWrite` and `convertMermaid` reach the agent write service,
  * `renderForAgent` draws only the elements main picked (with only the files
  * they name), `snapshotScene` hands main the live scene with the room's seq,
- * `syncRoom` joins or leaves the room, and every failure comes back as a
+ * `syncRoom` joins or leaves the room, `botPolicy` sends `policy.set`
+ * through it, and every failure comes back as a
  * reply instead of a throw.
  */
 
@@ -37,6 +38,14 @@ const botRelay = vi.hoisted(() => ({
 	detachSketchBotRelay: vi.fn(),
 }));
 vi.mock('../../../renderer/services/sketchBotRelay', () => botRelay);
+
+const botPolicy = vi.hoisted(() => ({
+	applySketchBotPolicy: vi.fn(),
+	attachSketchBotPolicySync: vi.fn(),
+	detachSketchBotPolicySync: vi.fn(),
+	dismissSketchBotPolicyNotice: vi.fn(),
+}));
+vi.mock('../../../renderer/services/sketchBotPolicy', () => botPolicy);
 
 import {
 	exportSketchImage,
@@ -474,10 +483,41 @@ describe('runRemoteSketchCommand: sharing', () => {
 		});
 		// The bot relay answers the joined room's `@bot` requests.
 		expect(botRelay.attachSketchBotRelay).toHaveBeenCalledWith('sketch-1', client);
+		// Main hears the room's policy, to mirror it and demote writers when B2 is gone.
+		expect(botPolicy.attachSketchBotPolicySync).toHaveBeenCalledWith('sketch-1', client);
 
 		await runRemoteSketchCommand({ action: 'syncRoom', sketchId: 'sketch-1', connection: null });
 		expect(botRelay.detachSketchBotRelay).toHaveBeenCalledWith('sketch-1');
+		expect(botPolicy.detachSketchBotPolicySync).toHaveBeenCalledWith('sketch-1');
 		expect(roomClient.disconnectSketchRoom).toHaveBeenCalledWith('sketch-1');
+	});
+
+	it('sends the bot policy through the room, with a demotion notice when main gives one', async () => {
+		await expect(
+			runRemoteSketchCommand({
+				action: 'botPolicy',
+				sketchId: 'sketch-1',
+				botPolicy: 'conductor',
+				notice: 'Collaborators can no longer ask the agent: off.',
+			})
+		).resolves.toEqual({ success: true });
+		expect(botPolicy.applySketchBotPolicy).toHaveBeenCalledWith(
+			'sketch-1',
+			'conductor',
+			'Collaborators can no longer ask the agent: off.'
+		);
+	});
+
+	it('answers a bot policy the room cannot send instead of throwing', async () => {
+		botPolicy.applySketchBotPolicy.mockImplementationOnce(() => {
+			throw new Error('Sketch Book: the room is not connected yet. Try again once it is.');
+		});
+		await expect(
+			runRemoteSketchCommand({ action: 'botPolicy', sketchId: 'sketch-1', botPolicy: 'writers' })
+		).resolves.toEqual({
+			success: false,
+			error: 'Sketch Book: the room is not connected yet. Try again once it is.',
+		});
 	});
 
 	it('answers a failed join instead of throwing', async () => {

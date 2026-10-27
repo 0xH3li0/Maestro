@@ -10,6 +10,9 @@
  * (`requests`, `approve`, `deny`, `escalate`, `publish`, `discard`) send their
  * action with the request id; an agent caller is passed on, and the CLI waits
  * on the desktop confirmation only for approve, escalate and publish (A1).
+ * `bot-policy` reads the policy, asks a person at the terminal with the trust
+ * warning before `writers`, and passes an agent caller on to the desktop
+ * confirmation.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
@@ -38,6 +41,7 @@ import {
 	formatBotRequest,
 	formatSketchSummary,
 	sketchBotDecision,
+	sketchBotPolicy,
 	sketchExport,
 	sketchList,
 	sketchNew,
@@ -58,6 +62,7 @@ import { encoreDisabledMessage } from '../../../shared/encoreFeatureDefaults';
 import { summarizeSketchScene } from '../../../shared/sketch/commands';
 import type { SketchRecord } from '../../../shared/sketch/types';
 import type { SketchBotRequestInfo } from '../../../shared/sketch/bot-requests';
+import type { SketchBotPolicyStatus } from '../../../shared/sketch/bot-policy';
 
 const SKETCH_ID = '11111111-2222-4333-8444-555555555555';
 
@@ -752,6 +757,135 @@ describe('sketch command', () => {
 
 			expect(sent).toHaveLength(0);
 			expect(errors()).toContain('A request id is required.');
+			expect(exitSpy).toHaveBeenCalledWith(ExitCode.InvalidUsage);
+		});
+	});
+
+	describe('bot-policy', () => {
+		const status: SketchBotPolicyStatus = {
+			sketchId: SKETCH_ID,
+			policy: 'conductor',
+			availability: { ok: true },
+		};
+		let savedCaller: string | undefined;
+
+		/** Answer `read` with the record and `bot-policy` with the status. */
+		function respondPolicy(reply: SketchBotPolicyStatus) {
+			const sent: Record<string, unknown>[] = [];
+			vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+				action({
+					sendCommand: vi
+						.fn()
+						.mockImplementation(
+							(payload: Record<string, unknown>, rt: string, timeout?: number) => {
+								sent.push({ ...payload, responseType: rt, timeout });
+								const response =
+									payload.action === 'read' ? { record, format: 'summary', summary: {} } : reply;
+								return Promise.resolve({ type: 'sketch_result', success: true, response });
+							}
+						),
+				} as never)
+			);
+			return sent;
+		}
+
+		beforeEach(() => {
+			savedCaller = process.env[CALLER_AGENT_ID_ENV_VAR];
+			delete process.env[CALLER_AGENT_ID_ENV_VAR];
+			vi.mocked(canPrompt).mockReturnValue(true);
+			vi.mocked(confirmOnTerminal).mockResolvedValue(true);
+		});
+
+		afterEach(() => {
+			if (savedCaller === undefined) delete process.env[CALLER_AGENT_ID_ENV_VAR];
+			else process.env[CALLER_AGENT_ID_ENV_VAR] = savedCaller;
+		});
+
+		it('reads the policy and B2 availability without a policy argument', async () => {
+			const sent = respondPolicy({
+				...status,
+				availability: { ok: false, reason: 'The screen is off.', offerScreenDownload: true },
+			});
+			await sketchBotPolicy(SKETCH_ID, undefined, {});
+
+			expect(sent).toHaveLength(1);
+			expect(sent[0]).toMatchObject({ action: 'bot-policy', sketchId: SKETCH_ID });
+			expect(sent[0]).not.toHaveProperty('policy');
+			expect(logged()).toContain('Bot policy: conductor (only you may ask the agent)');
+			expect(logged()).toContain(
+				'Let collaborators ask the agent: unavailable: The screen is off.'
+			);
+			expect(logged()).toContain('maestro-cli models install prompt-guard-2-22m');
+			expect(confirmOnTerminal).not.toHaveBeenCalled();
+		});
+
+		it('asks a person at the terminal with the trust warning before writers', async () => {
+			const sent = respondPolicy({ ...status, policy: 'writers' });
+			await sketchBotPolicy(SKETCH_ID, 'writers', {});
+
+			expect(confirmOnTerminal).toHaveBeenCalledWith('Let collaborators ask the agent?');
+			expect(logged()).toContain('"Architecture"');
+			expect(logged()).toContain('press Run');
+			const policySent = sent.find((payload) => payload.action === 'bot-policy');
+			expect(policySent).toMatchObject({ sketchId: SKETCH_ID, policy: 'writers' });
+			expect(policySent).not.toHaveProperty('fromSessionId');
+			expect(logged()).toContain('Read-write guests may now ask the agent.');
+		});
+
+		it('changes nothing when the person declines', async () => {
+			vi.mocked(confirmOnTerminal).mockResolvedValue(false);
+			const sent = respondPolicy(status);
+			await expect(sketchBotPolicy(SKETCH_ID, 'writers', {})).rejects.toThrow('__exit__');
+
+			expect(sent.some((payload) => payload.action === 'bot-policy')).toBe(false);
+			expect(errors()).toContain('Nothing was changed.');
+		});
+
+		it('refuses writers with no terminal and no --yes, and runs with --yes', async () => {
+			vi.mocked(canPrompt).mockReturnValue(false);
+			const sent = respondPolicy({ ...status, policy: 'writers' });
+			await expect(sketchBotPolicy(SKETCH_ID, 'writers', {})).rejects.toThrow('__exit__');
+			expect(sent).toHaveLength(0);
+			expect(exitSpy).toHaveBeenCalledWith(ExitCode.InvalidUsage);
+
+			await sketchBotPolicy(SKETCH_ID, 'writers', { yes: true });
+			expect(sent).toHaveLength(1);
+			expect(sent[0]).toMatchObject({ action: 'bot-policy', policy: 'writers' });
+		});
+
+		it("sends an agent's writers to the desktop confirmation, waiting on the conductor", async () => {
+			process.env[CALLER_AGENT_ID_ENV_VAR] = 'agent-7';
+			const sent = respondPolicy({ ...status, policy: 'writers' });
+			await sketchBotPolicy(SKETCH_ID, 'writers', {});
+
+			expect(confirmOnTerminal).not.toHaveBeenCalled();
+			expect(sent[0]).toMatchObject({
+				action: 'bot-policy',
+				policy: 'writers',
+				fromSessionId: 'agent-7',
+			});
+			expect(sent[0].timeout).toBe(5 * 60_000);
+		});
+
+		it('runs conductor with no confirmation, from a person or an agent, and prints JSON', async () => {
+			process.env[CALLER_AGENT_ID_ENV_VAR] = 'agent-7';
+			const sent = respondPolicy(status);
+			await sketchBotPolicy(SKETCH_ID, 'conductor', { json: true });
+
+			expect(confirmOnTerminal).not.toHaveBeenCalled();
+			expect(sent[0]).toMatchObject({ action: 'bot-policy', policy: 'conductor' });
+			expect(sent[0].timeout).toBeUndefined();
+			expect(json()).toMatchObject({ success: true, sketchId: SKETCH_ID, policy: 'conductor' });
+		});
+
+		it('requires a known policy and a sketch id', async () => {
+			const sent = respondPolicy(status);
+			await expect(sketchBotPolicy(SKETCH_ID, 'everyone', {})).rejects.toThrow('__exit__');
+			await expect(sketchBotPolicy('  ', 'conductor', {})).rejects.toThrow('__exit__');
+
+			expect(sent).toHaveLength(0);
+			expect(errors()).toContain('bot-policy expects conductor or writers');
+			expect(errors()).toContain('A sketch id is required.');
 			expect(exitSpy).toHaveBeenCalledWith(ExitCode.InvalidUsage);
 		});
 	});

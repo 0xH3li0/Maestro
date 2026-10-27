@@ -213,6 +213,7 @@ import { startSketchMcpBridge, stopSketchMcpBridge } from './sketch/sketch-mcp-b
 import { getSketchToolService } from './sketch/sketch-tools';
 import { syncSketchMcpServerOff, syncSketchMcpServerOn } from './sketch/sketch-mcp-install';
 import { refreshSketchCloudScreening } from './sketch/sketch-cloud-consent';
+import { refreshSketchBotPolicies } from './sketch/sketch-bot-policy';
 import { initializeStatsDB, closeStatsDB } from './stats';
 import { evaluateCueGate } from './local-models/cue-gate';
 import { scoreCueInjectionText } from './local-models/cue-injection-screen';
@@ -687,6 +688,8 @@ const settingsWatcher = createSettingsWatcher({
 		// screen's source (a switch to a cloud engine re-asks the conductor while
 		// a room is live), and a hand edit can change the stored consent.
 		refreshSketchCloudScreening();
+		// The same writes can take B2 away from a room on `writers`.
+		refreshSketchBotPolicies();
 	},
 });
 

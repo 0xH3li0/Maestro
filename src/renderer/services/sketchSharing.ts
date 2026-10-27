@@ -8,7 +8,8 @@
  * `sketchRemoteCommands.ts`), and a Sketch tab that opens a shared sketch
  * joins by itself ({@link ensureSketchRoomConnected}), which is how a room
  * comes back after a restart. Every join hands the client to the bot relay
- * (`sketchBotRelay.ts`), and leaving detaches it.
+ * (`sketchBotRelay.ts`) and the bot policy sync (`sketchBotPolicy.ts`), and
+ * leaving detaches both.
  *
  * A minted link holds the room key and the cap, so it is copied to the
  * clipboard and acknowledged with `flashCopiedToClipboard()`; the flash names
@@ -26,6 +27,7 @@ import { safeClipboardWrite } from '../utils/clipboard';
 import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
 import { logger } from '../utils/logger';
 import { attachSketchBotRelay, detachSketchBotRelay } from './sketchBotRelay';
+import { attachSketchBotPolicySync, detachSketchBotPolicySync } from './sketchBotPolicy';
 import { connectSketchRoom, disconnectSketchRoom, getSketchRoomClient } from './sketchRoomClient';
 
 const LOG_CTX = '[SketchBook][Share]';
@@ -41,6 +43,7 @@ export async function applySketchRoomConnection(
 ): Promise<void> {
 	if (!connection) {
 		detachSketchBotRelay(sketchId);
+		detachSketchBotPolicySync(sketchId);
 		disconnectSketchRoom(sketchId);
 		return;
 	}
@@ -55,6 +58,8 @@ export async function applySketchRoomConnection(
 	});
 	// The bot relay answers this room's `@bot` requests (spec section 5).
 	attachSketchBotRelay(sketchId, client);
+	// Main mirrors the room's policy and demotes `writers` when B2 is gone.
+	attachSketchBotPolicySync(sketchId, client);
 }
 
 /**

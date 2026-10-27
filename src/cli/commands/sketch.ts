@@ -43,6 +43,12 @@
 //   escalate and publish raise the desktop confirmation and run only on
 //   Allow (A1); deny and discard run.
 //
+// - `bot-policy <sketchId> [conductor|writers]` reads or sets who may ask the
+//   bot (spec section 5): the conductor alone, or read-write guests too (B2).
+//   `writers` is refused while B2 is unavailable (the reason says why). A
+//   person reads the trust warning and answers it (or passes `--yes`); an
+//   agent caller gets the desktop confirmation (A1). `conductor` runs.
+//
 // `read` and `export` work from the SAVED scene, which the tab autosaves within
 // a second of an edit.
 //
@@ -90,8 +96,18 @@ import {
 	type SketchBotDecisionOp,
 	type SketchBotRequestInfo,
 } from '../../shared/sketch/bot-requests';
+import {
+	sketchB2TrustWarning,
+	SKETCH_B2_TOGGLE_LABEL,
+	type SketchBotPolicyStatus,
+} from '../../shared/sketch/bot-policy';
 import type { SketchOwnerStatus } from '../../shared/sketch/server';
-import type { SketchLinkRole, SketchRecord } from '../../shared/sketch/types';
+import {
+	BOT_POLICIES,
+	type BotPolicy,
+	type SketchLinkRole,
+	type SketchRecord,
+} from '../../shared/sketch/types';
 
 /** Opening a tab waits on the window that owns the agent. */
 const OPEN_TIMEOUT_MS = 20_000;
@@ -154,6 +170,11 @@ export interface SketchOwnerOptions {
 }
 
 export interface SketchRequestsCliOptions {
+	json?: boolean;
+}
+
+export interface SketchBotPolicyCliOptions {
+	yes?: boolean;
 	json?: boolean;
 }
 
@@ -680,4 +701,64 @@ export async function sketchBotDecision(
 	}
 	console.log(BOT_DECISION_DONE[op]);
 	console.log(formatBotRequest(result));
+}
+
+/** The human reading of a sketch's bot policy. */
+export function formatBotPolicyStatus(status: SketchBotPolicyStatus): string {
+	const policy =
+		status.policy === null
+			? 'not shared'
+			: status.policy === 'writers'
+				? 'writers (read-write guests may ask the agent; you approve each request)'
+				: 'conductor (only you may ask the agent)';
+	const b2 = status.availability.ok
+		? 'available'
+		: `unavailable: ${status.availability.reason}${status.availability.offerScreenDownload ? ' (maestro-cli models install prompt-guard-2-22m, then maestro-cli models assign injection-screen local:prompt-guard-2-22m)' : ''}`;
+	return [`Bot policy: ${policy}`, `${SKETCH_B2_TOGGLE_LABEL}: ${b2}`].join('\n');
+}
+
+export async function sketchBotPolicy(
+	sketchId: string,
+	policy: string | undefined,
+	options: SketchBotPolicyCliOptions
+): Promise<void> {
+	const id = requireSketchId(sketchId, options.json);
+	if (policy !== undefined && !(BOT_POLICIES as readonly string[]).includes(policy)) {
+		failCommand(
+			`bot-policy expects conductor or writers, got "${policy}"`,
+			options.json,
+			ExitCode.InvalidUsage
+		);
+	}
+	const wanted = policy as BotPolicy | undefined;
+	const caller = readCallerIdentity(process.env);
+	if (wanted === 'writers' && !caller && !options.yes) {
+		// A person turns B2 on at the terminal: show the same warning the Sketch tab does.
+		if (!canPrompt()) {
+			failCommand(
+				'Letting collaborators ask the agent needs a confirmation. Run it in a terminal, or pass --yes after reading what it allows: guests with an edit link can ask the agent, and each request waits for your approval.',
+				options.json,
+				ExitCode.InvalidUsage
+			);
+		}
+		const reading = await request<SketchReading>('read', { sketchId: id }, options.json);
+		const warning = sketchB2TrustWarning(reading.record.name);
+		console.log(`${warning.message}\n\n${warning.detail}\n`);
+		if (!(await confirmOnTerminal(warning.title))) {
+			failCommand('Nothing was changed.', options.json);
+		}
+	}
+	const status = await request<SketchBotPolicyStatus>(
+		'bot-policy',
+		{ sketchId: id, ...(wanted ? { policy: wanted } : {}), ...callerMessageFields(caller) },
+		options.json,
+		wanted === 'writers' && caller ? CONSENT_CONFIRM_TIMEOUT_MS : undefined
+	);
+	if (options.json) {
+		printJson({ success: true, ...status });
+		return;
+	}
+	if (wanted === 'writers') console.log('Read-write guests may now ask the agent.');
+	else if (wanted === 'conductor') console.log('Only you may ask the agent now.');
+	console.log(formatBotPolicyStatus(status));
 }

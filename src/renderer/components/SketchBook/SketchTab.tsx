@@ -16,7 +16,9 @@
  * a remote update (not undoable here). An agent's `sketch_focus` (T11) waits
  * in the session until a mounted view scrolls to it; its chat posts (T12)
  * show in the chat pane. A shared sketch's room notice (a close code, a
- * reconnect; `sketchRoomClient.ts`) shows above the canvas.
+ * reconnect; `sketchRoomClient.ts`) shows above the canvas, and so does the
+ * reason a room was put back on `conductor` when its screen became unusable
+ * while collaborators could ask the agent (spec section 8.3, rule 2).
  *
  * The chat pane also holds the conductor's decisions on `@bot` (spec section
  * 5): a guest's request waits on its approval chip (Run / Deny, at most three
@@ -32,7 +34,7 @@
  */
 
 import React from 'react';
-import { Share2 } from 'lucide-react';
+import { Share2, X } from 'lucide-react';
 import type {
 	AppState,
 	BinaryFiles,
@@ -56,6 +58,7 @@ import { SketchChatPane } from './SketchChatPane';
 import { SketchSharePanel } from './SketchSharePanel';
 import { HeaderActionButton } from '../ui/HeaderActionButton';
 import { ensureSketchRoomConnected } from '../../services/sketchSharing';
+import { dismissSketchBotPolicyNotice } from '../../services/sketchBotPolicy';
 import { discardHeldSketchReply, publishHeldSketchReply } from '../../services/sketchBotTurns';
 import {
 	approveSketchBotRequest,
@@ -128,6 +131,9 @@ export function SketchTabView({ sketchId, theme }: SketchTabViewProps) {
 	const roomNotice = useSketchSessionStore((s) => s.sessions[sketchId]?.room?.notice ?? null);
 	const roomConnection = useSketchSessionStore(
 		(s) => s.sessions[sketchId]?.room?.connection ?? null
+	);
+	const botPolicyNotice = useSketchSessionStore(
+		(s) => s.sessions[sketchId]?.room?.botPolicyNotice ?? null
 	);
 	const [api, setApi] = React.useState<ExcalidrawImperativeAPI | null>(null);
 	const [shareOpen, setShareOpen] = React.useState(false);
@@ -306,6 +312,24 @@ export function SketchTabView({ sketchId, theme }: SketchTabViewProps) {
 					}}
 				>
 					{roomNotice.text}
+				</div>
+			)}
+			{botPolicyNotice && (
+				<div
+					className="px-3 py-1 text-xs flex items-center justify-between gap-2"
+					role="alert"
+					data-sketch-bot-policy-notice=""
+					style={{ color: theme.colors.warning, borderBottom: `1px solid ${theme.colors.border}` }}
+				>
+					<span className="select-text">{botPolicyNotice}</span>
+					<button
+						type="button"
+						aria-label="Dismiss"
+						className="p-0.5 rounded hover:bg-white/10"
+						onClick={() => dismissSketchBotPolicyNotice(sketchId)}
+					>
+						<X className="w-3.5 h-3.5" />
+					</button>
 				</div>
 			)}
 			<div className="flex-1 min-h-0 flex">

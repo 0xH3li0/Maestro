@@ -17,7 +17,8 @@
  * elements that main picked, with the session's files (`renderForAgent`).
  * The `@bot` decisions (`sketch requests|approve|deny|escalate|publish|
  * discard`) list and act on the bot relay's requests, which live in the
- * window that owns the sketch (`botRequest`).
+ * window that owns the sketch (`botRequest`). `sketch bot-policy` sends
+ * `policy.set` through the room client that window runs (`botPolicy`).
  *
  * Also here: `summarizeSketchScene()`, the `read --format summary` view of a
  * saved scene. Bundled into the renderer and the CLI, so it imports nothing
@@ -31,6 +32,7 @@ import type { SketchWireElement } from './payloads';
 import {
 	SKETCH_ACTOR_KINDS,
 	SKETCH_ROLES,
+	type BotPolicy,
 	type SketchActor,
 	type SketchLinkRole,
 	type SketchRecord,
@@ -55,6 +57,7 @@ export const SKETCH_COMMAND_ACTIONS = [
 	'escalate',
 	'publish',
 	'discard',
+	'bot-policy',
 ] as const;
 export type SketchCommandAction = (typeof SKETCH_COMMAND_ACTIONS)[number];
 
@@ -280,6 +283,19 @@ export type SketchRendererRequest =
 			sketchIds?: string[];
 			sketchId?: string;
 			replyTo?: string;
+	  }
+	| {
+			/**
+			 * Send `policy.set` on the sketch's live room (spec section 5, B2).
+			 * Main has already checked `isB2Available()` for `writers` and raised
+			 * the desktop confirmation an agent caller needs (A1). `notice` is
+			 * set when main puts the room back on `conductor` because the screen
+			 * became unusable: the Sketch tab shows it.
+			 */
+			action: 'botPolicy';
+			sketchId: string;
+			botPolicy: BotPolicy;
+			notice?: string;
 	  }
 	| {
 			/**

@@ -205,6 +205,12 @@ export interface SketchRoomState {
 	/** Every op up to this seq is merged into the scene. */
 	syncedSeq: number;
 	screening: SketchRoomScreening;
+	/**
+	 * Why the room was put back on `conductor` (spec section 8.3, rule 2): the
+	 * screen became unusable while guests could ask the agent. Shown in the
+	 * Sketch tab until dismissed or B2 is turned on again.
+	 */
+	botPolicyNotice: string | null;
 }
 
 /**

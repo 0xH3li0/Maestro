@@ -22,6 +22,7 @@
  * - `snapshotScene`: the live scene for a snapshot upload (share, rotate),
  *   with the newest op seq the room client has merged (0 without one).
  * - `syncRoom`: join or leave a shared sketch's room (`sketchSharing.ts`).
+ * - `botPolicy`: send `policy.set` on the sketch's room (B2, `sketchBotPolicy.ts`).
  * - `botRequest`: list or decide the bot relay's `@bot` requests
  *   (`sketchBotRequestCommands.ts`), through the functions the chips call.
  *
@@ -189,6 +190,11 @@ export async function runRemoteSketchCommand(
 		if (request.action === 'syncRoom') {
 			const { applySketchRoomConnection } = await import('./sketchSharing');
 			await applySketchRoomConnection(request.sketchId, request.connection, request.baseline);
+			return { success: true };
+		}
+		if (request.action === 'botPolicy') {
+			const { applySketchBotPolicy } = await import('./sketchBotPolicy');
+			applySketchBotPolicy(request.sketchId, request.botPolicy, request.notice);
 			return { success: true };
 		}
 		if (request.action === 'botRequest') {

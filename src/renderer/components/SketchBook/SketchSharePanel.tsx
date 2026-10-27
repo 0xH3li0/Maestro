@@ -1,7 +1,7 @@
 /**
  * The Sketch tab's Share panel (spec section 6): sign in to RunMaestro.ai,
- * share the sketch, copy a new link, revoke one, reset all access, or stop
- * sharing.
+ * share the sketch, copy a new link, revoke one, let collaborators ask the
+ * agent (B2, `SketchBotPolicyToggle`), reset all access, or stop sharing.
  *
  * Every action is a `window.maestro.sketch.*` call into the one SketchService
  * that `maestro-cli sketch share|unshare|revoke-link|rotate|owner` also
@@ -24,6 +24,7 @@ import { SegmentedControl } from '../ui/SegmentedControl';
 import { Spinner } from '../ui/Spinner';
 import { ipcErrorMessage } from '../../utils/ipcErrorMessage';
 import { shareSketchAndCopyLink, sketchLinkLabel } from '../../services/sketchSharing';
+import { SketchBotPolicyToggle } from './SketchBotPolicyToggle';
 
 export interface SketchSharePanelProps {
 	sketchId: string;
@@ -265,6 +266,12 @@ export function SketchSharePanel({ sketchId, theme, onClose }: SketchSharePanelP
 								</HeaderActionButton>
 							</div>
 						))}
+					</div>
+				)}
+
+				{shared && signedIn && record && (
+					<div className="pt-2" style={{ borderTop: `1px solid ${theme.colors.border}` }}>
+						<SketchBotPolicyToggle sketchId={sketchId} sketchName={record.name} theme={theme} />
 					</div>
 				)}
 

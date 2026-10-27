@@ -62,6 +62,11 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 	'sketch escalate': ['maestro-cli sketch escalate <reply-to>'],
 	'sketch publish': ['maestro-cli sketch publish <reply-to>'],
 	'sketch discard': ['maestro-cli sketch discard <reply-to>'],
+	'sketch bot-policy': [
+		'maestro-cli sketch bot-policy <sketch-id>',
+		'maestro-cli sketch bot-policy <sketch-id> writers',
+		'maestro-cli sketch bot-policy <sketch-id> conductor --json',
+	],
 	// RC queue steering, notifications and Quick Chat controls
 	'queue hold': ['maestro-cli queue hold <item-id> --agent <agent-id>'],
 	'queue resume': ['maestro-cli queue resume <item-id> --agent <agent-id>'],

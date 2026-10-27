@@ -26,9 +26,11 @@ import {
 } from '../../sketch/sketch-renderer-bridge';
 import type { SaveToProjectOptions } from '../../sketch/sketch-store';
 import { getSketchCloudConsent, startSketchCloudConsent } from '../../sketch/sketch-cloud-consent';
+import { getSketchBotPolicy, startSketchBotPolicyWatch } from '../../sketch/sketch-bot-policy';
 import type { SafeSendFn } from '../../utils/safe-send';
 import type { SketchCloudEngine } from '../../../shared/sketch/cloud-consent';
 import type { SketchSceneForSnapshot, SketchShareOptions } from '../../../shared/sketch/commands';
+import type { BotPolicy } from '../../../shared/sketch/types';
 import type { Screening } from '../../../shared/sketch/protocol';
 import type {
 	SketchBotScreenRequest,
@@ -45,7 +47,7 @@ function opts(operation: string) {
 export interface SketchHandlerDeps {
 	/** The window that owns an agent, or the primary window for `null`. */
 	resolveWindow?: SketchWindowResolver;
-	/** Pushes `sketch:screeningChanged` to every window (cloud screening consent). */
+	/** Pushes `sketch:screeningChanged` and `sketch:botPolicyChanged` to every window. */
 	safeSend?: SafeSendFn;
 }
 
@@ -56,6 +58,10 @@ export function registerSketchHandlers(deps: SketchHandlerDeps = {}): void {
 	// cloud policy and follows the assignments and the System One engine.
 	startSketchCloudConsent({ safeSend: deps.safeSend });
 	const consent = getSketchCloudConsent();
+	// B2 policy (spec section 5): puts a room on `writers` back on `conductor`
+	// when an input of `isB2Available()` changes under it.
+	startSketchBotPolicyWatch({ safeSend: deps.safeSend });
+	const botPolicy = getSketchBotPolicy();
 
 	ipcMain.handle(
 		'sketch:create',
@@ -240,5 +246,32 @@ export function registerSketchHandlers(deps: SketchHandlerDeps = {}): void {
 			async (sketchId: string, screening: Screening, since: number | null) =>
 				consent.reportServerScreening(sketchId, screening, since)
 		)
+	);
+
+	// Who may ask the bot (spec section 5, B2). The Share panel's toggle calls
+	// these; `maestro-cli sketch bot-policy` reaches the same service over the
+	// WS bridge, where an agent's `writers` gets the A1 confirmation. The room
+	// client reports what the server says (`noteRoomBotPolicy`).
+	ipcMain.handle(
+		'sketch:botPolicyStatus',
+		withIpcErrorLogging(opts('botPolicyStatus'), async (sketchId: string) =>
+			botPolicy.status(sketchId)
+		)
+	);
+	ipcMain.handle(
+		'sketch:setBotPolicy',
+		withIpcErrorLogging(opts('setBotPolicy'), async (sketchId: string, policy: BotPolicy) =>
+			botPolicy.setPolicy(sketchId, policy)
+		)
+	);
+	ipcMain.handle(
+		'sketch:noteRoomBotPolicy',
+		withIpcErrorLogging(opts('noteRoomBotPolicy'), async (sketchId: string, policy: BotPolicy) =>
+			botPolicy.noteRoomPolicy(sketchId, policy)
+		)
+	);
+	ipcMain.handle(
+		'sketch:installScreen',
+		withIpcErrorLogging(opts('installScreen'), async () => botPolicy.installScreen())
 	);
 }

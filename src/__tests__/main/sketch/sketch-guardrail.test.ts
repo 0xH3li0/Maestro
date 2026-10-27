@@ -668,10 +668,15 @@ describe('isB2Available', () => {
 	it('refuses while the screen is off', async () => {
 		source = { status: 'off' };
 		const result = await guardrail.isB2Available({ agentId: 'agent-1' });
-		expect(result).toMatchObject({ ok: false, reason: expect.stringContaining('is off') });
+		expect(result).toMatchObject({
+			ok: false,
+			reason: expect.stringContaining('is off'),
+			// The toggle offers the one-click Prompt Guard 2 download only here.
+			offerScreenDownload: true,
+		});
 	});
 
-	it('refuses while the screen is unavailable, with its reason', async () => {
+	it('refuses while the screen is unavailable, with its reason and no download offer', async () => {
 		source = { status: 'unavailable', reason: 'System One has no engine.' };
 		expect(await guardrail.isB2Available({ agentId: 'agent-1' })).toEqual({
 			ok: false,

@@ -259,6 +259,7 @@ import {
 } from './commands/dataview';
 import {
 	sketchBotDecision,
+	sketchBotPolicy,
 	sketchExport,
 	sketchList,
 	sketchNew,
@@ -4769,6 +4770,18 @@ sketchCmd
 	.description('Discard a held bot reply: the request ends as failed')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((replyTo, options) => sketchBotDecision('discard', replyTo, options));
+
+sketchCmd
+	.command('bot-policy <sketchId> [policy]')
+	.description(
+		'Who may ask the agent: conductor (only you) or writers (read-write guests too, each request needs your approval). No policy prints it. An agent setting writers gets a desktop confirmation'
+	)
+	.option(
+		'--yes',
+		'Turn writers on without the terminal confirmation (after reading what it allows)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((sketchId, policy, options) => sketchBotPolicy(sketchId, policy, options));
 
 // Quick Chat commands - the hotkey-summoned floating chat window. Each verb is
 // the same action as the matching button in the window.
