@@ -10,6 +10,21 @@ import {
 } from '../../../main/plugins/plugin-tool-run-identity';
 
 describe('PluginToolRunIdentity', () => {
+	it('retains host-stamped run provenance and treats unspecified provenance as unattended', () => {
+		const runs = new PluginToolRunIdentity();
+		try {
+			const unknown = runs.issue('agent-a');
+			const interactive = runs.issue('agent-a', undefined, undefined, false);
+			const automatic = runs.issue('agent-a', undefined, undefined, true);
+			expect(runs.resolveVerified(unknown).unattended).toBe(true);
+			expect(runs.resolveVerified(interactive).unattended).toBe(false);
+			expect(runs.resolveVerified(automatic).unattended).toBe(true);
+			expect(Object.isFrozen(runs.resolveVerified(interactive))).toBe(true);
+		} finally {
+			runs.stop();
+		}
+	});
+
 	it('binds distinct local runs to exact agents and revokes a completed run', () => {
 		const runs = new PluginToolRunIdentity();
 		const a = runs.issue('agent-a');

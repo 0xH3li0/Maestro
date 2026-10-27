@@ -424,7 +424,12 @@ describe('plugin headless agent runner', () => {
 				success: true,
 				toolReceipts: [{ agentId: 'agent-a', messageIds: ['123'] }],
 			});
-			expect(issueRunToken).toHaveBeenCalledWith('agent-a', 359 * 60_000, 'sh.maestro.relay/send');
+			expect(issueRunToken).toHaveBeenCalledWith(
+				'agent-a',
+				359 * 60_000,
+				'sh.maestro.relay/send',
+				true
+			);
 			expect(identity.resolve(issueRunToken.mock.results[0].value)).toEqual({
 				callerAgentId: null,
 			});
@@ -811,6 +816,8 @@ it.each(['success', 'error', 'throw', 'cancel-before-spawn'] as const)(
 );
 
 it.each([
+	['custom binary', 'cancel'],
+	['custom binary', 'deadline'],
 	['detection', 'cancel'],
 	['detection', 'deadline'],
 	['prompt', 'cancel'],
@@ -822,6 +829,13 @@ it.each([
 	const stalled = new Promise<void>((resolve) => {
 		finish = resolve;
 	});
+	const customProbe =
+		stage === 'custom binary'
+			? vi.spyOn(pathProber, 'checkCustomPath').mockImplementationOnce(async () => {
+					await stalled;
+					return { exists: true, path: '/resolved/codex' };
+				})
+			: undefined;
 	const spawn = vi.fn();
 	const issueRunToken = vi.fn();
 	const prepareSystemPrompt = vi.fn(async () => {
@@ -829,7 +843,7 @@ it.each([
 		return undefined;
 	});
 	const run = createPluginHeadlessAgentRunner({
-		getAgent: () => agent,
+		getAgent: () => (stage === 'custom binary' ? { ...agent, customPath: '~/codex' } : agent),
 		detectAgent: async () => {
 			if (stage === 'detection') await stalled;
 			return { available: true };
@@ -862,10 +876,42 @@ it.each([
 		await vi.advanceTimersByTimeAsync(0);
 		expect(spawn).not.toHaveBeenCalled();
 		expect(issueRunToken).not.toHaveBeenCalled();
-		if (stage === 'detection') expect(prepareSystemPrompt).not.toHaveBeenCalled();
+		if (stage !== 'prompt') expect(prepareSystemPrompt).not.toHaveBeenCalled();
 		expect(vi.getTimerCount()).toBe(0);
 	} finally {
 		finish();
+		customProbe?.mockRestore();
 		vi.useRealTimers();
 	}
 });
+
+it.each(['user', 'auto', 'relay'] as const)(
+	'stamps %s provenance before exposing a headless proof',
+	async (origin) => {
+		const identity = new runIdentity.PluginToolRunIdentity();
+		const modes: boolean[] = [];
+		const run = createPluginHeadlessAgentRunner({
+			getAgent: () => agent,
+			detectAgent: async () => ({ available: true }),
+			hasPluginTools: () => true,
+			spawn: async () => ({ success: true, response: 'synthetic' }),
+			prepareSystemPrompt: async () => undefined,
+			issueRunToken: (id, ttl, receiptToolId, unattended) => {
+				const token = identity.issue(id, ttl, receiptToolId, unattended);
+				modes.push(identity.resolveVerified(token).unattended === true);
+				return token;
+			},
+			revokeRunToken: (token) => identity.revoke(token),
+			cliScriptPath: () => '/synthetic/cli.js',
+			audit: () => {},
+		});
+		try {
+			expect(
+				(await run('agent-a', 'synthetic request', undefined, undefined, origin)).success
+			).toBe(true);
+			expect(modes).toEqual([origin !== 'user']);
+		} finally {
+			identity.stop();
+		}
+	}
+);

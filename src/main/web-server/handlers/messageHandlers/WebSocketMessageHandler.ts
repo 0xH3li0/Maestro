@@ -39,6 +39,7 @@ import { logger } from '../../../utils/logger';
 import { captureException } from '../../../utils/sentry';
 import { getCommitHash } from '../../../utils/build-info';
 import { LOG_CONTEXT } from './shared';
+import { sendBounded } from '../../services/socket-send';
 import type {
 	WebClientMessage,
 	WebClient,
@@ -232,7 +233,7 @@ export class WebSocketMessageHandler {
 		if (client.isAuthorized?.() === false) return;
 		const frame = JSON.stringify({ ...data, timestamp: Date.now() });
 		if (!onSent) {
-			client.socket.send(frame);
+			sendBounded(client.socket, frame);
 			return;
 		}
 		client.socket.send(frame, (error?: Error) => {
@@ -867,7 +868,9 @@ export class WebSocketMessageHandler {
 		await handleBridgeInvoke(
 			client,
 			message as unknown as Parameters<typeof handleBridgeInvoke>[1],
-			(c, payload) => c.socket.send(JSON.stringify(payload))
+			(c, payload) => {
+				sendBounded(c.socket, JSON.stringify(payload));
+			}
 		);
 	}
 

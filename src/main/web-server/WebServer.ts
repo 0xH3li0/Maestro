@@ -1721,6 +1721,10 @@ export class WebServer {
 		this.broadcastService.broadcastSettingsChanged(settings);
 	}
 
+	getAutoRunStates(): Record<string, AutoRunState> {
+		return Object.fromEntries(this.liveSessionManager.getAutoRunStates());
+	}
+
 	broadcastAutoRunState(sessionId: string, state: AutoRunState | null): void {
 		this.liveSessionManager.setAutoRunState(sessionId, state);
 	}
