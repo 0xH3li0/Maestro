@@ -80,6 +80,10 @@ describe('sketch IPC handlers', () => {
 				availability: { ok: true },
 			})),
 			installScreen: vi.fn(async () => ({ installed: true, assigned: true })),
+			localScreenOption: vi.fn(async () => ({
+				installed: { modelId: 'prompt-guard-2-22m', label: 'Prompt Guard 2 22M' },
+			})),
+			switchScreenToLocal: vi.fn(async () => ({ installed: true, assigned: true })),
 		};
 		h.consent = {
 			status: vi.fn(async () => ({ consent: {}, source: null, sourceCovered: false, rooms: [] })),
@@ -155,6 +159,14 @@ describe('sketch IPC handlers', () => {
 			installed: true,
 			assigned: true,
 		});
+		await expect(invoke('sketch:localScreenOption')).resolves.toEqual({
+			installed: { modelId: 'prompt-guard-2-22m', label: 'Prompt Guard 2 22M' },
+		});
+		await expect(invoke('sketch:switchScreenToLocal')).resolves.toEqual({
+			installed: true,
+			assigned: true,
+		});
+		expect(botPolicy.switchScreenToLocal).toHaveBeenCalledTimes(1);
 	});
 
 	it('registers exactly the sketch channels', () => {
@@ -167,6 +179,7 @@ describe('sketch IPC handlers', () => {
 			'sketch:grantScreeningConsent',
 			'sketch:installScreen',
 			'sketch:list',
+			'sketch:localScreenOption',
 			'sketch:noteRoomBotPolicy',
 			'sketch:ownerStatus',
 			'sketch:prepareBotTurn',
@@ -188,6 +201,7 @@ describe('sketch IPC handlers', () => {
 			'sketch:setRoomLive',
 			'sketch:share',
 			'sketch:signOutOwner',
+			'sketch:switchScreenToLocal',
 			'sketch:unshare',
 			'sketch:uploadSnapshot',
 			'sketch:waitForOwner',
@@ -256,7 +270,12 @@ describe('sketch IPC handlers', () => {
 		expect(consent.status).toHaveBeenCalled();
 
 		await invoke('sketch:grantScreeningConsent', 'jev');
-		expect(consent.grantConsent).toHaveBeenCalledWith('jev');
+		expect(consent.grantConsent).toHaveBeenCalledWith('jev', undefined);
+		// The confirmation binds OpenJev to the host it named.
+		await invoke('sketch:grantScreeningConsent', 'openjev', 'jev.example.com');
+		expect(consent.grantConsent).toHaveBeenLastCalledWith('openjev', 'jev.example.com');
+		await invoke('sketch:grantScreeningConsent', 'openjev', 42);
+		expect(consent.grantConsent).toHaveBeenLastCalledWith('openjev', undefined);
 
 		await invoke('sketch:revokeScreeningConsent', 'openjev');
 		expect(consent.revokeConsent).toHaveBeenCalledWith('openjev');

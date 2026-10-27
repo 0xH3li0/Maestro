@@ -22,6 +22,10 @@
  * - `installScreen` is the toggle's one click while the screen is `off`:
  *   download Prompt Guard 2 with its runtime and assign it, unless another
  *   source was assigned meanwhile.
+ * - `switchScreenToLocal` is "Keep local" in the cloud screening confirmation
+ *   (spec section 8.10): the screen goes back to an installed local
+ *   classifier (`localScreenOption` names it), or to Prompt Guard 2 after the
+ *   same download.
  *
  * Every change is pushed to every window on {@link SKETCH_BOT_POLICY_CHANGED_CHANNEL},
  * so an open toggle reads its state again.
@@ -44,10 +48,15 @@ import {
 	sketchBotPolicyDemotion,
 	type SketchB2Availability,
 	type SketchBotPolicyStatus,
+	type SketchLocalScreenOption,
 	type SketchScreenInstallResult,
 } from '../../shared/sketch/bot-policy';
 import { SKETCH_BOOK_SETTINGS_KEY } from '../../shared/sketch/cloud-consent';
 import { BOT_POLICIES, type BotPolicy, type SketchRecord } from '../../shared/sketch/types';
+import {
+	resolveLocalInjectionClassifier,
+	type LocalInjectionClassifier,
+} from '../local-models/injection-screen';
 import { installLocalModel, type LocalModelInstallResult } from '../local-models/service';
 import { onSystemOneChanged } from '../local-models/system-one/service';
 import { getSettingsStore } from '../stores/getters';
@@ -86,6 +95,8 @@ export interface SketchBotPolicyDeps {
 	/** The A1 desktop confirmation. Resolves true only on Allow. */
 	confirm?: (prompt: SketchDesktopConfirmPrompt) => Promise<boolean>;
 	installModel?: (modelId: string) => Promise<LocalModelInstallResult>;
+	/** An installed local classifier for the screen, or null. */
+	findLocalClassifier?: () => Promise<LocalInjectionClassifier | null>;
 	readAssignments?: () => LocalModelAssignments;
 	writeAssignments?: (assignments: LocalModelAssignments) => void;
 	publish?: (change: SketchBotPolicyChange) => void;
@@ -105,6 +116,14 @@ export interface SketchBotPolicyService {
 	enforce(): Promise<void>;
 	/** Download Prompt Guard 2 and its runtime, then assign it to the screen. */
 	installScreen(): Promise<SketchScreenInstallResult>;
+	/** The installed local classifier "Keep local" can switch the screen to, if any. */
+	localScreenOption(): Promise<SketchLocalScreenOption>;
+	/**
+	 * Point the screen back at a local classifier ("Keep local", spec section
+	 * 8.10): the installed one, else Prompt Guard 2 after downloading it.
+	 * Replaces only a System One source or none, never a local pick made meanwhile.
+	 */
+	switchScreenToLocal(): Promise<SketchScreenInstallResult>;
 }
 
 function requireString(value: unknown, field: string): string {
@@ -136,6 +155,7 @@ export function createSketchBotPolicyService(
 	const renderer = deps.renderer ?? requestSketchRenderer;
 	const confirm = deps.confirm ?? confirmSketchActionOnDesktop;
 	const installModel = deps.installModel ?? installLocalModel;
+	const findLocalClassifier = deps.findLocalClassifier ?? resolveLocalInjectionClassifier;
 	const readAssignments =
 		deps.readAssignments ??
 		(() => parseLocalModelAssignments(getSettingsStore().get(LOCAL_MODEL_ASSIGNMENTS_KEY, {})));
@@ -249,6 +269,35 @@ export function createSketchBotPolicyService(
 		}
 	}
 
+	/** Install Prompt Guard 2 and its runtime. Resolves with why it failed, or null. */
+	async function installDefaultScreen(): Promise<string | null> {
+		const result = await installModel(SKETCH_DEFAULT_SCREEN_MODEL_ID);
+		const runtimeReady = result.runtime.status === 'ready' || result.runtime.status === 'installed';
+		if (result.status === 'complete' && runtimeReady) return null;
+		return result.status !== 'complete'
+			? (result.error ?? `The download ended ${result.status}.`)
+			: (result.runtime.error ?? `Its runtime is ${result.runtime.status}.`);
+	}
+
+	/** Point `injection-screen` at an installed classifier while the current source is replaceable. */
+	function assignScreen(
+		modelId: string,
+		replaceable: (current: LocalModelAssignment['type']) => boolean
+	): SketchScreenInstallResult {
+		const assignments = readAssignments();
+		if (!replaceable(resolveLocalModelAssignment(assignments, INJECTION_SCREEN_TASK_ID).type)) {
+			publish({});
+			return { installed: true, assigned: false };
+		}
+		const next: LocalModelAssignment = { type: 'local', modelId };
+		const problem = localModelAssignmentProblem(INJECTION_SCREEN_TASK_ID, next);
+		if (problem) return { installed: true, assigned: false, error: problem };
+		writeAssignments(withLocalModelAssignment(assignments, INJECTION_SCREEN_TASK_ID, next));
+		logger.info('Local classifier assigned to the injection screen', LOG_CONTEXT, { modelId });
+		publish({});
+		return { installed: true, assigned: true };
+	}
+
 	return {
 		async status(sketchId) {
 			const record = await requireSketch(open(), sketchId);
@@ -315,29 +364,29 @@ export function createSketchBotPolicyService(
 
 		async installScreen() {
 			if (!isEnabled()) throw new Error(encoreDisabledMessage('sketchBook'));
-			const result = await installModel(SKETCH_DEFAULT_SCREEN_MODEL_ID);
-			const runtimeReady =
-				result.runtime.status === 'ready' || result.runtime.status === 'installed';
-			if (result.status !== 'complete' || !runtimeReady) {
-				const error =
-					result.status !== 'complete'
-						? (result.error ?? `The download ended ${result.status}.`)
-						: (result.runtime.error ?? `Its runtime is ${result.runtime.status}.`);
-				return { installed: false, assigned: false, error };
-			}
-			const assignments = readAssignments();
+			const error = await installDefaultScreen();
+			if (error) return { installed: false, assigned: false, error };
 			// Never clobber a source the conductor picked while the download ran.
-			if (resolveLocalModelAssignment(assignments, INJECTION_SCREEN_TASK_ID).type !== 'off') {
-				publish({});
-				return { installed: true, assigned: false };
+			return assignScreen(SKETCH_DEFAULT_SCREEN_MODEL_ID, (type) => type === 'off');
+		},
+
+		async localScreenOption() {
+			if (!isEnabled()) throw new Error(encoreDisabledMessage('sketchBook'));
+			const local = await findLocalClassifier();
+			return { installed: local ? { modelId: local.modelId, label: local.source.label } : null };
+		},
+
+		async switchScreenToLocal() {
+			if (!isEnabled()) throw new Error(encoreDisabledMessage('sketchBook'));
+			let modelId = (await findLocalClassifier())?.modelId;
+			if (!modelId) {
+				const error = await installDefaultScreen();
+				if (error) return { installed: false, assigned: false, error };
+				modelId = SKETCH_DEFAULT_SCREEN_MODEL_ID;
 			}
-			const next: LocalModelAssignment = { type: 'local', modelId: SKETCH_DEFAULT_SCREEN_MODEL_ID };
-			const problem = localModelAssignmentProblem(INJECTION_SCREEN_TASK_ID, next);
-			if (problem) return { installed: true, assigned: false, error: problem };
-			writeAssignments(withLocalModelAssignment(assignments, INJECTION_SCREEN_TASK_ID, next));
-			logger.info('Prompt Guard 2 installed and assigned to the injection screen', LOG_CONTEXT);
-			publish({});
-			return { installed: true, assigned: true };
+			// Replace the System One source the conductor kept local from (or none),
+			// never a local pick made while the dialog was open.
+			return assignScreen(modelId, (type) => type === 'system-one' || type === 'off');
 		},
 	};
 }

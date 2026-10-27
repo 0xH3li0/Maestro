@@ -22,6 +22,9 @@ vi.mock('../../../main/sketch/sketch-desktop-confirm', () => ({
 	confirmSketchActionOnDesktop: vi.fn(),
 }));
 vi.mock('../../../main/local-models/service', () => ({ installLocalModel: vi.fn() }));
+vi.mock('../../../main/local-models/injection-screen', () => ({
+	resolveLocalInjectionClassifier: vi.fn(),
+}));
 vi.mock('../../../main/local-models/system-one/service', () => ({
 	onSystemOneChanged: (listener: () => void) => {
 		h.systemOneListener = listener;
@@ -41,6 +44,7 @@ import {
 	type SketchBotPolicyDeps,
 } from '../../../main/sketch/sketch-bot-policy';
 import type { LocalModelInstallResult } from '../../../main/local-models/service';
+import type { LocalInjectionClassifier } from '../../../main/local-models/injection-screen';
 import type { SketchOwnerAgent } from '../../../main/sketch/sketch-service';
 import type { SketchRendererResult } from '../../../shared/sketch/commands';
 import type { SketchStore } from '../../../main/sketch/sketch-store';
@@ -98,6 +102,7 @@ function setup(initial: SketchRecord[] = [makeRecord(SKETCH_ID, share('conductor
 				runtime: { runtimeId: 'onnx' as never, status: 'installed' },
 			})
 		),
+		findLocalClassifier: vi.fn(async (): Promise<LocalInjectionClassifier | null> => null),
 		readAssignments: vi.fn(() => assignments),
 		writeAssignments: vi.fn((next: LocalModelAssignments) => {
 			assignments = next;
@@ -356,5 +361,86 @@ describe('installScreen', () => {
 			error: 'Bad hash.',
 		});
 		expect(ctx.deps.writeAssignments).not.toHaveBeenCalled();
+	});
+});
+
+describe('Keep local (switchScreenToLocal, localScreenOption)', () => {
+	const installed: LocalInjectionClassifier = {
+		modelId: 'prompt-guard-2-22m',
+		source: { kind: 'local-classifier', locality: 'local', label: 'Prompt Guard 2 22M' },
+	};
+
+	it('names the installed local classifier, or none', async () => {
+		const ctx = setup();
+		await expect(ctx.service.localScreenOption()).resolves.toEqual({ installed: null });
+		ctx.deps.findLocalClassifier.mockResolvedValueOnce(installed);
+		await expect(ctx.service.localScreenOption()).resolves.toEqual({
+			installed: { modelId: 'prompt-guard-2-22m', label: 'Prompt Guard 2 22M' },
+		});
+	});
+
+	it('replaces the System One source with the installed classifier, downloading nothing', async () => {
+		const ctx = setup();
+		ctx.setAssignments({ 'injection-screen': { type: 'system-one' } });
+		ctx.deps.findLocalClassifier.mockResolvedValueOnce(installed);
+		await expect(ctx.service.switchScreenToLocal()).resolves.toEqual({
+			installed: true,
+			assigned: true,
+		});
+		expect(ctx.deps.installModel).not.toHaveBeenCalled();
+		expect(ctx.assignments()['injection-screen']).toEqual({
+			type: 'local',
+			modelId: 'prompt-guard-2-22m',
+		});
+		expect(ctx.deps.publish).toHaveBeenCalledWith({});
+	});
+
+	it('downloads Prompt Guard 2 first when no classifier is installed', async () => {
+		const ctx = setup();
+		ctx.setAssignments({ 'injection-screen': { type: 'system-one' } });
+		await expect(ctx.service.switchScreenToLocal()).resolves.toEqual({
+			installed: true,
+			assigned: true,
+		});
+		expect(ctx.deps.installModel).toHaveBeenCalledWith('prompt-guard-2-22m');
+		expect(ctx.assignments()['injection-screen']).toEqual({
+			type: 'local',
+			modelId: 'prompt-guard-2-22m',
+		});
+	});
+
+	it('reports a failed download and leaves the assignment alone', async () => {
+		const ctx = setup();
+		ctx.setAssignments({ 'injection-screen': { type: 'system-one' } });
+		ctx.deps.installModel.mockResolvedValueOnce({
+			modelId: 'prompt-guard-2-22m',
+			status: 'error',
+			error: 'Network down.',
+			runtime: { runtimeId: 'onnx' as never, status: 'installed' },
+		});
+		await expect(ctx.service.switchScreenToLocal()).resolves.toEqual({
+			installed: false,
+			assigned: false,
+			error: 'Network down.',
+		});
+		expect(ctx.deps.writeAssignments).not.toHaveBeenCalled();
+	});
+
+	it('never replaces a local pick made while the dialog was open', async () => {
+		const ctx = setup();
+		ctx.setAssignments({ 'injection-screen': { type: 'local', modelId: 'prompt-guard-2-22m' } });
+		ctx.deps.findLocalClassifier.mockResolvedValueOnce(installed);
+		await expect(ctx.service.switchScreenToLocal()).resolves.toEqual({
+			installed: true,
+			assigned: false,
+		});
+		expect(ctx.deps.writeAssignments).not.toHaveBeenCalled();
+	});
+
+	it('refuses while Sketch Book is off', async () => {
+		const ctx = setup();
+		ctx.deps.isEnabled.mockReturnValue(false);
+		await expect(ctx.service.switchScreenToLocal()).rejects.toThrow();
+		await expect(ctx.service.localScreenOption()).rejects.toThrow();
 	});
 });

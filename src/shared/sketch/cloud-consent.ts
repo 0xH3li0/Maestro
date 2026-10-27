@@ -14,6 +14,7 @@
  */
 
 import type { InjectionSourceInfo } from '../local-models/injection-screen';
+import { JEV_CLOUD_BASE_URL, systemOneEngineHost } from '../local-models/system-one';
 import type { Screening } from './protocol';
 import {
 	normalizeSketchServerUrl,
@@ -173,6 +174,21 @@ export function sketchCloudEngineLabel(engine: SketchCloudEngine): string {
 	return engine === 'jev' ? 'Jev (TypeSafe cloud)' : 'OpenJev';
 }
 
+/** The badge guests see while a room's screen runs on a cloud engine (G4). */
+export const SKETCH_CLOUD_SCREENING_GUEST_BADGE = 'Screened by a cloud service';
+
+/**
+ * The engine and the host guest text goes to, as the confirmation names them:
+ * "Jev, by TypeSafe, api.typesafe.ai" or "OpenJev at gpu.example.com". Jev
+ * without a host is its hosted service.
+ */
+export function sketchCloudEngineWhere(engine: SketchCloudEngine, host?: string): string {
+	if (engine === 'jev') {
+		return `Jev, by TypeSafe, ${host || systemOneEngineHost(JEV_CLOUD_BASE_URL)}`;
+	}
+	return host ? `OpenJev at ${host}` : 'OpenJev';
+}
+
 /**
  * The G2 disclosure: the provider, its host, and what leaves the machine. One
  * copy, so the desktop dialog, the CLI prompt and the Settings row say the
@@ -185,7 +201,7 @@ export function sketchCloudScreeningDisclosure(input: {
 	reason?: 'grant' | 'live-switch';
 }): { title: string; message: string; detail: string } {
 	const provider = sketchCloudEngineLabel(input.engine);
-	const where = input.host ? `${provider} at ${input.host}` : provider;
+	const where = sketchCloudEngineWhere(input.engine, input.host);
 	const title =
 		input.reason === 'live-switch'
 			? `Sketch Book screening changed to ${provider}`
@@ -196,7 +212,7 @@ export function sketchCloudScreeningDisclosure(input: {
 			: `Sketch Book will send guest text to ${where} for its prompt-injection screen.`;
 	const detail = [
 		`What leaves this computer: decrypted guest chat and canvas text, and your agent's replies before they are posted (the secret screen).`,
-		'Secrets are redacted on the way out. Guests are told the room is screened by a cloud service before any of their text is sent.',
+		`Secrets are redacted on the way out. Guests will see "${SKETCH_CLOUD_SCREENING_GUEST_BADGE}" before any of their text is sent.`,
 		'Revoke it any time in Settings > Plugins > Sketch Book, or with maestro-cli sketch screening-consent revoke.',
 	].join('\n\n');
 	return { title, message, detail };
@@ -237,7 +253,22 @@ export interface SketchScreeningChange {
 	 * to confirm it (G2 first use, G3 live switch). The renderer raises the
 	 * confirmation through `confirmCloudScreening()`.
 	 */
-	confirmNeeded?: { engine: SketchCloudEngine; host?: string; reason: 'grant' | 'live-switch' };
+	confirmNeeded?: SketchCloudConfirmNeeded;
+}
+
+/** What the cloud screening confirmation asks about: the engine in force, its host, and why. */
+export interface SketchCloudConfirmNeeded {
+	engine: SketchCloudEngine;
+	host?: string;
+	reason: 'grant' | 'live-switch';
+}
+
+/**
+ * One key per question, so a confirmation the conductor dismissed stays shut
+ * until a different engine, host or reason asks again.
+ */
+export function sketchCloudConfirmKey(prompt: SketchCloudConfirmNeeded): string {
+	return `${prompt.engine}|${prompt.host?.trim().toLowerCase() ?? ''}|${prompt.reason}`;
 }
 
 /** Refusal text for a direct settings write: consent is only granted through the confirmation. */

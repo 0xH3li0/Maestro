@@ -30,6 +30,7 @@ import type {
 import type { Screening } from '../../shared/sketch/protocol';
 import type {
 	SketchBotPolicyStatus,
+	SketchLocalScreenOption,
 	SketchScreenInstallResult,
 } from '../../shared/sketch/bot-policy';
 import type {
@@ -132,9 +133,15 @@ export function createSketchApi() {
 		/** Cloud screening consent, the engine in force, and each live room (spec section 8.10). */
 		screeningConsentStatus: (): Promise<SketchScreeningConsentStatus> =>
 			ipcRenderer.invoke('sketch:screeningConsentStatus'),
-		/** Store a consent for one engine (OpenJev: the host in force). */
-		grantScreeningConsent: (engine: SketchCloudEngine): Promise<SketchScreeningConsentStatus> =>
-			ipcRenderer.invoke('sketch:grantScreeningConsent', engine),
+		/**
+		 * Store a consent for one engine and confirm the live rooms on it. OpenJev
+		 * binds to `host` (the one the confirmation named), else the host in force.
+		 */
+		grantScreeningConsent: (
+			engine: SketchCloudEngine,
+			host?: string
+		): Promise<SketchScreeningConsentStatus> =>
+			ipcRenderer.invoke('sketch:grantScreeningConsent', engine, host),
 		revokeScreeningConsent: (engine: SketchCloudEngine): Promise<SketchScreeningConsentStatus> =>
 			ipcRenderer.invoke('sketch:revokeScreeningConsent', engine),
 		/** Raise the desktop confirmation for the cloud engine in force (G2, G3). True on Allow. */
@@ -171,6 +178,12 @@ export function createSketchApi() {
 		/** Download Prompt Guard 2 with its runtime and assign it to the screen. */
 		installScreen: (): Promise<SketchScreenInstallResult> =>
 			ipcRenderer.invoke('sketch:installScreen'),
+		/** The installed local classifier "Keep local" can switch the screen to, if any. */
+		localScreenOption: (): Promise<SketchLocalScreenOption> =>
+			ipcRenderer.invoke('sketch:localScreenOption'),
+		/** Point the screen back at a local classifier (downloading Prompt Guard 2 when none is installed). */
+		switchScreenToLocal: (): Promise<SketchScreenInstallResult> =>
+			ipcRenderer.invoke('sketch:switchScreenToLocal'),
 		/** A policy or B2 availability may have changed. Returns the unsubscribe. */
 		onBotPolicyChanged: (callback: (change: { sketchId?: string }) => void): (() => void) => {
 			const handler = (_: unknown, change: { sketchId?: string }) => callback(change);

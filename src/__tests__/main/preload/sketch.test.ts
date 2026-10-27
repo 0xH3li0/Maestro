@@ -151,6 +151,19 @@ describe('Sketch Book Preload API', () => {
 		expect(mockInvoke).toHaveBeenLastCalledWith('sketch:noteRoomBotPolicy', SKETCH_ID, 'conductor');
 		await api.installScreen();
 		expect(mockInvoke).toHaveBeenLastCalledWith('sketch:installScreen');
+		await api.localScreenOption();
+		expect(mockInvoke).toHaveBeenLastCalledWith('sketch:localScreenOption');
+		await api.switchScreenToLocal();
+		expect(mockInvoke).toHaveBeenLastCalledWith('sketch:switchScreenToLocal');
+	});
+
+	it('passes the host the confirmation named with a consent grant', async () => {
+		await api.grantScreeningConsent('openjev', 'jev.example.com');
+		expect(mockInvoke).toHaveBeenLastCalledWith(
+			'sketch:grantScreeningConsent',
+			'openjev',
+			'jev.example.com'
+		);
 	});
 
 	it('listens for B2 policy changes and stops on unsubscribe', () => {

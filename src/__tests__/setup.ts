@@ -640,6 +640,15 @@ const mockMaestro = {
 		}),
 		noteRoomBotPolicy: vi.fn().mockResolvedValue(undefined),
 		installScreen: vi.fn().mockResolvedValue({ installed: true, assigned: true }),
+		localScreenOption: vi.fn().mockResolvedValue({ installed: null }),
+		switchScreenToLocal: vi.fn().mockResolvedValue({ installed: true, assigned: true }),
+		grantScreeningConsent: vi.fn().mockResolvedValue({
+			consent: {},
+			source: null,
+			sourceCovered: false,
+			rooms: [],
+		}),
+		onScreeningChanged: vi.fn(() => () => {}),
 		onBotPolicyChanged: vi.fn(() => () => {}),
 	},
 	web: {

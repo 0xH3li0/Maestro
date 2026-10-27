@@ -213,8 +213,10 @@ export function registerSketchHandlers(deps: SketchHandlerDeps = {}): void {
 	);
 	ipcMain.handle(
 		'sketch:grantScreeningConsent',
-		withIpcErrorLogging(opts('grantScreeningConsent'), async (engine: SketchCloudEngine) =>
-			consent.grantConsent(engine)
+		withIpcErrorLogging(
+			opts('grantScreeningConsent'),
+			async (engine: SketchCloudEngine, host?: string) =>
+				consent.grantConsent(engine, typeof host === 'string' && host ? host : undefined)
 		)
 	);
 	ipcMain.handle(
@@ -273,5 +275,13 @@ export function registerSketchHandlers(deps: SketchHandlerDeps = {}): void {
 	ipcMain.handle(
 		'sketch:installScreen',
 		withIpcErrorLogging(opts('installScreen'), async () => botPolicy.installScreen())
+	);
+	ipcMain.handle(
+		'sketch:localScreenOption',
+		withIpcErrorLogging(opts('localScreenOption'), async () => botPolicy.localScreenOption())
+	);
+	ipcMain.handle(
+		'sketch:switchScreenToLocal',
+		withIpcErrorLogging(opts('switchScreenToLocal'), async () => botPolicy.switchScreenToLocal())
 	);
 }

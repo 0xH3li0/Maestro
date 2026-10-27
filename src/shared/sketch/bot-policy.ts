@@ -54,6 +54,15 @@ export interface SketchScreenInstallResult {
 	error?: string;
 }
 
+/**
+ * The local classifier the screen can be switched back to when the conductor
+ * keeps a cloud engine out (spec section 8.10, "Keep local").
+ */
+export interface SketchLocalScreenOption {
+	/** An installed local classifier, or null: switching then downloads Prompt Guard 2 first. */
+	installed: { modelId: string; label: string } | null;
+}
+
 /** The model the one-click download installs: the default local screen (G1). */
 export const SKETCH_DEFAULT_SCREEN_MODEL_ID = PROMPT_GUARD_2_22M_ID;
 

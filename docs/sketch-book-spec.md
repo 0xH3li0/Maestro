@@ -425,6 +425,8 @@ The engine in force answers for every System One task, so one choice covers both
 
 Consent and the room flag are separate on purpose. The consent protects the conductor (they chose the third party); the flag protects guests (they joined on an end-to-end promise and did not choose it).
 
+Desktop (built 2026-10-27): `CloudScreeningConsentDialog`, opened by `CloudScreeningConsentHost` in the window that holds a live room named in `SketchScreeningChange.confirmNeeded`. Allow calls `grantConsent` with the engine and the host the dialog named; the grant confirms the live rooms and pushes the change, on which each room client sends `screening.set {screening:'cloud'}`. Keep local grants nothing (the gate keeps failing closed) and offers to point `injection-screen` back at an installed local classifier, or Prompt Guard 2 after downloading it (`switchScreenToLocal`, which replaces only a System One source or none). A dismissed question stays shut until a different engine, host or reason asks.
+
 CLI parity: `maestro-cli sketch screening-consent grant|revoke --engine jev|openjev`. `grant` from an agent caller raises a desktop confirmation (A1); `revoke` runs. `maestro-cli sketch stats` prints the room's `screening` value.
 
 ## 9. CLI parity

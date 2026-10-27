@@ -19,6 +19,7 @@ import { ToastContainer } from './Toast';
 import { CenterFlash } from './CenterFlash';
 import { ImageContextMenuHost } from './ImageContextMenuHost';
 import { SecretScreenConfirmHost } from './SecretScreenConfirmHost';
+import { CloudScreeningConsentHost } from './SketchBook/CloudScreeningConsentHost';
 import { DictationHost } from './DictationHost';
 import { ZoomViewerHost } from './ZoomViewer';
 import { MediaPlaybackHost } from './MediaPlayback';
@@ -310,6 +311,11 @@ export function AppShell({
 			    main-process secret screen refused. Opened only through
 			    withSecretScreenConfirm(). */}
 			<SecretScreenConfirmHost theme={theme} />
+			{/* --- SKETCH BOOK CLOUD SCREENING CONFIRM (single, app-wide; Encore Feature) ---
+			    Asks before a shared sketch's guest text goes to a cloud screening
+			    engine. Listens to nothing while Sketch Book is off. See
+			    CloudScreeningConsentHost. */}
+			<CloudScreeningConsentHost theme={theme} />
 			{/* --- DICTATION (single, app-wide) ---
 			    Mirrors the dictation task's readiness for every DictationButton,
 			    classifies the `dictate` shortcut's press, and draws the pill that

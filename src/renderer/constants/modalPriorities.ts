@@ -51,6 +51,13 @@ export const MODAL_PRIORITIES = {
 	/** Claude Code standard-mode permission prompt - blocks until the user decides */
 	PERMISSION_PROMPT: 1008,
 
+	/**
+	 * Sketch Book cloud screening confirmation (spec section 8.10): raised
+	 * unasked when a live room's screen would run on a cloud engine, so it sits
+	 * above every ordinary confirmation.
+	 */
+	SKETCH_CLOUD_SCREENING_CONSENT: 1003,
+
 	/** Forced parallel execution warning - one-time acknowledgment */
 	FORCED_PARALLEL_WARNING: 1005,
 
