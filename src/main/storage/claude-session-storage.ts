@@ -684,8 +684,9 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 			}
 			content = result.data;
 		} else {
-			const sessionFile = await this.locateLocalSessionFile(projectPath, sessionId);
-			content = await fs.readFile(sessionFile, 'utf-8');
+			const sessionFile =
+				options?.filePath ?? (await this.locateLocalSessionFile(projectPath, sessionId));
+			content = options?.content ?? (await fs.readFile(sessionFile, 'utf-8'));
 		}
 
 		const messages: SessionMessage[] = [];

@@ -182,6 +182,16 @@ function createBaseConfig(overrides: Partial<ProcessConfig> = {}): ProcessConfig
 	};
 }
 
+async function useRealPromptFiles(): Promise<void> {
+	const [actualUtils, actualFs] = await Promise.all([
+		vi.importActual('../../../../main/process-manager/utils/imageUtils'),
+		vi.importActual('fs'),
+	]);
+	vi.mocked(savePromptToTempFile).mockImplementation(actualUtils.savePromptToTempFile);
+	vi.mocked(fs.writeFileSync).mockImplementation(actualFs.writeFileSync);
+	vi.mocked(cleanupTempFiles).mockImplementation(actualUtils.cleanupTempFiles);
+}
+
 // ── Tests ──────────────────────────────────────────────────────────────────
 
 describe('ChildProcessSpawner', () => {
@@ -191,7 +201,7 @@ describe('ChildProcessSpawner', () => {
 			const manager = new ProcessManager();
 			manager.spawn(createBaseConfig({ prompt: 'first turn' }));
 			const predecessor = manager.get('test-session')!;
-			predecessor.tempImageFiles = ['/tmp/old-image.png', '/tmp/old-prompt.md'];
+			predecessor.tempFiles = ['/tmp/old-image.png', '/tmp/old-prompt.md'];
 			vi.mocked(cleanupTempFiles).mockImplementationOnce((files) => {
 				expect(files).toEqual(['/tmp/old-image.png', '/tmp/old-prompt.md']);
 				expect(mockSpawn).toHaveBeenCalledTimes(1);
@@ -203,13 +213,13 @@ describe('ChildProcessSpawner', () => {
 			]);
 			expect(manager.get('test-session')).not.toBe(predecessor);
 			const successor = manager.get('test-session')!;
-			successor.tempImageFiles = ['/tmp/new-prompt.md'];
+			successor.tempFiles = ['/tmp/new-prompt.md'];
 			const close = (predecessor.childProcess!.on as ReturnType<typeof vi.fn>).mock.calls.find(
 				([event]) => event === 'close'
 			)![1];
 			close(0);
 			expect(cleanupTempFiles).toHaveBeenCalledTimes(1);
-			expect(successor.tempImageFiles).toEqual(['/tmp/new-prompt.md']);
+			expect(successor.tempFiles).toEqual(['/tmp/new-prompt.md']);
 		});
 	});
 
@@ -290,6 +300,9 @@ describe('ChildProcessSpawner', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		vi.mocked(savePromptToTempFile).mockReturnValue('C:\\tmp\\maestro-prompt-1.md');
+		vi.mocked(fs.writeFileSync).mockImplementation(() => undefined);
+		vi.mocked(cleanupTempFiles).mockImplementation(() => undefined);
 		// Setup mock spawn to return a fresh mock child process
 		mockSpawn.mockImplementation(() => {
 			mockChildProcess = createMockChildProcess();
@@ -991,7 +1004,7 @@ describe('ChildProcessSpawner', () => {
 						})
 					);
 					const predecessor = manager.get('test-session')!;
-					predecessor.tempImageFiles = ['/tmp/old-prompt.md'];
+					predecessor.tempFiles = ['/tmp/old-prompt.md'];
 					predecessor.childProcess!.kill = vi.fn(() => true);
 					const close = mockChildProcess.on.mock.calls.find(
 						([event]: [string]) => event === 'close'
@@ -1001,12 +1014,12 @@ describe('ChildProcessSpawner', () => {
 					if (route === 'kill') expect(manager.kill('test-session')).toBe(true);
 					manager.spawn(createBaseConfig({ prompt: 'second turn' }));
 					const successor = manager.get('test-session')!;
-					successor.tempImageFiles = ['/tmp/new-prompt.md'];
+					successor.tempFiles = ['/tmp/new-prompt.md'];
 					release('timeout');
-					await vi.waitFor(() => expect(predecessor.tempImageFiles).toBeUndefined());
+					await vi.waitFor(() => expect(predecessor.tempFiles).toBeUndefined());
 					close(0);
 					expect(cleanupTempFiles).toHaveBeenCalledExactlyOnceWith(['/tmp/old-prompt.md']);
-					expect(successor.tempImageFiles).toEqual(['/tmp/new-prompt.md']);
+					expect(successor.tempFiles).toEqual(['/tmp/new-prompt.md']);
 					expect(manager.get('test-session')).toBe(successor);
 				} finally {
 					wait.mockRestore();
@@ -1018,25 +1031,25 @@ describe('ChildProcessSpawner', () => {
 			const ctx = createTestContext();
 			ctx.spawner.spawn(createBaseConfig({ prompt: 'first turn' }));
 			const predecessor = ctx.processes.get('test-session')!;
-			predecessor.tempImageFiles = ['/tmp/old-image.png', '/tmp/old-prompt.md'];
+			predecessor.tempFiles = ['/tmp/old-image.png', '/tmp/old-prompt.md'];
 			const close = mockChildProcess.on.mock.calls.find(
 				([event]: [string]) => event === 'close'
 			)[1];
 			ctx.processes.delete('test-session');
 			ctx.spawner.spawn(createBaseConfig({ prompt: 'second turn' }));
 			const successor = ctx.processes.get('test-session')!;
-			successor.tempImageFiles = ['/tmp/new-prompt.md'];
+			successor.tempFiles = ['/tmp/new-prompt.md'];
 
 			close(143);
 			close(143);
-			await vi.waitFor(() => expect(predecessor.tempImageFiles).toBeUndefined());
+			await vi.waitFor(() => expect(predecessor.tempFiles).toBeUndefined());
 
 			expect(cleanupTempFiles).toHaveBeenCalledExactlyOnceWith([
 				'/tmp/old-image.png',
 				'/tmp/old-prompt.md',
 			]);
-			expect(predecessor.tempImageFiles).toBeUndefined();
-			expect(successor.tempImageFiles).toEqual(['/tmp/new-prompt.md']);
+			expect(predecessor.tempFiles).toBeUndefined();
+			expect(successor.tempFiles).toEqual(['/tmp/new-prompt.md']);
 			expect(ctx.processes.get('test-session')).toBe(successor);
 		});
 
@@ -1298,7 +1311,8 @@ describe('ChildProcessSpawner', () => {
 		afterEach(() => {
 			vi.mocked(isWindows).mockReturnValue(false);
 		});
-		it('delivers a long OMP prompt as a UTF-8 attachment while preserving launch options and images', () => {
+		it('delivers a long OMP prompt as a UTF-8 attachment while preserving launch options and images', async () => {
+			await useRealPromptFiles();
 			const { spawner, processes } = createTestContext();
 			const omp = getAgentDefinition('omp')!;
 			const prompt = '---\nPrivate playbook "quoted" & %PATH% 日本語\n'.repeat(1000);
@@ -1349,6 +1363,7 @@ describe('ChildProcessSpawner', () => {
 
 		it('reports a synchronous spawn failure and removes its temporary prompt attachment', async () => {
 			const { spawner, processes } = createTestContext();
+			await useRealPromptFiles();
 			let promptFile = '';
 			mockSpawn.mockImplementationOnce((_command, args: string[]) => {
 				promptFile = args.at(-1)!.slice(1);
@@ -1369,6 +1384,7 @@ describe('ChildProcessSpawner', () => {
 
 		it('cleans a failed child attachment and publishes one failure rather than a second close outcome', async () => {
 			const { spawner, emitter, processes } = createTestContext();
+			await useRealPromptFiles();
 			const exit = vi.fn();
 			emitter.on('exit', exit);
 			spawner.spawn(
@@ -1376,7 +1392,7 @@ describe('ChildProcessSpawner', () => {
 					toolType: 'omp',
 					command: 'omp.exe',
 					args: ['-p', '--mode', 'json'],
-					prompt: 'Prompt content',
+					prompt: 'Prompt content'.repeat(3000),
 				})
 			);
 			const promptFile = processes.get('test-session')!.tempFiles![0];
@@ -1398,17 +1414,18 @@ describe('ChildProcessSpawner', () => {
 		it('removes a replaced turn attachment without settling or deleting its live successor', async () => {
 			const { spawner, emitter, processes } = createTestContext();
 			const exit = vi.fn();
+			await useRealPromptFiles();
 			emitter.on('exit', exit);
 			const config = createBaseConfig({
 				toolType: 'omp',
 				command: 'omp.exe',
 				args: ['-p', '--mode', 'json'],
-				prompt: 'First prompt',
+				prompt: 'First prompt'.repeat(3000),
 			});
 			spawner.spawn(config);
 			const firstChild = mockChildProcess;
 			const firstFile = processes.get('test-session')!.tempFiles![0];
-			spawner.spawn({ ...config, prompt: 'Successor prompt' });
+			spawner.spawn({ ...config, prompt: 'Successor prompt'.repeat(3000) });
 			const successor = processes.get('test-session')!;
 			const secondFile = successor.tempFiles![0];
 			try {
@@ -1464,7 +1481,7 @@ describe('ChildProcessSpawner', () => {
 				})
 			);
 			const args = mockSpawn.mock.calls[0][1] as string[];
-			expect(args).toEqual(['-p', '--mode', 'json', '--', '@C:\\tmp\\maestro-prompt-1.md']);
+			expect(args).toEqual(['-p', '--mode', 'json', '@C:\\tmp\\maestro-prompt-1.md']);
 			expect(args.join(' ')).not.toContain('xxxx');
 		});
 
@@ -1492,7 +1509,8 @@ describe('ChildProcessSpawner', () => {
 					})
 				);
 				const args = mockSpawn.mock.calls[0][1] as string[];
-				expect(args.slice(-2)).toEqual(['--', '@/tmp/prompt.md']);
+				expect(args.at(-1)).toBe('@/tmp/prompt.md');
+				expect(args.at(-2)).not.toBe('--');
 				expect(args.join(' ')).not.toContain(prompt);
 				if (embedded) {
 					expect(savePromptToTempFile).toHaveBeenCalledWith('Images: /tmp/image.png\n' + prompt);
@@ -1501,7 +1519,7 @@ describe('ChildProcessSpawner', () => {
 					expect(args).toContain('/tmp/image.png');
 					expect(savePromptToTempFile).toHaveBeenCalledWith(prompt);
 				}
-				expect(processes.get('test-session')?.tempImageFiles).toEqual([
+				expect(processes.get('test-session')?.tempFiles).toEqual([
 					'/tmp/image.png',
 					'/tmp/prompt.md',
 				]);
@@ -1682,7 +1700,8 @@ describe('ChildProcessSpawner', () => {
 			return primeResumedSession;
 		};
 
-		it("primes a resumed turn with the transcript's last cost-state row", () => {
+		it("primes a resumed turn with the transcript's last cost-state row", async () => {
+			const actualFs = await vi.importActual('fs');
 			const root = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), 'spawner-cost-'));
 			try {
 				const cwd = nodePath.join(root, 'proj');
@@ -1693,7 +1712,7 @@ describe('ChildProcessSpawner', () => {
 					cwd.replace(/[^a-zA-Z0-9]/g, '-')
 				);
 				nodeFs.mkdirSync(projectDir, { recursive: true });
-				nodeFs.writeFileSync(
+				actualFs.writeFileSync(
 					nodePath.join(projectDir, 'sid-1.jsonl'),
 					JSON.stringify({ type: 'cost-state', totalCostUSD: 0.5, modelUsage: {} }) + '\n'
 				);

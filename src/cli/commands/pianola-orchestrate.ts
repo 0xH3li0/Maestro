@@ -36,6 +36,8 @@ import {
 	findActiveRunBySession,
 } from '../services/agent-run-store';
 import { MaestroClient } from '../services/maestro-client';
+import { requestPianolaMemory } from './pianola-memory';
+import type { MemoryPacket } from '../../shared/pianola/memory';
 import { runDispatch } from './dispatch';
 import {
 	runOrchestratorIteration,
@@ -578,6 +580,8 @@ function upsertPianolaTaskRun(
 		cwd: task.cwd,
 		prompt: task.prompt,
 		source: campaignIdForPianolaPlan(planId),
+		checks: eventType === 'pianola.dispatched' ? [] : (existing?.checks ?? []),
+		reviews: eventType === 'pianola.dispatched' ? [] : (existing?.reviews ?? []),
 		metadata: {
 			...(existing?.metadata ?? {}),
 			pianola: {
@@ -1068,7 +1072,12 @@ export async function pianolaOrchestrate(
 		dispatch: async (task, agentId) => {
 			if (programPausedNow()) return { success: false, error: 'program paused' };
 			if (!task.tabId) return { success: false, error: 'no target tab bound' };
-			const res = await runDispatch(agentId, task.prompt, { tab: task.tabId });
+			const packet = await requestPianolaMemory<MemoryPacket>({
+				action: 'recall',
+				query: { query: task.prompt, projectPath: task.cwd || process.cwd() },
+			});
+			const prompt = packet.context ? `${task.prompt}\n\n${packet.context}` : task.prompt;
+			const res = await runDispatch(agentId, prompt, { tab: task.tabId });
 			if (res.success) historyCache.delete(task.tabId);
 			return { success: !!res.success, tabId: task.tabId, error: res.error };
 		},

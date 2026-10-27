@@ -21,7 +21,9 @@ const hostState = vi.hoisted(() => ({
 }));
 vi.mock('../../../main/stores', () => ({
 	getSessionsStore: () => ({ get: () => hostState.sessions }),
+	getLiveSessions: () => hostState.sessions,
 	getSettingsStore: () => ({ get: () => hostState.remotes }),
+	getAgentConfigsStore: () => ({ get: () => storedReadiness.configs }),
 }));
 vi.mock('../../../main/cue/cue-scheduled-tasks', () => ({
 	collectScheduledTasks: vi.fn(() => ({ tasks: [], warnings: [] })),
@@ -74,7 +76,12 @@ const storedReadiness = vi.hoisted(() => ({
 }));
 vi.mock('../../../main/stores', async (importOriginal) => ({
 	...(await importOriginal<typeof import('../../../main/stores')>()),
-	getSessionsStore: () => ({ get: () => storedReadiness.sessions }),
+	getSessionsStore: () => ({
+		get: () =>
+			storedReadiness.sessions.length > 0 ? storedReadiness.sessions : hostState.sessions,
+	}),
+	getLiveSessions: () => hostState.sessions,
+	getSettingsStore: () => ({ get: () => hostState.remotes }),
 	getAgentConfigsStore: () => ({ get: () => storedReadiness.configs }),
 }));
 

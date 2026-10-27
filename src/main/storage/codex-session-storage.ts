@@ -1059,14 +1059,14 @@ export class CodexSessionStorage extends BaseSessionStorage {
 			content = result.data;
 		} else {
 			// Find the session file by sessionId locally
-			const sessionFilePath = await this.findSessionFile(sessionId);
+			const sessionFilePath = options?.filePath ?? (await this.findSessionFile(sessionId));
 
 			if (!sessionFilePath) {
 				logger.warn(`Codex session file not found: ${sessionId}`, LOG_CONTEXT);
 				return { messages: [], total: 0, hasMore: false };
 			}
 
-			content = await fs.readFile(sessionFilePath, 'utf-8');
+			content = options?.content ?? (await fs.readFile(sessionFilePath, 'utf-8'));
 		}
 
 		try {
