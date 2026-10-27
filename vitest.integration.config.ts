@@ -18,6 +18,8 @@ export default defineConfig({
 		include: [
 			'src/__tests__/integration/**/*.integration.test.ts',
 			'src/__tests__/integration/**/provider-integration.test.ts',
+			// Skipped unless SKETCH_ROOM_DEV_URL points at a local sketch-room Worker.
+			'src/__tests__/integration/**/sketch-room-interop.test.ts',
 			'src/__tests__/integration/**/*.test.tsx', // Include React component integration tests
 		],
 		environment: 'jsdom', // Required for React component tests
