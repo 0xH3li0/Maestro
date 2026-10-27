@@ -41,10 +41,22 @@ describe('guards', () => {
 			'revoke-link',
 			'rotate',
 			'owner',
+			'requests',
+			'approve',
+			'deny',
+			'escalate',
+			'publish',
+			'discard',
+			'bot-policy',
+			'stats',
+			'kick',
+			'unlock',
+			'unsuspend',
+			'audit',
 		]) {
 			expect(isSketchCommandAction(action), action).toBe(true);
 		}
-		for (const action of ['kick', 'NEW', '', undefined, 1]) {
+		for (const action of ['ban', 'NEW', '', undefined, 1]) {
 			expect(isSketchCommandAction(action), String(action)).toBe(false);
 		}
 	});

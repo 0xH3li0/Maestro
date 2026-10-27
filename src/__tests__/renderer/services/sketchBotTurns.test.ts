@@ -185,12 +185,16 @@ beforeEach(() => {
 		activeSessionId: AGENT_ID,
 	});
 	useSketchSessionStore.setState({ sessions: { [SKETCH_ID]: readySketch() } });
+	// The sketch record: what saveBotSessionId writes, prepare reads back.
+	let storedSessionId: string | null = null;
 	deps = {
-		prepare: vi.fn(async () => READY),
+		prepare: vi.fn(async () => ({ ...READY, botSessionId: storedSessionId })),
 		screenReply: vi.fn(
 			async (_id: string, text: string): Promise<SketchBotReplyScreen> => ({ ok: true, text })
 		),
-		saveBotSessionId: vi.fn(async () => undefined),
+		saveBotSessionId: vi.fn(async (_id: string, sessionId: string) => {
+			storedSessionId = sessionId;
+		}),
 		enqueue: vi.fn((options) => {
 			itemCounter += 1;
 			const item: QueuedItem = {
