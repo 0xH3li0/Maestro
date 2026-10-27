@@ -4696,7 +4696,7 @@ sketchCmd
 	)
 	.option('--role <role>', 'rw (view and edit, the default) or ro (view only)')
 	.option('--expires-days <days>', 'Days until the link expires (default 7 for rw, 30 for ro)')
-	.option('--label <label>', 'A name for the link, shown in the Share panel')
+	.option('--label <label>', 'A name for the link, shown in the Collaborate panel')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((sketchId, options) => sketchShare(sketchId, options));
 

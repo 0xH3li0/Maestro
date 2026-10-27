@@ -29,7 +29,7 @@ import {
 import type { SketchLinkRole } from '../../shared/sketch/types';
 import { fetchWithTimeout } from '../utils/fetchWithTimeout';
 
-/** A JSON route answers fast; a stalled socket must not hang the Share panel. */
+/** A JSON route answers fast; a stalled socket must not hang the Collaborate panel. */
 const REQUEST_TIMEOUT_MS = 20_000;
 /** A snapshot can be 25 MiB on a slow uplink. */
 const UPLOAD_TIMEOUT_MS = 120_000;

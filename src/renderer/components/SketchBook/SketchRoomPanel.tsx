@@ -15,7 +15,7 @@
  *
  * Kick, Unlock and Unsuspend go through `window.maestro.sketch.roomAction`
  * to main's `sketch-room-admin.ts`, which `maestro-cli sketch kick|unlock|
- * unsuspend` reaches too; Revoke and Reset are the Share panel's own verbs.
+ * unsuspend` reaches too; Revoke and Reset are the Collaborate panel's own verbs.
  * The stats come live from the session, which the room client keeps current.
  */
 

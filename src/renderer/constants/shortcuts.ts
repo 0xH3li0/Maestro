@@ -546,6 +546,14 @@ export const FIXED_SHORTCUTS: Record<string, Shortcut> = {
 		label: 'File Preview: Go Forward',
 		keys: ['Meta', 'ArrowRight'],
 	},
+	// Fires only while focus is inside a Sketch tab (`SketchTab.tsx`), so it
+	// cannot take Cmd+Shift+C from any other surface. Excalidraw binds no
+	// action to it (Copy as PNG is Shift+Opt+C, Copy styles is Cmd+Opt+C).
+	sketchBookCollaborate: {
+		id: 'sketchBookCollaborate',
+		label: 'Sketch Book: Collaborate',
+		keys: ['Meta', 'Shift', 'c'],
+	},
 	renameAgentSession: {
 		id: 'renameAgentSession',
 		label: 'Rename Session (in Sessions Browser)',

@@ -3,7 +3,7 @@
  * shared sketch's bot, the conductor alone (`conductor`) or read-write guests
  * too (`writers`).
  *
- * One implementation for the Share panel's "Let collaborators ask the agent"
+ * One implementation for the Collaborate panel's "Let collaborators ask the agent"
  * toggle and `maestro-cli sketch bot-policy`:
  *
  * - `status` reads the room's policy and `isB2Available()` for the owner.

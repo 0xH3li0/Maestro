@@ -110,7 +110,7 @@ export function registerSketchHandlers(deps: SketchHandlerDeps = {}): void {
 		)
 	);
 
-	// Sharing (spec section 6). The Share panel calls these; `maestro-cli sketch
+	// Sharing (spec section 6). The Collaborate panel calls these; `maestro-cli sketch
 	// share|unshare|revoke-link|rotate|owner` reaches the same service methods
 	// over the WS bridge, where an agent caller gets the A1 confirmation. A
 	// person in the Sketch tab is the conductor, so these pass no caller.
@@ -252,7 +252,7 @@ export function registerSketchHandlers(deps: SketchHandlerDeps = {}): void {
 		)
 	);
 
-	// Who may ask the bot (spec section 5, B2). The Share panel's toggle calls
+	// Who may ask the bot (spec section 5, B2). The Collaborate panel's toggle calls
 	// these; `maestro-cli sketch bot-policy` reaches the same service over the
 	// WS bridge, where an agent's `writers` gets the A1 confirmation. The room
 	// client reports what the server says (`noteRoomBotPolicy`).

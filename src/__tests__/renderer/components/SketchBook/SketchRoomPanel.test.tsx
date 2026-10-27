@@ -2,7 +2,7 @@
  * The Room panel (SketchRoomPanel, spec sections 6, 8.8 and 8.9): members and
  * links from the live `room.stats`, Kick (said to be temporary), Unlock and
  * Unsuspend through `roomAction`, Revoke and Reset all access through the
- * Share panel's verbs, the Y4 banner, and flagged elements from the audit log
+ * Collaborate panel's verbs, the Y4 banner, and flagged elements from the audit log
  * with a one-click delete of the ones the board still holds.
  */
 

@@ -1,6 +1,6 @@
 /**
  * The renderer half of Sketch Book sharing (spec section 6): joining a
- * shared sketch's room, and the Share panel's actions.
+ * shared sketch's room, and the Collaborate panel's actions.
  *
  * Main owns sharing (`sketch-service.ts`): it creates the room, seals the
  * snapshot, mints and revokes links. This window owns the room client, so

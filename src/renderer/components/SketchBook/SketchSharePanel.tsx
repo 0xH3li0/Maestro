@@ -1,5 +1,5 @@
 /**
- * The Sketch tab's Share panel (spec section 6): sign in to RunMaestro.ai,
+ * The Sketch tab's Collaborate panel (spec section 6): sign in to RunMaestro.ai,
  * share the sketch, copy a new link, revoke one, let collaborators ask the
  * agent (B2, `SketchBotPolicyToggle`), reset all access, or stop sharing.
  *
@@ -125,7 +125,7 @@ export function SketchSharePanel({ sketchId, theme, onClose }: SketchSharePanelP
 	return (
 		<aside
 			className="w-80 shrink-0 flex flex-col min-h-0 select-none"
-			aria-label="Share sketch"
+			aria-label="Collaborate on this sketch"
 			data-sketch-share-panel=""
 			style={panelStyle}
 		>
@@ -133,10 +133,10 @@ export function SketchSharePanel({ sketchId, theme, onClose }: SketchSharePanelP
 				className="px-3 py-2 flex items-center justify-between text-xs font-medium"
 				style={{ ...dim, borderBottom: `1px solid ${theme.colors.border}` }}
 			>
-				<span>{shared ? 'Shared on RunMaestro.ai' : 'Share'}</span>
+				<span>{shared ? 'Shared on RunMaestro.ai' : 'Collaborate'}</span>
 				<button
 					type="button"
-					aria-label="Close the Share panel"
+					aria-label="Close the Collaborate panel"
 					className="p-0.5 rounded hover:bg-white/10"
 					onClick={onClose}
 				>

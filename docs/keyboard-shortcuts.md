@@ -462,6 +462,17 @@ The field list is focused on open, so these work without clicking first.
 | Leave the filter     | `Enter`               | `Enter`               |
 | Close row detail     | `Esc`                 | `Esc`                 |
 
+## Sketch Book
+
+| Action                   | macOS         | Windows/Linux  |
+| ------------------------ | ------------- | -------------- |
+| Open or Hide Collaborate | `Cmd+Shift+C` | `Ctrl+Shift+C` |
+
+It works while focus is in a Sketch tab, so it takes the chord from no other
+surface. The same action is **Collaborate...** in the canvas menu and the
+**Collaborate** button at the canvas's top right. Excalidraw's own canvas
+shortcuts are listed under **Help** (`?`) in the canvas.
+
 ## Staged Images Organizer
 
 Opened with the expand button (⤢) beside the staged-image strip, with two or

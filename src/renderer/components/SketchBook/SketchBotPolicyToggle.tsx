@@ -1,5 +1,5 @@
 /**
- * "Let collaborators ask the agent" (spec section 5, B2), in the Share panel.
+ * "Let collaborators ask the agent" (spec section 5, B2), in the Collaborate panel.
  *
  * The switch follows the live room's policy. Turning it on shows the trust
  * warning in place and sends `policy.set {botPolicy:'writers'}` only on

@@ -60,12 +60,16 @@ export function installExcalidrawAssetPath(): string {
 	return assetPath;
 }
 
-/** Load Excalidraw and its stylesheet as a separate lazy chunk. */
+/**
+ * Load Excalidraw, its stylesheet and Maestro's overrides of its UI
+ * (`excalidrawOverrides.css`) as a separate lazy chunk.
+ */
 export async function loadExcalidraw(): Promise<typeof import('@excalidraw/excalidraw')> {
 	installExcalidrawAssetPath();
 	const [excalidraw] = await Promise.all([
 		import('@excalidraw/excalidraw'),
 		import('@excalidraw/excalidraw/index.css'),
+		import('./excalidrawOverrides.css'),
 	]);
 	return excalidraw;
 }

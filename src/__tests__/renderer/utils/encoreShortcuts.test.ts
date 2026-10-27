@@ -80,6 +80,26 @@ describe('encoreShortcuts', () => {
 		expect(clashes.map((shortcut) => shortcut.id)).toEqual([]);
 	});
 
+	it('lists Sketch Book: Collaborate only while Sketch Book is on', () => {
+		expect(availableShortcuts(FIXED_SHORTCUTS, ALL_OFF).sketchBookCollaborate).toBeUndefined();
+		expect(
+			availableShortcuts(FIXED_SHORTCUTS, { ...ALL_OFF, sketchBook: true }).sketchBookCollaborate
+		).toBe(FIXED_SHORTCUTS.sketchBookCollaborate);
+	});
+
+	it('binds Sketch Book: Collaborate to a chord no other shortcut or reserved combo owns', () => {
+		const keys = FIXED_SHORTCUTS.sketchBookCollaborate.keys;
+		expect(findReservedShortcutCombo(keys)).toBeNull();
+		const all = { ...DEFAULT_SHORTCUTS, ...TAB_SHORTCUTS, ...FIXED_SHORTCUTS };
+		const clashes = Object.values(all).filter(
+			(shortcut) =>
+				shortcut.id !== 'sketchBookCollaborate' &&
+				shortcut.keys.length > 0 &&
+				shortcutKeysEqual(shortcut.keys, keys)
+		);
+		expect(clashes.map((shortcut) => shortcut.id)).toEqual([]);
+	});
+
 	it('treats a missing flag map as everything off', () => {
 		expect(isShortcutAvailable('openCue', undefined)).toBe(false);
 		expect(isShortcutAvailable('quickAction', undefined)).toBe(true);

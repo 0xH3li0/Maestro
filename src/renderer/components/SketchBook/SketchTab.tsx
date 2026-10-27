@@ -9,7 +9,7 @@
  *
  * Excalidraw itself loads lazily (`React.lazy` over `loadExcalidraw()`), so
  * no Excalidraw code ships until a sketch opens, and always with the bundled
- * fonts in place.
+ * fonts in place. Its main menu is `SketchMainMenu` (no Excalidraw links).
  *
  * Changes the view did not make (an agent's writes, T5-T8) arrive through the
  * session's `externalRevision` and are merged into Excalidraw by version, as
@@ -18,10 +18,10 @@
  * show in the chat pane. A shared sketch's room notice (a close code, a
  * reconnect; `sketchRoomClient.ts`) shows above the canvas, and so does the
  * reason a room was put back on `conductor` when its screen became unusable
- * while collaborators could ask the agent (spec section 8.3, rule 2). The bar
- * above the canvas badges the room's screening value ("Local screening",
- * "Cloud screening: Jev"), and a banner counts the guest requests the screen
- * could not check (Y4).
+ * while collaborators could ask the agent (spec section 8.3, rule 2). The
+ * canvas badges the room's screening value ("Local screening", "Cloud
+ * screening: Jev"), and a banner counts the guest requests the screen could
+ * not check (Y4).
  *
  * The chat pane also holds the conductor's decisions on `@bot` (spec section
  * 5): a guest's request waits on its approval chip (Run / Deny, at most three
@@ -30,16 +30,20 @@
  * same relay functions `maestro-cli sketch approve|deny|escalate|publish|
  * discard` reach.
  *
- * The Share button in the bar above the canvas opens the Share panel
- * (`SketchSharePanel.tsx`); while the sketch has a room, the Room button
- * opens the Room panel (`SketchRoomPanel.tsx`: members, links, flagged
- * elements, Kick, Unlock, Unsuspend, Revoke, Reset). One panel shows at a time. Opening a shared sketch joins its room when this
+ * The Collaborate button at the canvas's top right, the main menu's
+ * Collaborate item and its chord (`sketchBookCollaborate`) open the
+ * Collaborate panel (`SketchSharePanel.tsx`); while the sketch has a room, the
+ * Room button beside it opens the Room panel (`SketchRoomPanel.tsx`: members,
+ * links, flagged elements, Kick, Unlock, Unsuspend, Revoke, Reset). Both sit
+ * inside the canvas (`SketchCanvasChrome.tsx`), with the screening badge, and
+ * Library moves to the footer beside Help. One panel shows at a time.
+ * Opening a shared sketch joins its room when this
  * window has no client for it yet (`ensureSketchRoomConnected()`), which is
  * how a room comes back after a restart.
  */
 
 import React from 'react';
-import { Share2, Users, X } from 'lucide-react';
+import { X } from 'lucide-react';
 import type {
 	AppState,
 	BinaryFiles,
@@ -59,11 +63,20 @@ import {
 	useSketchSessionStore,
 } from '../../stores/sketchSessionStore';
 import { loadExcalidraw } from './excalidrawAssets';
+import { SketchMainMenu } from './SketchMainMenu';
+import {
+	SketchLibraryTrigger,
+	SketchTopRightUI,
+	type SketchCanvasChrome,
+} from './SketchCanvasChrome';
 import { SketchChatPane } from './SketchChatPane';
 import { SketchSharePanel } from './SketchSharePanel';
 import { SketchRoomPanel } from './SketchRoomPanel';
 import { SketchScreenOutageBanner, SketchScreeningBadge } from './SketchRoomScreening';
-import { HeaderActionButton } from '../ui/HeaderActionButton';
+import { shortcutText } from '../ui/ShortcutHint';
+import { FIXED_SHORTCUTS } from '../../constants/shortcuts';
+import { eventMatchesShortcutKeys } from '../../utils/shortcutMatch';
+import { trackShortcutUsage } from '../../utils/shortcutTracking';
 import { ensureSketchRoomConnected } from '../../services/sketchSharing';
 import { dismissSketchBotPolicyNotice } from '../../services/sketchBotPolicy';
 import { discardHeldSketchReply, publishHeldSketchReply } from '../../services/sketchBotTurns';
@@ -73,9 +86,44 @@ import {
 	escalateSketchBotRequest,
 } from '../../services/sketchBotRelay';
 
+interface SketchCanvasProps extends ExcalidrawProps {
+	chrome: SketchCanvasChrome;
+}
+
 const Excalidraw = React.lazy(() =>
-	loadExcalidraw().then((module) => ({ default: module.Excalidraw }))
+	loadExcalidraw().then(({ Excalidraw: Canvas, Button, Footer, MainMenu, Sidebar }) => {
+		function SketchCanvas({ chrome, ...props }: SketchCanvasProps) {
+			const renderTopRightUI = React.useCallback(
+				() => <SketchTopRightUI Button={Button} chrome={chrome} />,
+				[chrome]
+			);
+			const { onToggle: onCollaborate, shortcut: collaborateShortcut } = chrome.collaborate;
+			// Excalidraw re-renders whenever its children change identity.
+			const children = React.useMemo(
+				() => (
+					<>
+						<SketchMainMenu
+							MainMenu={MainMenu}
+							onCollaborate={onCollaborate}
+							collaborateShortcut={collaborateShortcut}
+						/>
+						<SketchLibraryTrigger Footer={Footer} Sidebar={Sidebar} />
+					</>
+				),
+				[onCollaborate, collaborateShortcut]
+			);
+			return (
+				<Canvas {...props} renderTopRightUI={renderTopRightUI}>
+					{children}
+				</Canvas>
+			);
+		}
+		return { default: SketchCanvas };
+	})
 );
+
+/** The Collaborate chord, as the menu and the button title show it. */
+const COLLABORATE_SHORTCUT_KEYS = FIXED_SHORTCUTS.sketchBookCollaborate.keys;
 
 /** Excalidraw's theme for a Maestro theme: light stays light, everything else is dark. */
 export function excalidrawThemeFor(theme: Theme): 'light' | 'dark' {
@@ -149,6 +197,44 @@ export function SketchTabView({ sketchId, theme }: SketchTabViewProps) {
 	const roomStats = useSketchSessionStore((s) => s.sessions[sketchId]?.room?.stats ?? null);
 	const [api, setApi] = React.useState<ExcalidrawImperativeAPI | null>(null);
 	const [panel, setPanel] = React.useState<'share' | 'room' | null>(null);
+
+	const toggleCollaborate = React.useCallback(
+		() => setPanel((open) => (open === 'share' ? null : 'share')),
+		[]
+	);
+	const toggleRoom = React.useCallback(
+		() => setPanel((open) => (open === 'room' ? null : 'room')),
+		[]
+	);
+	const chrome = React.useMemo<SketchCanvasChrome>(
+		() => ({
+			collaborate: {
+				open: panel === 'share',
+				live: roomConnection === 'live',
+				shortcut: shortcutText(COLLABORATE_SHORTCUT_KEYS),
+				onToggle: toggleCollaborate,
+			},
+			room: roomConnection !== null ? { open: panel === 'room', onToggle: toggleRoom } : null,
+			badge: roomScreening ? (
+				<SketchScreeningBadge screening={roomScreening} theme={theme} />
+			) : null,
+		}),
+		[panel, roomConnection, roomScreening, theme, toggleCollaborate, toggleRoom]
+	);
+
+	// Sketch Book: Collaborate. Capture phase, so Excalidraw's own key handling
+	// never sees the chord; scoped to this tab, so a second Sketch tab in a tile
+	// keeps its own panel.
+	const handleKeyDownCapture = React.useCallback(
+		(event: React.KeyboardEvent) => {
+			if (!eventMatchesShortcutKeys(event, COLLABORATE_SHORTCUT_KEYS)) return;
+			event.preventDefault();
+			event.stopPropagation();
+			toggleCollaborate();
+			trackShortcutUsage('sketchBookCollaborate');
+		},
+		[toggleCollaborate]
+	);
 
 	React.useEffect(() => {
 		void useSketchSessionStore.getState().openSketchSession(sketchId);
@@ -279,38 +365,8 @@ export function SketchTabView({ sketchId, theme }: SketchTabViewProps) {
 			className="flex-1 min-w-0 min-h-0 relative flex flex-col"
 			data-sketch-id={sketchId}
 			style={{ backgroundColor: theme.colors.bgMain }}
+			onKeyDownCapture={handleKeyDownCapture}
 		>
-			<div
-				className="px-2 py-1 flex items-center justify-end gap-2 select-none"
-				style={{ borderBottom: `1px solid ${theme.colors.border}` }}
-			>
-				<SketchScreeningBadge screening={roomScreening} theme={theme} />
-				{roomConnection === 'live' && (
-					<span className="text-xs" style={{ color: theme.colors.textDim }}>
-						Shared
-					</span>
-				)}
-				{roomConnection !== null && (
-					<HeaderActionButton
-						theme={theme}
-						variant={panel === 'room' ? 'primary' : 'ghost'}
-						icon={<Users />}
-						ariaLabel="Show the room"
-						onClick={() => setPanel((open) => (open === 'room' ? null : 'room'))}
-					>
-						Room
-					</HeaderActionButton>
-				)}
-				<HeaderActionButton
-					theme={theme}
-					variant={panel === 'share' ? 'primary' : 'ghost'}
-					icon={<Share2 />}
-					ariaLabel="Share this sketch"
-					onClick={() => setPanel((open) => (open === 'share' ? null : 'share'))}
-				>
-					Share
-				</HeaderActionButton>
-			</div>
 			{saveError && (
 				<div
 					className="px-3 py-1 text-xs select-text"
@@ -368,6 +424,7 @@ export function SketchTabView({ sketchId, theme }: SketchTabViewProps) {
 								excalidrawAPI={setApi}
 								theme={excalidrawThemeFor(theme)}
 								UIOptions={{ canvasActions: { saveToActiveFile: false } }}
+								chrome={chrome}
 							/>
 						</React.Suspense>
 					</div>

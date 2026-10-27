@@ -1,0 +1,53 @@
+/*
+ * Maestro's overrides of Excalidraw's own UI, loaded with it by
+ * `loadExcalidraw()`. Scoped under `.excalidraw` so nothing leaks into the
+ * rest of the app.
+ */
+
+/* The Help dialog's link row (Documentation, blog, GitHub issues, YouTube):
+ * a sketch is Maestro's surface, so it does not send the user to
+ * Excalidraw's channels. Excalidraw has no prop for this row. */
+.excalidraw .HelpDialog .HelpDialog__header {
+	display: none;
+}
+
+/* Library moves to the footer beside Help (`SketchLibraryTrigger`), so the
+ * top right corner belongs to Collaborate. Excalidraw always renders its
+ * default trigger into that corner and has no prop to place it elsewhere.
+ * Desktop only: the mobile toolbar keeps its own Library button. */
+.excalidraw
+	.layer-ui__wrapper__top-right
+	.sidebar-trigger__label-element:has(> .default-sidebar-trigger) {
+	display: none;
+}
+
+/* Maestro's canvas buttons (`SketchCanvasChrome.tsx`): Excalidraw's button
+ * styles, sized to an icon and a label like its Library button. */
+.excalidraw .sketch-chrome-button {
+	width: auto;
+	height: var(--lg-button-size);
+	gap: 0.5rem;
+	font-size: 0.75rem;
+	letter-spacing: 0.4px;
+	line-height: 0;
+}
+
+.excalidraw .sketch-chrome-button svg {
+	width: var(--lg-icon-size);
+	height: var(--lg-icon-size);
+}
+
+.excalidraw .sketch-chrome-button .sidebar-trigger__label {
+	white-space: nowrap;
+}
+
+.excalidraw .sketch-chrome-badge {
+	display: flex;
+	align-items: center;
+}
+
+/* Pushes Library to the right end of the footer, beside Help. */
+.excalidraw .sketch-chrome-footer {
+	display: flex;
+	margin-inline-start: auto;
+}

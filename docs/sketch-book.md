@@ -46,7 +46,9 @@ An agent can create a sketch. It can never share one: sharing is always your act
 
 Sharing puts the sketch in a room on RunMaestro.ai and gives you a link. The board is encrypted on your computer with a key that only travels in the part of the link after `#`, so RunMaestro.ai stores and relays ciphertext it cannot read.
 
-The first time you share, the **Share** panel in the Sketch tab asks for your email address and sends a confirmation link. After you confirm, this computer holds the sign-in. No browser can act as the room owner: the owner is this desktop.
+Open the **Collaborate** panel with the **Collaborate** button at the top right of the canvas, **Collaborate...** in the canvas menu, or `Cmd+Shift+C` (`Ctrl+Shift+C` on Windows and Linux) while the Sketch tab has focus. The button turns green while the room is live, and a **Room** button appears beside it once the sketch has a room. Excalidraw's **Library** sits at the bottom right, beside **Help**.
+
+The first time you share, the Collaborate panel asks for your email address and sends a confirmation link. After you confirm, this computer holds the sign-in. No browser can act as the room owner: the owner is this desktop.
 
 | Link role         | A guest with this link can       | Default expiry |
 | ----------------- | -------------------------------- | -------------- |
@@ -69,7 +71,7 @@ Type `@bot` (or `@` and the agent's name) in the room chat to ask the agent for 
 
 **Your own requests** run as soon as you send them, in a separate conversation that belongs to the sketch, never the agent's other tabs. Until a guest has edited the board, they run with the agent's normal permissions. After a guest edit, your requests run **restricted** (read-only, plus the sketch tools), because the board now holds text you did not write. Under a restricted reply, **Run with full access** runs that one message again with full access. It never carries over to the next message.
 
-**Guest requests** are off by default. To allow them, turn on **Let collaborators ask the agent** in the Share panel. Maestro shows what that means before it takes effect: anyone with an edit link can ask, each request is screened and then waits for you, a run uses your model quota, and everything the agent posts is visible to the room. The switch is greyed out, with the reason, while it cannot be safe:
+**Guest requests** are off by default. To allow them, turn on **Let collaborators ask the agent** in the Collaborate panel. Maestro shows what that means before it takes effect: anyone with an edit link can ask, each request is screened and then waits for you, a run uses your model quota, and everything the agent posts is visible to the room. The switch is greyed out, with the reason, while it cannot be safe:
 
 - the safety screen is off (see below), or
 - the agent's provider has no read-only mode that still lets it draw. Claude Code and OpenCode cannot run restricted turns on a sketch; Codex can.
@@ -98,7 +100,7 @@ maestro-cli sketch bot-policy <sketchId> writers
 
 Anything a guest writes, in chat or on the board, is screened for prompt injection on your computer before the agent can read it. The screen fails closed: text that is flagged, or that could not be screened, is **withheld** from the agent. It is not deleted from the board.
 
-Turn the screen on in **Settings -> Models -> System One**, on the **Prompt-injection screen** row. The quickest path is the **Download Prompt Guard 2 (77 MB)** button beside the greyed-out switch in the Share panel, which downloads the model and assigns it in one step. The model runs on this computer, and a short message takes a few milliseconds to screen.
+Turn the screen on in **Settings -> Models -> System One**, on the **Prompt-injection screen** row. The quickest path is the **Download Prompt Guard 2 (77 MB)** button beside the greyed-out switch in the Collaborate panel, which downloads the model and assigns it in one step. The model runs on this computer, and a short message takes a few milliseconds to screen.
 
 | Screen result | What happens                                                                         |
 | ------------- | ------------------------------------------------------------------------------------ |
@@ -116,7 +118,7 @@ If your System One engine is a cloud service (Jev, or an OpenJev server), the sc
 2. If you switch to a cloud engine while a room is live, Maestro asks again before the next guest text goes out.
 3. Guests are told first. Their page shows a notice and a lasting **Screened by a cloud service** badge before any of their text is sent, and only text written after that point goes to the cloud.
 
-Revoke consent in **Settings -> Plugins -> Sketch Book**, or with `maestro-cli sketch screening-consent revoke --engine jev`.
+To allow an engine before you share, use **Allow...** in **Settings -> Plugins -> Sketch Book**. It opens the same confirmation. OpenJev consent is bound to its server, so OpenJev must be your System One engine before you can allow it. Revoke consent in the same place, or with `maestro-cli sketch screening-consent revoke --engine jev`.
 
 ## What guests see
 
@@ -131,7 +133,7 @@ The Sketch tab header shows the same screening badge. If your screen failed any 
 
 ## Room panel: Kick vs Revoke
 
-The **Room** button in the Sketch tab header opens the Room panel while the sketch is shared. It lists who is in the room, each link with its expiry, and the elements the screen flagged, with a one-click delete for each.
+The **Room** button at the top right of the canvas opens the Room panel while the sketch is shared. It lists who is in the room, each link with its expiry, and the elements the screen flagged, with a one-click delete for each.
 
 | Action               | What it does                                                                                     | Use it when                                  |
 | -------------------- | ------------------------------------------------------------------------------------------------ | -------------------------------------------- |

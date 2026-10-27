@@ -73,7 +73,7 @@ export function sketchScreenDownloadLabel(): string {
 	return megabytes > 0 ? `Download Prompt Guard 2 (${megabytes} MB)` : 'Download Prompt Guard 2';
 }
 
-/** The toggle's label in the Share panel. */
+/** The toggle's label in the Collaborate panel. */
 export const SKETCH_B2_TOGGLE_LABEL = 'Let collaborators ask the agent';
 
 /**

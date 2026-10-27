@@ -15,10 +15,19 @@ import { mockTheme } from '../../../helpers/mockTheme';
 
 const sketchApi = window.maestro.sketch as unknown as Record<string, ReturnType<typeof vi.fn>>;
 
-function renderDialog(prompt: SketchCloudConfirmNeeded, onClose = vi.fn()) {
+function renderDialog(
+	prompt: SketchCloudConfirmNeeded,
+	onClose = vi.fn(),
+	offerLocalSwitch?: boolean
+) {
 	render(
 		<LayerStackProvider>
-			<CloudScreeningConsentDialog theme={mockTheme} prompt={prompt} onClose={onClose} />
+			<CloudScreeningConsentDialog
+				theme={mockTheme}
+				prompt={prompt}
+				onClose={onClose}
+				offerLocalSwitch={offerLocalSwitch}
+			/>
 		</LayerStackProvider>
 	);
 	return onClose;
@@ -117,6 +126,14 @@ describe('Keep local', () => {
 		fireEvent.click(await screen.findByRole('button', { name: 'Not now' }));
 		expect(onClose).toHaveBeenCalledTimes(1);
 		expect(sketchApi.switchScreenToLocal).not.toHaveBeenCalled();
+		expect(sketchApi.grantScreeningConsent).not.toHaveBeenCalled();
+	});
+
+	it('only closes when the local switch is not offered (Settings)', () => {
+		const onClose = renderDialog(JEV, vi.fn(), false);
+		fireEvent.click(screen.getByRole('button', { name: 'Keep local' }));
+		expect(onClose).toHaveBeenCalledTimes(1);
+		expect(sketchApi.localScreenOption).not.toHaveBeenCalled();
 		expect(sketchApi.grantScreeningConsent).not.toHaveBeenCalled();
 	});
 

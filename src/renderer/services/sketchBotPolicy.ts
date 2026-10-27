@@ -5,7 +5,7 @@
  * window owns the room socket, so:
  *
  * - {@link applySketchBotPolicy} sends `policy.set` for main's `botPolicy`
- *   hop, which the Share panel's toggle and `maestro-cli sketch bot-policy`
+ *   hop, which the Collaborate panel's toggle and `maestro-cli sketch bot-policy`
  *   both reach. A demotion carries a notice the Sketch tab shows.
  * - {@link attachSketchBotPolicySync} reports what the room says (`welcome`,
  *   `policy`) to main, which mirrors it and puts a room on `writers` back on

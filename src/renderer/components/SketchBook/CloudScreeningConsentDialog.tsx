@@ -19,7 +19,9 @@
  *   downloading Prompt Guard 2 when none is installed).
  *
  * Escape and the ESC pill close the dialog as "Not now": nothing is allowed.
- * Opened by `CloudScreeningConsentHost`, never directly.
+ * Opened by `CloudScreeningConsentHost` for a live room, and by the Sketch
+ * Book Settings rows to allow an engine ahead of a room (`offerLocalSwitch`
+ * off: there, Keep local just closes).
  */
 
 import React from 'react';
@@ -47,6 +49,11 @@ export interface CloudScreeningConsentDialogProps {
 	prompt: SketchCloudConfirmNeeded;
 	/** The dialog is done: allowed, switched to local, or dismissed. */
 	onClose: () => void;
+	/**
+	 * Keep local offers to point the screen back at a local classifier. On by
+	 * default; the Settings rows turn it off, where Keep local only closes.
+	 */
+	offerLocalSwitch?: boolean;
 }
 
 type Step =
@@ -64,6 +71,7 @@ export function CloudScreeningConsentDialog({
 	theme,
 	prompt,
 	onClose,
+	offerLocalSwitch = true,
 }: CloudScreeningConsentDialogProps) {
 	const [step, setStep] = React.useState<Step>({ kind: 'ask' });
 	const [error, setError] = React.useState<string | null>(null);
@@ -104,6 +112,10 @@ export function CloudScreeningConsentDialog({
 	};
 
 	const keepLocal = async () => {
+		if (!offerLocalSwitch) {
+			onClose();
+			return;
+		}
 		setStep({ kind: 'keep-local', option: null });
 		setError(null);
 		try {

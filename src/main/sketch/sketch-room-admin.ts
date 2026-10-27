@@ -14,7 +14,7 @@
  *   gate decision (never the text) and the elements whose newest decision is
  *   `flagged`, which the panel offers to delete.
  *
- * Revoke link and Reset all access are the Share panel's own verbs
+ * Revoke link and Reset all access are the Collaborate panel's own verbs
  * (`SketchService.revokeSketchLink` / `rotateSketch`); the Room panel calls
  * those, so a link is revoked by one code path wherever it is clicked.
  */

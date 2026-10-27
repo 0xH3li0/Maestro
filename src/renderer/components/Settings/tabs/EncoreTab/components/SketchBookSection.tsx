@@ -1,17 +1,20 @@
-import { useEffect } from 'react';
-import { CloudOff, ShieldCheck } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { Cloud, CloudOff, ShieldCheck } from 'lucide-react';
 import { formatRelativeTime } from '../../../../../../shared/formatters';
 import {
 	normalizeSketchBookSettings,
 	sketchCloudEngineLabel,
 	SKETCH_CLOUD_ENGINES,
+	type SketchCloudConfirmNeeded,
 	type SketchCloudEngine,
 	type SketchCloudScreenConsent,
 } from '../../../../../../shared/sketch/cloud-consent';
+import type { InjectionSourceInfo } from '../../../../../../shared/local-models/injection-screen';
 import { notifyToast } from '../../../../../stores/notificationStore';
 import { useSettingsStore } from '../../../../../stores/settingsStore';
 import { ipcErrorMessage } from '../../../../../utils/ipcErrorMessage';
 import type { Theme } from '../../../../../types';
+import { CloudScreeningConsentDialog } from '../../../../SketchBook/CloudScreeningConsentDialog';
 import { SettingsSectionHeading } from '../../../SettingsSectionHeading';
 import { ActionButton } from './ActionButton';
 
@@ -30,22 +33,66 @@ function mirrorConsent(consent: SketchCloudScreenConsent): void {
 }
 
 /**
+ * The host an OpenJev consent would be bound to: the OpenJev server in force,
+ * or null when the screen does not run on OpenJev (a consent needs a host, G2).
+ */
+function openJevHostInForce(source: InjectionSourceInfo | null): string | null {
+	return source?.kind === 'openjev' && source.host ? source.host : null;
+}
+
+/**
  * Sketch Book's settings, shown in its Extensions tile: the consent to screen
  * guest text on a cloud System One engine (spec section 8.10, G2). The default
- * is local and nothing here grants a consent: it is granted from the
- * confirmation that names the provider and what leaves the machine, the first
- * time a shared sketch would use a cloud engine. Revoke goes through main's
- * consent module, the same one `maestro-cli sketch screening-consent revoke`
- * reaches, so a live room stops using the engine at once.
+ * is local. Allow opens the same confirmation a live room raises
+ * (`CloudScreeningConsentDialog`), which names the provider, its host and what
+ * leaves the machine, so a consent is never granted without the disclosure.
+ * OpenJev is bound to a host, so it can be allowed only while it is the System
+ * One engine in force. Grant and revoke go through main's consent module, the
+ * one `maestro-cli sketch screening-consent` reaches, so a live room follows
+ * at once.
  */
 export function SketchBookSection({ theme }: SketchBookSectionProps) {
 	const consent = useSettingsStore((s) => s.sketchBookSettings.cloudScreenConsent) ?? {};
+	const [source, setSource] = useState<InjectionSourceInfo | null>(null);
+	const [asking, setAsking] = useState<SketchCloudConfirmNeeded | null>(null);
+
+	const readStatus = useCallback(() => {
+		window.maestro.sketch
+			.screeningConsentStatus()
+			.then((status) => {
+				mirrorConsent(status.consent);
+				setSource(status.source);
+			})
+			.catch((error: unknown) => {
+				notifyToast({
+					color: 'red',
+					title: 'Sketch Book',
+					message: `Could not read the screening consent: ${ipcErrorMessage(error)}`,
+				});
+			});
+	}, []);
+
+	useEffect(() => readStatus(), [readStatus]);
 
 	// A grant from the confirmation dialog or the CLI lands in main; follow it here.
 	useEffect(
-		() => window.maestro?.sketch?.onScreeningChanged?.((change) => mirrorConsent(change.consent)),
-		[]
+		() =>
+			window.maestro?.sketch?.onScreeningChanged?.((change) => {
+				mirrorConsent(change.consent);
+				readStatus();
+			}),
+		[readStatus]
 	);
+
+	const allow = (engine: SketchCloudEngine) => {
+		const host =
+			engine === 'openjev'
+				? openJevHostInForce(source)
+				: source?.kind === 'jev'
+					? source.host
+					: undefined;
+		setAsking({ engine, ...(host ? { host } : {}), reason: 'grant' });
+	};
 
 	const revoke = (engine: SketchCloudEngine) => {
 		window.maestro.sketch
@@ -73,6 +120,13 @@ export function SketchBookSection({ theme }: SketchBookSectionProps) {
 					{SKETCH_CLOUD_ENGINES.map((engine) => {
 						const granted = consent[engine];
 						const host = engine === 'openjev' ? consent.openjev?.host : undefined;
+						const openJevHost = engine === 'openjev' ? openJevHostInForce(source) : null;
+						// OpenJev consent is per host: a new server in force can be allowed too.
+						const canAllow =
+							engine === 'jev'
+								? !granted
+								: openJevHost !== null && openJevHost !== consent.openjev?.host;
+						const needsOpenJev = engine === 'openjev' && !granted && openJevHost === null;
 						return (
 							<div
 								key={engine}
@@ -88,23 +142,43 @@ export function SketchBookSection({ theme }: SketchBookSectionProps) {
 									<div className="text-xs" style={{ color: theme.colors.textDim }}>
 										{granted
 											? `Allowed ${formatRelativeTime(granted.grantedAt)}`
-											: 'Not allowed: guest text never goes to this engine'}
+											: needsOpenJev
+												? 'Not allowed. To allow it, set OpenJev as the System One engine first (Settings > Models > System One): consent is bound to its server.'
+												: 'Not allowed: guest text never goes to this engine'}
 									</div>
 								</div>
-								{granted && (
-									<ActionButton
-										theme={theme}
-										icon={CloudOff}
-										label="Revoke"
-										destructive
-										onClick={() => revoke(engine)}
-									/>
-								)}
+								<div className="flex shrink-0 gap-2">
+									{canAllow && (
+										<ActionButton
+											theme={theme}
+											icon={Cloud}
+											label={granted && openJevHost ? `Allow ${openJevHost}...` : 'Allow...'}
+											onClick={() => allow(engine)}
+										/>
+									)}
+									{granted && (
+										<ActionButton
+											theme={theme}
+											icon={CloudOff}
+											label="Revoke"
+											destructive
+											onClick={() => revoke(engine)}
+										/>
+									)}
+								</div>
 							</div>
 						);
 					})}
 				</div>
 			</div>
+			{asking && (
+				<CloudScreeningConsentDialog
+					theme={theme}
+					prompt={asking}
+					offerLocalSwitch={false}
+					onClose={() => setAsking(null)}
+				/>
+			)}
 		</div>
 	);
 }

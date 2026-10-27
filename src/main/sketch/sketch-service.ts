@@ -25,7 +25,7 @@
  * `read` and `export` read the SAVED scene, which the tab autosaves within a
  * second of an edit.
  *
- * Sharing (spec section 6) lives here too, so the Share panel and
+ * Sharing (spec section 6) lives here too, so the Collaborate panel and
  * `maestro-cli sketch share|unshare|revoke-link|rotate` run the same code:
  *
  * - `share`: on the first share, create the room, generate the AES key on this
@@ -379,7 +379,7 @@ export function createSketchService(deps: SketchServiceDeps = {}): SketchService
 		const token = await ownerAuth().ownerToken();
 		if (!token) {
 			throw new Error(
-				`Sketch Book: sign in to ${configured} first (the Share panel, or maestro-cli sketch owner register --email <address>).`
+				`Sketch Book: sign in to ${configured} first (the Collaborate panel, or maestro-cli sketch owner register --email <address>).`
 			);
 		}
 		return { serverUrl: configured, ownerToken: token };

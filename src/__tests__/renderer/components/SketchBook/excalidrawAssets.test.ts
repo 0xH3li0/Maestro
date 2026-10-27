@@ -18,6 +18,7 @@ vi.mock('@excalidraw/excalidraw', () => ({
 	assetPathAtLoad: window.EXCALIDRAW_ASSET_PATH,
 }));
 vi.mock('@excalidraw/excalidraw/index.css', () => ({}));
+vi.mock('../../../../renderer/components/SketchBook/excalidrawOverrides.css', () => ({}));
 vi.mock('@excalidraw/mermaid-to-excalidraw', () => ({
 	assetPathAtLoad: window.EXCALIDRAW_ASSET_PATH,
 }));
