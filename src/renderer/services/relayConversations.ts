@@ -52,7 +52,24 @@ export function applyRelayConversationRuntime(
 					: undefined,
 		};
 	});
-	return changed ? { ...session, aiTabs } : session;
+	if (!changed) return session;
+	// Live reattachment marks a Host-only turn busy with PID 0. Unlike desktop
+	// processes it has no process:exit event to clear that parent runtime.
+	// Settle only that AI state, and never hide work on another tab or terminal.
+	const settleParent =
+		session.state === 'busy' &&
+		session.busySource === 'ai' &&
+		session.aiPid === 0 &&
+		![...aiTabs, ...(session.orphanedThinkingTabs ?? [])].some((tab) => tab.state === 'busy');
+	return {
+		...session,
+		aiTabs,
+		...(settleParent && {
+			state: 'idle' as const,
+			busySource: undefined,
+			thinkingStartTime: undefined,
+		}),
+	};
 }
 
 /** Owner-side conservative sweep; hiding retains the real tab and its transcript.

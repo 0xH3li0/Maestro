@@ -2431,6 +2431,96 @@ describe('process IPC handlers', () => {
 	});
 
 	describe('process:getActiveProcesses', () => {
+		it('reattaches queued and running Host Relay turns and stops them by real tab identity', async () => {
+			writerGate.enabled = true;
+			let owner: any = {
+				id: 'live-relay-agent',
+				toolType: 'codex',
+				cwd: '/test',
+				aiTabs: [],
+				unifiedTabOrder: [],
+			};
+			const root = path.join(process.cwd(), '.maestro', 'scratch');
+			fs.mkdirSync(root, { recursive: true });
+			const baseDir = fs.mkdtempSync(path.join(root, 'live-relay-'));
+			const release = await acquireProviderSessionWriter(
+				'codex',
+				'other-live-writer',
+				'live-provider'
+			);
+			const run = vi.fn(
+				(_a, _p, _s, signal: AbortSignal) =>
+					new Promise<any>((resolve) => {
+						signal.addEventListener(
+							'abort',
+							() =>
+								resolve({ success: false, response: null, sessionId: null, error: 'cancelled' }),
+							{ once: true }
+						);
+					})
+			);
+			const service = new RelayConversations({
+				baseDir,
+				receiptAnchor: fakeAnchor({ value: null }),
+				getAgent: () => owner,
+				updateAgent: (_id, update) => {
+					owner = update(owner);
+				},
+				run,
+			});
+			const controller = new AbortController();
+			const pending = service.send(
+				owner.id,
+				'hello',
+				{ conversationId: 'thread', messageId: 'live-message', sessionId: 'live-provider' },
+				controller.signal,
+				undefined,
+				() => {}
+			);
+			try {
+				await vi.waitFor(() => expect(owner.aiTabs[0]?.relayConversation?.status).toBe('queued'));
+				const processId = `${owner.id}-ai-${owner.aiTabs[0].id}`;
+				const query = () =>
+					handlers.get('process:getActiveProcesses')!({}, { includeChildProcesses: false });
+				const queued = (await query()).find((entry: any) => entry.sessionId === processId);
+				expect(queued).toMatchObject({
+					sessionId: processId,
+					pid: 0,
+					isTerminal: false,
+					toolType: 'codex',
+				});
+				release();
+				await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+				const active = await query();
+				const { resolveLiveAiTurns, applyLiveAiTurns } =
+					await import('../../../../renderer/utils/liveTurnReattach');
+				const restored = applyLiveAiTurns(
+					[
+						{
+							...owner,
+							state: 'idle',
+							aiTabs: owner.aiTabs.map((tab: any) => ({ ...tab, state: 'idle' })),
+						},
+					],
+					resolveLiveAiTurns(active)
+				);
+				expect(restored[0].state).toBe('busy');
+				expect(restored[0].aiTabs[0].state).toBe('busy');
+				mockProcessManager.getAll.mockReturnValueOnce([{ ...queued, pid: 321 }]);
+				expect((await query()).filter((entry: any) => entry.sessionId === processId)).toHaveLength(
+					1
+				);
+				expect(await handlers.get('process:interrupt')!({}, processId)).toBe(true);
+				await pending;
+				expect((await query()).find((entry: any) => entry.sessionId === processId)).toBeUndefined();
+			} finally {
+				release();
+				controller.abort();
+				await pending.catch(() => {});
+				fs.rmSync(baseDir, { recursive: true, force: true });
+			}
+		});
+
 		it('should return list of running processes', async () => {
 			const mockProcesses = [
 				{

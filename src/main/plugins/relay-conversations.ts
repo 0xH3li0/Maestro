@@ -18,13 +18,31 @@ import {
 	hasProviderSessionWriter,
 } from '../utils/provider-session-writer';
 
-const liveRelayTurns = new Map<string, AbortController>();
+interface LiveRelayTurn {
+	controller: AbortController;
+	sessionId: string;
+	toolType: string;
+	cwd: string;
+	startTime: number;
+}
+const liveRelayTurns = new Map<string, LiveRelayTurn>();
+
+/** Host-owned turns, including writer waits, for the existing live-process query. */
+export function getLiveRelayConversationTurns() {
+	return [...liveRelayTurns.values()].map(({ controller: _controller, ...turn }) => ({
+		...turn,
+		// These runners are cancelled by session identity, not by an exposed OS PID.
+		pid: 0,
+		isTerminal: false,
+		isBatchMode: false,
+	}));
+}
 
 /** The real tab's Stop button cancels the host-owned process through its existing signal. */
 export function cancelRelayConversationTurn(processId: string): boolean {
-	const controller = liveRelayTurns.get(processId);
-	if (!controller) return false;
-	controller.abort();
+	const turn = liveRelayTurns.get(processId);
+	if (!turn) return false;
+	turn.controller.abort();
 	return true;
 }
 
@@ -333,7 +351,14 @@ export class RelayConversations {
 				signal.addEventListener('abort', abort, { once: true });
 				if (signal.aborted) controller.abort();
 				const processId = `${agentId}-ai-${mapping.tabId}`;
-				liveRelayTurns.set(processId, controller);
+				const liveTurn: LiveRelayTurn = {
+					controller,
+					sessionId: processId,
+					toolType: agent.toolType,
+					cwd: agent.cwd,
+					startTime: this.now(),
+				};
+				liveRelayTurns.set(processId, liveTurn);
 				this.controllers.add(controller);
 				let release = () => {};
 				let runnerInvoked = false;
@@ -462,7 +487,7 @@ export class RelayConversations {
 				} finally {
 					this.controllers.delete(controller);
 					signal.removeEventListener('abort', abort);
-					if (liveRelayTurns.get(processId) === controller) liveRelayTurns.delete(processId);
+					if (liveRelayTurns.get(processId) === liveTurn) liveRelayTurns.delete(processId);
 					release();
 				}
 			});

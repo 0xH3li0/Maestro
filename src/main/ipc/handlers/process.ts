@@ -1,4 +1,7 @@
-import { cancelRelayConversationTurn } from '../../plugins/relay-conversations';
+import {
+	cancelRelayConversationTurn,
+	getLiveRelayConversationTurns,
+} from '../../plugins/relay-conversations';
 import { getPendingPermissionSnapshot } from '../../permission-relay/registry';
 import { getHeadlessAgentActivity } from '../../utils/headless-agent-activity';
 import { ipcMain, BrowserWindow } from 'electron';
@@ -317,6 +320,13 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					return entry;
 				})
 			);
+
+			// Direct Host Relay runners do not spawn through ProcessManager. Include
+			// their authoritative registry so renderer reloads can restore Stop.
+			const managedIds = new Set(result.map((entry) => entry.sessionId));
+			for (const turn of getLiveRelayConversationTurns()) {
+				if (!managedIds.has(turn.sessionId)) result.push(turn);
+			}
 
 			// Append active Cue run processes if available
 			const cueProcesses = deps.getCueProcesses?.() ?? [];

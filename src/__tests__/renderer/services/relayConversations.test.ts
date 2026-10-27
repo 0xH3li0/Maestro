@@ -168,6 +168,90 @@ describe('Relay archive and restoration', () => {
 		});
 	});
 
+	it('settles a reattached Relay parent when the Host reports completion', async () => {
+		const { applyLiveAiTurns } = await import('../../../renderer/utils/liveTurnReattach');
+		tab.relayConversation!.status = 'running';
+		const live = applyLiveAiTurns(
+			[session],
+			[{ sessionId: session.id, tabId: tab.id, pid: 0, startTime: 1000 }]
+		)[0];
+		const complete = {
+			...live,
+			aiTabs: live.aiTabs.map((t) => ({
+				...t,
+				relayConversation: { ...t.relayConversation!, status: 'idle' as const },
+			})),
+		};
+		const settled = applyRelayConversationRuntime(complete, live);
+		expect(settled.aiTabs[0].state).toBe('idle');
+		expect(settled.state).toBe('idle');
+		expect(settled.busySource).toBeUndefined();
+		expect(settled.thinkingStartTime).toBeUndefined();
+		// A snapshot requested before completion may arrive after its lifecycle event.
+		expect(applyLiveAiTurns([settled], [{ sessionId: session.id, tabId: tab.id, pid: 0 }])[0]).toBe(
+			settled
+		);
+		const failed = {
+			...settled,
+			aiTabs: settled.aiTabs.map((t) => ({
+				...t,
+				relayConversation: { ...t.relayConversation!, status: 'error' as const },
+			})),
+		};
+		expect(applyLiveAiTurns([failed], [{ sessionId: session.id, tabId: tab.id, pid: 0 }])[0]).toBe(
+			failed
+		);
+		const closed = { ...settled, aiTabs: [] };
+		expect(applyLiveAiTurns([closed], [{ sessionId: session.id, tabId: tab.id, pid: 0 }])[0]).toBe(
+			closed
+		);
+	});
+
+	it.each(['queued', 'running'] as const)(
+		'reattaches a %s Host turn on normal and orphaned tabs',
+		async (status) => {
+			const { applyLiveAiTurns } = await import('../../../renderer/utils/liveTurnReattach');
+			tab.relayConversation!.status = status;
+			for (const orphaned of [false, true]) {
+				const restored = {
+					...session,
+					aiTabs: orphaned ? [] : [tab],
+					orphanedThinkingTabs: orphaned ? [tab] : [],
+				};
+				const live = applyLiveAiTurns(
+					[restored],
+					[{ sessionId: session.id, tabId: tab.id, pid: 0 }]
+				)[0];
+				expect(live.state).toBe('busy');
+				expect((orphaned ? live.orphanedThinkingTabs! : live.aiTabs)[0].state).toBe('busy');
+			}
+		}
+	);
+
+	it.each(['busy', 'waiting_input', 'error'] as const)(
+		'preserves unrelated %s runtime when a Relay tab settles',
+		(state) => {
+			const before = structuredClone(session);
+			tab.relayConversation!.status = 'idle';
+			tab.relayConversation!.lastActivityAt = 2000;
+			session.state = state;
+			session.busySource = state === 'busy' ? 'terminal' : 'ai';
+			session.aiPid = 0;
+			expect(applyRelayConversationRuntime(session, before).state).toBe(state);
+		}
+	);
+
+	it('preserves another busy AI tab when a reattached Relay turn completes', () => {
+		const before = structuredClone(session);
+		tab.relayConversation!.status = 'idle';
+		tab.relayConversation!.lastActivityAt = 2000;
+		session.state = 'busy';
+		session.busySource = 'ai';
+		session.aiPid = 0;
+		session.aiTabs.push({ ...tab, id: 'other', relayConversation: undefined, state: 'busy' });
+		expect(applyRelayConversationRuntime(session, before).state).toBe('busy');
+	});
+
 	it('does not clear a newer desktop running state on an unchanged lifecycle echo', () => {
 		const baseline = structuredClone(session);
 		tab.state = 'busy';
