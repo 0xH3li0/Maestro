@@ -421,7 +421,12 @@ describe('plugin headless agent runner', () => {
 				success: true,
 				toolReceipts: [{ agentId: 'agent-a', messageIds: ['123'] }],
 			});
-			expect(issueRunToken).toHaveBeenCalledWith('agent-a', 61 * 60_000, 'sh.maestro.relay/send');
+			expect(issueRunToken).toHaveBeenCalledWith(
+				'agent-a',
+				61 * 60_000,
+				'sh.maestro.relay/send',
+				true
+			);
 			expect(identity.resolve(issueRunToken.mock.results[0].value)).toEqual({
 				callerAgentId: null,
 			});
@@ -797,6 +802,37 @@ it.each(['success', 'error', 'throw', 'cancel-before-spawn'] as const)(
 			reporter.mockReset();
 			removeProof.mockRestore();
 			if (proofFile && fs.existsSync(proofFile)) runIdentity.removePluginRunProofFile(proofFile);
+		}
+	}
+);
+
+it.each(['user', 'auto', 'relay'] as const)(
+	'stamps %s provenance before exposing a headless proof',
+	async (origin) => {
+		const identity = new runIdentity.PluginToolRunIdentity();
+		const modes: boolean[] = [];
+		const run = createPluginHeadlessAgentRunner({
+			getAgent: () => agent,
+			detectAgent: async () => ({ available: true }),
+			hasPluginTools: () => true,
+			spawn: async () => ({ success: true, response: 'synthetic' }),
+			prepareSystemPrompt: async () => undefined,
+			issueRunToken: (id, ttl, receiptToolId, unattended) => {
+				const token = identity.issue(id, ttl, receiptToolId, unattended);
+				modes.push(identity.resolveVerified(token).unattended === true);
+				return token;
+			},
+			revokeRunToken: (token) => identity.revoke(token),
+			cliScriptPath: () => '/synthetic/cli.js',
+			audit: () => {},
+		});
+		try {
+			expect(
+				(await run('agent-a', 'synthetic request', undefined, undefined, origin)).success
+			).toBe(true);
+			expect(modes).toEqual([origin !== 'user']);
+		} finally {
+			identity.stop();
 		}
 	}
 );

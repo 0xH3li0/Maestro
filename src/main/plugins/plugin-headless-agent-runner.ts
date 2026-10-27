@@ -30,7 +30,12 @@ export interface PluginHeadlessRunnerDeps {
 		options?: SpawnAgentOptions
 	) => Promise<AgentResult>;
 	prepareSystemPrompt: (agent: SessionInfo) => Promise<string | undefined>;
-	issueRunToken: (agentId: string, ttlMs: number, receiptToolId?: string) => string;
+	issueRunToken: (
+		agentId: string,
+		ttlMs: number,
+		receiptToolId?: string,
+		unattended?: boolean
+	) => string;
 	getRunReceipts?: (token: string) => PluginToolReceipt[];
 	hasRunReceiptOverflow?: (token: string) => boolean;
 	revokeRunToken: (token: string) => void;
@@ -93,7 +98,12 @@ export function createPluginHeadlessAgentRunner(
 		}
 		const runToken =
 			local && deps.hasPluginTools()
-				? deps.issueRunToken(agent.id, HEADLESS_RUN_COMPLETION_TIMEOUT_MS, receiptToolId)
+				? deps.issueRunToken(
+						agent.id,
+						HEADLESS_RUN_COMPLETION_TIMEOUT_MS,
+						receiptToolId,
+						origin !== 'user'
+					)
 				: undefined;
 		let pluginRunProofFile: string | undefined;
 		let releaseActivity: (() => void) | undefined;

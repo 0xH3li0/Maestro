@@ -29,7 +29,7 @@ const METHODS: Record<string, string> = {
 	coworking: 'getInstallStatus removeSession',
 	'cross-agent': 'cancel send',
 	'cue-stats': 'get-aggregation get-historical-conductor-credit',
-	cue: 'cancelScheduledTask createScheduledTask deleteYaml disable enable getActiveRuns getActivityLog getEventCount getFanInHealth getGraphData getMetrics getQueueStatus getRunLiveOutput getSettings getStatus listScheduledTasks loadPipelineLayout readYaml refreshSession removeSession renamePipeline savePipelineLayout saveSettings setActive stopAll stopRun triggerSubscription updateScheduledTask validateYaml writeYaml',
+	cue: 'cancelScheduledTask checkReadiness createScheduledTask deleteYaml disable enable getActiveRuns getActivityLog getEventCount getFanInHealth getGraphData getMetrics getQueueStatus getRunLiveOutput getSettings getStatus listScheduledTasks loadPipelineLayout readYaml refreshSession removeSession renamePipeline savePipelineLayout saveSettings setActive stopAll stopRun triggerSubscription updateScheduledTask validateYaml writeYaml',
 	cueBackup: 'create delete getDiffStatus inspect list readFile readLive restoreAll restoreFile',
 	// DQL only (DV-14). DataviewJS reads and the trust list stay desktop and CLI only.
 	dataview: 'query queryInline rebuild status',
@@ -54,6 +54,7 @@ const METHODS: Record<string, string> = {
 	maestroRun: 'readyPath',
 	marketplace: 'getDocument getManifest getReadme importPlaybook refreshManifest',
 	memory: 'create delete getPath list orphans read search write',
+	notification: 'changeHistory',
 	openspec: 'getCommand getMetadata getPrompts refresh resetPrompt savePrompt',
 	parquet: 'close export open query',
 	permission: 'respond',
@@ -63,7 +64,8 @@ const METHODS: Record<string, string> = {
 	plugins: 'contributions get-activity get-grants get-groupings invoke-command invoke-tool list',
 	process:
 		'broadcast-user-input cancelCommand getActiveProcesses getHeadlessActivity interrupt isTerminalBusy kill resize runCommand spawn spawnTerminalTab write',
-	prompts: 'get getAll getAllIds getBundledDefault getPath listFiles reset save',
+	prompts:
+		'get getAll getAllIds getBundledDefault getPath getSystemPromptPaths listFiles reset save',
 	sessions:
 		'getActiveSessionId getAll getBootstrap getDeferredContent setActiveSessionId setAll setMany',
 	settings: 'get getAll set',
@@ -79,7 +81,7 @@ const METHODS: Record<string, string> = {
 	tabNaming: 'generateTabName',
 	tabs: 'aiTabClosed',
 	tempfile: 'delete read write',
-	web: 'broadcastSessionState broadcastTabsChange broadcastUserInput requestNewTab startAutoRun controlAutoRun',
+	web: 'getAutoRunStates broadcastSessionState broadcastTabsChange broadcastUserInput requestNewTab requestCloseTab requestReopenTab startAutoRun controlAutoRun',
 	windows: 'getForSession getState list',
 	// floatingWidgets:* is absent on purpose: the browser build never opens widget windows.
 };
@@ -102,7 +104,7 @@ const EVENTS: Record<string, string> = {
 		'autoRunBatchComplete autoRunTriggered historyEntry message moderatorSessionIdChanged moderatorUsage participantLiveOutput participantState participantsChanged queueState stateChange',
 	history: 'entryAdded externalChange',
 	marketplace: 'manifestChanged',
-	notification: 'commandCompleted',
+	notification: 'commandCompleted historyChanged',
 	parquet: 'fetchProgress',
 	plugins: 'changed groupings-changed',
 	process:

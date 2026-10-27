@@ -13,6 +13,11 @@ vi.mock('../../../renderer/utils/runtimeContext', () => ({
 	isWebDesktop: () => runtime.web,
 	isElectronDesktop: () => !runtime.web,
 }));
+const mockLoadAllSettings = vi.hoisted(() => vi.fn());
+vi.mock('../../../renderer/stores/settingsStore', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../renderer/stores/settingsStore')>()),
+	loadAllSettings: mockLoadAllSettings,
+}));
 
 // Mock gitService before any imports that use it
 vi.mock('../../../renderer/services/git', () => ({
@@ -30,6 +35,7 @@ vi.mock('../../../renderer/utils/ids', () => ({
 }));
 
 import { useSessionRestoration } from '../../../renderer/hooks/session/useSessionRestoration';
+import { buildUnifiedTabs } from '../../../renderer/utils/tabHelpers';
 import {
 	updateAiTab,
 	updateSessionWith,
@@ -41,6 +47,12 @@ import type { Session } from '../../../renderer/types';
 import type { BrowserTab } from '../../../shared/browserPage';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { WEB_BRIDGE_RECONCILE_EVENT } from '../../../shared/webClientConfig';
+import { useBatchStore } from '../../../renderer/stores/batchStore';
+import { DEFAULT_BATCH_STATE } from '../../../renderer/hooks/batch/batchReducer';
+import { MAX_CLOSED_TAB_HISTORY } from '../../../shared/closedTabHistory';
+import { addAiTabToUnifiedHistory, closeTab } from '../../../renderer/utils/tabHelpers';
+import { reopenClosedTabWithTiling } from '../../../renderer/utils/panelLayout';
+import { prepareSessionForPersistence } from '../../../renderer/hooks/utils/useDebouncedPersistence';
 
 // Cast to access mock methods
 const mockGitService = gitService as {
@@ -117,6 +129,7 @@ const mockAgentsGet = vi.fn();
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	mockLoadAllSettings.mockResolvedValue(undefined);
 	idCounter = 0;
 	runtime.web = false;
 
@@ -147,6 +160,8 @@ beforeEach(() => {
 	};
 	(window as any).maestro.groups = { getAll: mockGroupsGetAll };
 	(window as any).maestro.groupChat = { list: mockGroupChatList };
+	(window as any).maestro.web = { getAutoRunStates: vi.fn().mockResolvedValue({}) };
+	useBatchStore.setState({ batchRunStates: {} });
 	(window as any).maestro.agents = {
 		get: mockAgentsGet.mockResolvedValue({ id: 'claude-code', name: 'Claude Code' }),
 	};
@@ -629,6 +644,47 @@ describe('restoreSession - Corruption recovery', () => {
 		const log = restored!.aiTabs[0].logs[0];
 		expect(log.text).toContain('corrupted');
 		expect(log.source).toBe('system');
+	});
+
+	// MAESTRO-16B: a tabGroups persisted as an object (not an array) slipped past
+	// every `?? []` / `|| []` default, threw inside restoreSession, and the error
+	// fallback put the raw session in the store, where the tab strip's
+	// `(session.tabGroups || []).map` threw on every render.
+	it('coerces a non-array tabGroups to an empty array instead of failing the restore', async () => {
+		const session = createMockSession({ tabGroups: { 0: 'not-a-group' } as any });
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.tabGroups).toEqual([]);
+		expect(restored!.state).not.toBe('error');
+		expect(restored!.aiTabs.map((t) => t.id)).toEqual(['tab-1']);
+		expect(() => buildUnifiedTabs(restored!)).not.toThrow();
+		expect(buildUnifiedTabs(restored!).map((t) => t.id)).toEqual(['tab-1']);
+	});
+
+	it('coerces non-array tab collections on the error fallback too', async () => {
+		const session = createMockSession({
+			tabGroups: {} as any,
+			unifiedTabOrder: { ai: 'tab-1' } as any,
+			// A null tab with no createdAt makes the createdAt backfill throw, which
+			// sends restoreSession down its error fallback.
+			createdAt: undefined,
+			aiTabs: [null] as any,
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.state).toBe('error');
+		expect(restored!.tabGroups).toEqual([]);
+		expect(restored!.unifiedTabOrder).toEqual([]);
 	});
 
 	it('creates default tab when aiTabs is undefined', async () => {
@@ -1139,6 +1195,100 @@ describe('restoreSession - Runtime state reset', () => {
 		});
 
 		expect(restored!.closedTabHistory).toEqual([]);
+	});
+
+	it('restores the stored closed-tab stack in stored form, dropping malformed entries', async () => {
+		const session = createMockSession({
+			unifiedClosedTabHistory: [
+				{
+					type: 'ai',
+					tab: { id: 'closed-1', agentSessionId: 'provider-1', logs: [{ id: 'l1' }] },
+					unifiedIndex: -1,
+					closedAt: 5,
+				},
+				{ type: 'mystery', tab: { id: 'x' } },
+				null,
+			] as any,
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.unifiedClosedTabHistory).toHaveLength(1);
+		const [entry] = restored!.unifiedClosedTabHistory;
+		expect(entry.tab.id).toBe('closed-1');
+		// A Claude tab with a provider session id is stored without its logs.
+		expect((entry.tab as { logs: unknown[] }).logs).toEqual([]);
+		expect(entry.unifiedIndex).toBe(Number.MAX_SAFE_INTEGER);
+	});
+
+	it('starts with an empty closed-tab stack for a store written before it persisted', async () => {
+		const session = createMockSession();
+		delete (session as Partial<Session>).unifiedClosedTabHistory;
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.unifiedClosedTabHistory).toEqual([]);
+	});
+
+	it('round-trips closed tabs through the store: capped, stripped, and reopenable', async () => {
+		const closing = Array.from({ length: MAX_CLOSED_TAB_HISTORY + 3 }, (_, i) => ({
+			id: `closed-${i}`,
+			agentSessionId: `provider-${i}`,
+			name: null,
+			state: 'idle',
+			logs: [{ id: `log-${i}`, text: `turn ${i}`, source: 'user', timestamp: i }],
+			starred: false,
+			inputValue: '',
+			stagedImages: [],
+			createdAt: i,
+		}));
+		let session = createMockSession({
+			aiTabs: [{ ...closing[0], id: 'keep', agentSessionId: 'provider-keep' }, ...closing] as any,
+			unifiedTabOrder: [
+				{ type: 'ai', id: 'keep' },
+				...closing.map((t) => ({ type: 'ai' as const, id: t.id })),
+			],
+			activeTabId: 'keep',
+			unifiedClosedTabHistory: [],
+		});
+		// The close path the tab handlers take: closeTab, then the unified stack.
+		for (const tab of closing) {
+			const unifiedIndex = session.unifiedTabOrder.findIndex((ref) => ref.id === tab.id);
+			const closed = closeTab(session, tab.id, false)!;
+			session = addAiTabToUnifiedHistory(closed.session, closed.closedTab.tab, unifiedIndex);
+		}
+		// In memory the stack holds whole tabs, transcripts included.
+		expect(session.unifiedClosedTabHistory[0].tab.id).toBe(`closed-${closing.length - 1}`);
+		expect((session.unifiedClosedTabHistory[0].tab as { logs: unknown[] }).logs).toHaveLength(1);
+
+		const onDisk = JSON.parse(JSON.stringify(prepareSessionForPersistence(session))) as Session;
+		expect(onDisk.unifiedClosedTabHistory).toHaveLength(MAX_CLOSED_TAB_HISTORY);
+		expect(
+			onDisk.unifiedClosedTabHistory.every((e) => (e.tab as { logs: unknown[] }).logs.length === 0)
+		).toBe(true);
+		expect(onDisk).not.toHaveProperty('closedTabHistory');
+
+		const { result } = renderHook(() => useSessionRestoration());
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(onDisk);
+		});
+		expect(restored!.unifiedClosedTabHistory).toEqual(onDisk.unifiedClosedTabHistory);
+
+		const reopened = reopenClosedTabWithTiling(restored!)!;
+		expect(reopened.tabType).toBe('ai');
+		const tab = reopened.session.aiTabs.find((t) => t.id === reopened.tabId)!;
+		// The pointer survives; the transcript comes back through loadResumableSession().
+		expect(tab.agentSessionId).toBe(`provider-${closing.length - 1}`);
+		expect(reopened.session.unifiedClosedTabHistory).toHaveLength(MAX_CLOSED_TAB_HISTORY - 1);
 	});
 });
 
@@ -1753,6 +1903,386 @@ describe('Session & Group loading effect', () => {
 			});
 		}
 	);
+	it('replaces stale and host-removed AI and shell rows during authoritative recovery', async () => {
+		runtime.web = true;
+		const original = createMockSession({ id: 'agent' });
+		mockGetBootstrap.mockResolvedValueOnce([original]);
+		(window.maestro as any).process = { getActiveProcesses: vi.fn().mockResolvedValue([]) };
+		renderHook(() => useSessionRestoration());
+		await vi.waitFor(() => expect(useSessionStore.getState().sessionsLoaded).toBe(true));
+		const partial = { id: 'answer', timestamp: 1, source: 'stdout' as const, text: 'partial' };
+		const removed = { ...partial, id: 'removed', text: 'cleared on host' };
+		act(() =>
+			updateSessionWith('agent', (session) => ({
+				...session,
+				shellLogs: [partial, removed],
+				aiTabs: session.aiTabs.map((tab) => ({ ...tab, logs: [partial, removed] })),
+			}))
+		);
+		const canonical = [{ ...partial, text: 'completed host answer' }];
+		mockGetBootstrap.mockResolvedValueOnce([
+			{
+				...original,
+				shellLogs: [],
+				aiTabs: original.aiTabs.map((tab) => ({ ...tab, logs: [] })),
+				deferredContent: { tabIds: ['tab-1'], commands: true },
+			},
+		]);
+		mockGetDeferredContent.mockResolvedValue({
+			logs: canonical,
+			shellLogs: canonical,
+			agentCommands: [],
+			aiCommandHistory: [],
+		});
+		const work: Promise<void>[] = [];
+		await act(async () => {
+			window.dispatchEvent(
+				new CustomEvent(WEB_BRIDGE_RECONCILE_EVENT, {
+					detail: {
+						authoritative: true,
+						signal: new AbortController().signal,
+						waitUntil: (promise: Promise<void>) => work.push(promise),
+					},
+				})
+			);
+			await Promise.all(work);
+		});
+		const current = useSessionStore.getState().sessions[0];
+		expect(current.aiTabs[0].logs).toEqual(canonical);
+		expect(current.shellLogs).toEqual(canonical);
+	});
+
+	it('reconciles completed background conversations and agents without visiting them', async () => {
+		runtime.web = true;
+		const idle = { state: 'idle' as const, busySource: undefined, thinkingStartTime: undefined };
+		const selected = createMockSession({ id: 'selected', ...idle });
+		selected.aiTabs = [
+			{ ...selected.aiTabs[0], id: 'visible', ...idle },
+			{ ...selected.aiTabs[0], id: 'inactive', ...idle },
+		];
+		selected.activeTabId = 'visible';
+		const other = createMockSession({ id: 'other', ...idle });
+		other.aiTabs = other.aiTabs.map((tab) => ({ ...tab, ...idle }));
+		mockGetBootstrap.mockResolvedValueOnce([selected, other]);
+		(window.maestro as any).process = { getActiveProcesses: vi.fn().mockResolvedValue([]) };
+		renderHook(() => useSessionRestoration());
+		await vi.waitFor(() => expect(useSessionStore.getState().sessionsLoaded).toBe(true));
+		act(() =>
+			useSessionStore.setState((state) => ({
+				activeSessionId: 'selected',
+				sessions: state.sessions.map((session) => ({
+					...session,
+					...(session.id === 'other' && {
+						state: 'busy' as const,
+						busySource: 'ai' as const,
+						thinkingStartTime: 1,
+					}),
+					aiTabs: session.aiTabs.map((tab) =>
+						tab.id === 'visible'
+							? tab
+							: {
+									...tab,
+									state: 'busy' as const,
+									thinkingStartTime: 1,
+									inputValue: 'unsent background draft',
+								}
+					),
+				})),
+			}))
+		);
+		mockGetBootstrap.mockResolvedValueOnce([selected, other]);
+		const work: Promise<void>[] = [];
+		await act(async () => {
+			window.dispatchEvent(
+				new CustomEvent(WEB_BRIDGE_RECONCILE_EVENT, {
+					detail: {
+						authoritative: true,
+						signal: new AbortController().signal,
+						waitUntil: (promise: Promise<void>) => work.push(promise),
+					},
+				})
+			);
+			await Promise.all(work);
+		});
+		const state = useSessionStore.getState();
+		expect(state.activeSessionId).toBe('selected');
+		expect(state.sessions[0].activeTabId).toBe('visible');
+		for (const session of state.sessions) {
+			expect(session.state).toBe('idle');
+			expect(session.busySource).toBeUndefined();
+			expect(session.thinkingStartTime).toBeUndefined();
+			for (const tab of session.aiTabs.filter((tab) => tab.id !== 'visible')) {
+				expect(tab.state).toBe('idle');
+				expect(tab.thinkingStartTime).toBeUndefined();
+				expect(tab.inputValue).toBe('unsent background draft');
+			}
+		}
+	});
+
+	it('refreshes host settings before authoritative recovery completes', async () => {
+		runtime.web = true;
+		mockGetBootstrap.mockResolvedValue([createMockSession({ id: 'settings-agent' })]);
+		(window.maestro as any).process = { getActiveProcesses: vi.fn().mockResolvedValue([]) };
+		renderHook(() => useSessionRestoration());
+		await vi.waitFor(() => expect(useSessionStore.getState().sessionsLoaded).toBe(true));
+		mockLoadAllSettings.mockClear();
+		const work: Promise<void>[] = [];
+		await act(async () => {
+			window.dispatchEvent(
+				new CustomEvent(WEB_BRIDGE_RECONCILE_EVENT, {
+					detail: {
+						authoritative: true,
+						signal: new AbortController().signal,
+						waitUntil: (promise: Promise<void>) => work.push(promise),
+					},
+				})
+			);
+			await Promise.all(work);
+		});
+		expect(mockLoadAllSettings).toHaveBeenCalledTimes(1);
+	});
+
+	it('reconciles stopped and paused Auto Run mirrors without claiming local runs', async () => {
+		runtime.web = true;
+		mockGetBootstrap.mockResolvedValue([createMockSession({ state: 'idle' })]);
+		(window.maestro as any).process = { getActiveProcesses: vi.fn().mockResolvedValue([]) };
+		renderHook(() => useSessionRestoration());
+		await vi.waitFor(() => expect(useSessionStore.getState().sessionsLoaded).toBe(true));
+		const local = { ...DEFAULT_BATCH_STATE, isRunning: true, completedTasks: 9 };
+		useBatchStore.setState({
+			batchRunStates: {
+				stopped: { ...DEFAULT_BATCH_STATE, isRunning: true, mirrored: true },
+				paused: { ...DEFAULT_BATCH_STATE, isRunning: true, mirrored: true, errorPaused: true },
+				active: { ...DEFAULT_BATCH_STATE, isRunning: true, mirrored: true, completedTasks: 1 },
+				local,
+			},
+		});
+		(window.maestro.web.getAutoRunStates as ReturnType<typeof vi.fn>).mockResolvedValue({
+			active: {
+				isRunning: true,
+				totalTasks: 4,
+				completedTasks: 3,
+				currentTaskIndex: 3,
+				errorPaused: true,
+			},
+			local: { isRunning: true, totalTasks: 4, completedTasks: 1, currentTaskIndex: 1 },
+		});
+		const work: Promise<void>[] = [];
+		await act(async () => {
+			window.dispatchEvent(
+				new CustomEvent(WEB_BRIDGE_RECONCILE_EVENT, {
+					detail: {
+						authoritative: true,
+						signal: new AbortController().signal,
+						waitUntil: (promise: Promise<void>) => work.push(promise),
+					},
+				})
+			);
+			await Promise.all(work);
+		});
+		const runs = useBatchStore.getState().batchRunStates;
+		expect(runs.stopped).toBeUndefined();
+		expect(runs.paused).toBeUndefined();
+		expect(runs.active).toMatchObject({ mirrored: true, completedTasks: 3, errorPaused: true });
+		expect(runs.local).toEqual(local);
+	});
+
+	it('reconciles host changes without discarding mounted client workflow state', async () => {
+		runtime.web = true;
+		const original = createMockSession({ id: 'kept' });
+		mockGetBootstrap.mockResolvedValueOnce([original, createMockSession({ id: 'removed' })]);
+		(window.maestro as any).process = { getActiveProcesses: vi.fn().mockResolvedValue([]) };
+		renderHook(() => useSessionRestoration());
+		await vi.waitFor(() => expect(useSessionStore.getState().sessionsLoaded).toBe(true));
+		const wizard = {
+			isActive: true,
+			mode: 'new',
+			conversationHistory: [{ id: 'draft', text: 'unfinished plan' }],
+		} as any;
+		const editor = {
+			id: 'edit',
+			path: '/draft.md',
+			name: 'draft.md',
+			editMode: true,
+			editContent: 'unsaved edits',
+		} as any;
+		act(() =>
+			updateSessionWith('kept', (session) => ({
+				...session,
+				wizardState: wizard,
+				aiTabs: [
+					...session.aiTabs.map((tab) => ({ ...tab, inputValue: 'unsent question' })),
+					{
+						...session.aiTabs[0],
+						id: 'local-wizard',
+						inputValue: 'wizard draft',
+						wizardState: wizard,
+					},
+				],
+				activeTabId: 'local-wizard',
+				filePreviewTabs: [editor],
+				activeFileTabId: 'edit',
+				autoRunContent: 'unfinished document',
+			}))
+		);
+		for (let cycle = 1; cycle <= 2; cycle++) {
+			mockGetBootstrap.mockResolvedValueOnce([
+				{ ...original, name: 'Host revision ' + cycle },
+				createMockSession({ id: 'added' }),
+			]);
+			mockGroupsGetAll.mockResolvedValueOnce([
+				{ id: 'host-group', name: 'Recovered', emoji: '', collapsed: false },
+			]);
+			const work: Promise<void>[] = [];
+			await act(async () => {
+				window.dispatchEvent(
+					new CustomEvent(WEB_BRIDGE_RECONCILE_EVENT, {
+						detail: {
+							authoritative: true,
+							signal: new AbortController().signal,
+							waitUntil: (promise: Promise<void>) => work.push(promise),
+						},
+					})
+				);
+				await Promise.all(work);
+			});
+			const state = useSessionStore.getState();
+			expect(state.sessions.map((session) => session.id)).toEqual(['kept', 'added']);
+			expect(state.activeSessionId).toBe('kept');
+			const current = state.sessions[0];
+			expect(current.name).toBe('Host revision ' + cycle);
+			expect(current.wizardState).toBe(wizard);
+			expect(current.aiTabs.find((tab) => tab.id === 'local-wizard')).toMatchObject({
+				wizardState: wizard,
+				inputValue: 'wizard draft',
+			});
+			expect(current.activeTabId).toBe('local-wizard');
+			expect(current.aiTabs[0].inputValue).toBe('unsent question');
+			expect(current.filePreviewTabs[0]).toBe(editor);
+			expect(current.activeFileTabId).toBe('edit');
+			expect(current.autoRunContent).toBe('unfinished document');
+			expect(state.sessionsLoaded).toBe(true);
+			expect(state.groups.map((group) => group.id)).toEqual(['host-group']);
+		}
+	});
+
+	it('skips a host session removed locally while recovered additions restore', async () => {
+		runtime.web = true;
+		const kept = createMockSession({ id: 'kept' });
+		mockGetBootstrap.mockResolvedValueOnce([kept]);
+		(window.maestro as any).process = { getActiveProcesses: vi.fn().mockResolvedValue([]) };
+		renderHook(() => useSessionRestoration());
+		await vi.waitFor(() => expect(useSessionStore.getState().sessionsLoaded).toBe(true));
+		const added = createMockSession({ id: 'added' });
+		mockGetBootstrap.mockResolvedValueOnce([kept, added]);
+		let finishRestore!: (value: boolean) => void;
+		mockGitService.isRepo.mockImplementationOnce(
+			() =>
+				new Promise<boolean>((resolve) => {
+					finishRestore = resolve;
+				})
+		);
+		const work: Promise<void>[] = [];
+		act(() =>
+			window.dispatchEvent(
+				new CustomEvent(WEB_BRIDGE_RECONCILE_EVENT, {
+					detail: {
+						authoritative: true,
+						signal: new AbortController().signal,
+						waitUntil: (promise: Promise<void>) => work.push(promise),
+					},
+				})
+			)
+		);
+		await vi.waitFor(() => expect(finishRestore).toEqual(expect.any(Function)));
+		act(() => useSessionStore.getState().setSessions([]));
+		await act(async () => {
+			finishRestore(false);
+			await Promise.all(work);
+		});
+		expect(useSessionStore.getState().sessions.map((session) => session.id)).toEqual(['added']);
+	});
+	it.each([false, true])(
+		'keeps the current workflow on unavailable recovery: owner offline %s',
+		async (ownerOffline) => {
+			runtime.web = true;
+			mockGetBootstrap.mockResolvedValueOnce([createMockSession({ id: 'current' })]);
+			renderHook(() => useSessionRestoration());
+			await vi.waitFor(() => expect(useSessionStore.getState().sessionsLoaded).toBe(true));
+			const before = useSessionStore.getState().sessions;
+			if (ownerOffline)
+				mockGetBootstrap.mockResolvedValueOnce([
+					{ ...before[0], deferredContent: { tabIds: [], ownerUnavailable: true } },
+				]);
+			else mockGetBootstrap.mockRejectedValueOnce(new Error('snapshot unavailable'));
+			const work: Promise<void>[] = [];
+			await act(async () => {
+				window.dispatchEvent(
+					new CustomEvent(WEB_BRIDGE_RECONCILE_EVENT, {
+						detail: {
+							authoritative: true,
+							signal: new AbortController().signal,
+							waitUntil: (promise: Promise<void>) => work.push(promise),
+						},
+					})
+				);
+				await expect(Promise.all(work)).rejects.toThrow(/snapshot unavailable/);
+			});
+			expect(useSessionStore.getState().sessions).toBe(before);
+			expect(useSessionStore.getState().sessionsLoaded).toBe(true);
+		}
+	);
+	it('ignores a pre-recovery conversation read that arrives after the fresh snapshot', async () => {
+		runtime.web = true;
+		const host = createMockSession({
+			id: 'agent',
+			deferredContent: { tabIds: ['tab-1'], commands: true },
+		});
+		mockGetBootstrap.mockResolvedValueOnce([host]);
+		let resolveOld!: (content: unknown) => void;
+		mockGetDeferredContent
+			.mockReset()
+			.mockImplementationOnce(
+				() =>
+					new Promise((resolve) => {
+						resolveOld = resolve;
+					})
+			)
+			.mockResolvedValue({
+				logs: [{ id: 'fresh', timestamp: 2, source: 'stdout', text: 'fresh host output' }],
+				shellLogs: [],
+				agentCommands: [],
+				aiCommandHistory: [],
+			});
+		(window.maestro as any).process = { getActiveProcesses: vi.fn().mockResolvedValue([]) };
+		renderHook(() => useSessionRestoration());
+		await vi.waitFor(() => expect(mockGetDeferredContent).toHaveBeenCalledTimes(1));
+		mockGetBootstrap.mockResolvedValueOnce([host]);
+		const work: Promise<void>[] = [];
+		await act(async () => {
+			window.dispatchEvent(
+				new CustomEvent(WEB_BRIDGE_RECONCILE_EVENT, {
+					detail: {
+						authoritative: true,
+						signal: new AbortController().signal,
+						waitUntil: (promise: Promise<void>) => work.push(promise),
+					},
+				})
+			);
+			await Promise.all(work);
+		});
+		await act(async () => {
+			resolveOld({
+				logs: [{ id: 'stale', timestamp: 1, source: 'stdout', text: 'obsolete response' }],
+				shellLogs: [],
+				agentCommands: [],
+				aiCommandHistory: [],
+			});
+		});
+		expect(useSessionStore.getState().sessions[0].aiTabs[0].logs.map((log) => log.id)).toEqual([
+			'fresh',
+		]);
+	});
 
 	it('loads sessions from IPC on mount', async () => {
 		const session = createMockSession({ id: 'loaded-1' });

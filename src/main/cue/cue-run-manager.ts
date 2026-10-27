@@ -1,3 +1,10 @@
+import {
+	isDurableCueEvent,
+	authorizePluginCueEvent,
+	preparePluginCueEvent,
+	finishPluginCueEvent,
+} from './triggers/cue-plugin-trigger-source';
+
 /**
  * Cue Run Manager - concurrency control, queue management, and run execution.
  *
@@ -137,6 +144,13 @@ export interface QueuedEvent {
 export interface CueRunManagerDeps {
 	getSessions: () => { id: string; name: string }[];
 	getSessionSettings: (sessionId: string) => CueSettings | undefined;
+	/** Live owner and loaded runtime readiness; distinct from current plugin authority. */
+	canDrainSession?: (sessionId: string) => boolean;
+	/** Queued durable rows retained on disk after live teardown; never retries synchronously. */
+	onDurableRowsDetached?: (
+		sessionId: string,
+		entries: readonly Pick<QueuedEvent, 'persistId' | 'subscriptionName'>[]
+	) => void;
 	onCueRun: (request: {
 		runId: string;
 		sessionId: string;
@@ -180,12 +194,9 @@ export interface CueRunManagerDeps {
 	 * overflow (queue already at `queue_size`). The caller is expected to
 	 * surface this to the user (toast, log banner) so the drop is visible.
 	 */
-	onQueueOverflow?: (payload: {
-		sessionId: string;
-		sessionName: string;
-		subscriptionName: string;
-		queuedAt: number;
-	}) => void;
+	onQueueOverflow?: (
+		payload: Omit<Extract<CueLogPayload, { type: 'queueOverflow' }>, 'type'>
+	) => void;
 	/**
 	 * Phase 12A - optional queue persistence façade. When provided, every
 	 * enqueue writes a row to disk and every drain/drop/clear removes it,
@@ -261,17 +272,10 @@ export interface CueRunManager {
 		autoRun?: CueAutoRunConfig,
 		/** The subscription's model choice, threaded through the queue. */
 		turnSettings?: CueTurnSettings,
-		/**
-		 * Skip the `queue_size` cap (and the queue_size <= 0 drop) when this
-		 * event has to wait. Passed by the engine when it restores rows a
-		 * drain deferred: those were acknowledged work, not buffered
-		 * overflow, so a drain that deferred three successors for an agent
-		 * with `queue_size: 1` must run all three. Concurrency still applies.
-		 */
 		exemptFromQueueCap?: boolean
-	): void;
+	): void | boolean;
 	stopRun(runId: string): boolean;
-	stopAll(): void;
+	stopAll(): void | boolean;
 	/**
 	 * Drain gate (`CueEngine.drain`). While on, `execute` never starts a run:
 	 * every event is queued and persisted regardless of `queue_size`, and
@@ -307,7 +311,7 @@ export interface CueRunManager {
 	 * Drop a session's queued events. `preserveStartup` keeps `app.startup`
 	 * entries.
 	 */
-	clearQueue(sessionId: string, preserveStartup?: boolean): void;
+	clearQueue(sessionId: string, preserveStartup?: boolean): void | boolean;
 	/**
 	 * Settle a session's queue after a cue.yaml reload. `classify` returns
 	 * null to keep an entry, or why it is dropped. A dropped entry loses its
@@ -320,7 +324,7 @@ export interface CueRunManager {
 		sessionId: string,
 		classify: (entry: QueuedEvent) => CueQueueDropReason | null
 	): number;
-	reset(): void;
+	reset(): void | boolean;
 }
 
 export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
@@ -385,16 +389,26 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 	}
 
 	/**
-	 * Drop the whole queue, persisted rows included. Per row rather than a
-	 * table wipe: cue.db is shared by every engine on the data dir, and an
-	 * engine that has lost its lock (or never held it) must not delete the
-	 * queue of the engine that holds it.
+	 * Drop this manager's in-memory queue. Ordinary persisted rows are removed
+	 * per row rather than a table wipe: cue.db is shared by every engine on the
+	 * data dir, and an engine that has lost its lock (or never held it) must not
+	 * delete the queue of the engine that holds it.
+	 *
+	 * Acknowledged durable plugin events remain on disk and are detached to the
+	 * engine so they re-enter the deferred-owner restore set on the next start.
 	 */
 	function forgetQueue(): void {
-		for (const queue of eventQueue.values()) {
+		for (const [sessionId, queue] of eventQueue) {
+			const durable: QueuedEvent[] = [];
 			for (const entry of queue) {
-				if (entry.persistId) deps.queuePersistence?.remove(entry.persistId);
+				if (!entry.persistId) continue;
+				if (isDurableCueEvent(entry.event)) {
+					durable.push(entry);
+				} else {
+					deps.queuePersistence?.remove(entry.persistId);
+				}
 			}
+			if (durable.length) deps.onDurableRowsDetached?.(sessionId, durable);
 		}
 		eventQueue.clear();
 	}
@@ -460,10 +474,14 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			if (currentCount >= maxConcurrent) break;
 
 			const entry = queue[i];
+			if (isDurableCueEvent(entry.event) && deps.canDrainSession?.(sessionId) === false) {
+				i++;
+				continue;
+			}
 			const ageMs = Date.now() - entry.queuedAt;
 
 			// Check for stale events
-			if (ageMs > timeoutMs) {
+			if (!isDurableCueEvent(entry.event) && ageMs > timeoutMs) {
 				queue.splice(i, 1);
 				const ageMinutes = Math.round(ageMs / 60000);
 				// Remove the persisted copy - this runtime drain path is the
@@ -507,9 +525,14 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			// row first - the dispatch promise may outlive another drain/reset
 			// cycle and we must not leave a ghost row referencing an in-flight run.
 			queue.splice(i, 1);
-			if (entry.persistId) deps.queuePersistence?.remove(entry.persistId);
+			if (!authorizePluginCueEvent(entry.event, sessionId, entry.subscriptionName)) {
+				if (entry.persistId) deps.queuePersistence?.remove(entry.persistId);
+				continue;
+			}
+			if (entry.persistId && !isDurableCueEvent(entry.event))
+				deps.queuePersistence?.remove(entry.persistId);
 			activeRunCount.set(sessionId, currentCount + 1);
-			doExecuteCueRun(
+			const execution = doExecuteCueRun(
 				sessionId,
 				entry.prompt,
 				entry.event,
@@ -526,6 +549,11 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				entry.autoRun,
 				entry.turnSettings
 			);
+			if (entry.persistId && isDurableCueEvent(entry.event))
+				void execution.then(
+					() => deps.queuePersistence?.remove(entry.persistId!),
+					() => deps.queuePersistence?.remove(entry.persistId!)
+				);
 		}
 
 		// Clean up empty queue
@@ -610,6 +638,10 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 		autoRun?: CueAutoRunConfig,
 		turnSettings?: CueTurnSettings
 	): Promise<void> {
+		if (!authorizePluginCueEvent(event, sessionId, subscriptionName)) {
+			activeRunCount.set(sessionId, Math.max(0, (activeRunCount.get(sessionId) ?? 1) - 1));
+			return;
+		}
 		const sessionName = getSessionName(sessionId);
 		const settings = deps.getSessionSettings(sessionId);
 		const runId = crypto.randomUUID();
@@ -634,6 +666,25 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			durationMs: 0,
 			startedAt: new Date().toISOString(),
 			endedAt: '',
+		};
+
+		const retainAuthority = (): boolean => {
+			if (authorizePluginCueEvent(event, sessionId, subscriptionName)) return true;
+			result.status = 'stopped';
+			result.stdout = '';
+			result.stderr = '';
+			return false;
+		};
+
+		let executorMayHaveStarted = false;
+		const prepareAndRetainAuthority = async () => {
+			if (!(await preparePluginCueEvent(event, sessionId, subscriptionName, true, runId))) {
+				result.status = 'stopped';
+				result.stdout = '';
+				result.stderr = '';
+				return false;
+			}
+			return !abortController.signal.aborted && retainAuthority();
 		};
 
 		// Claim the self-overlap guard for root triggers, synchronously before
@@ -678,6 +729,9 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 		deps.onRunStarted?.({ runId, sessionId, subscriptionName });
 
 		try {
+			if (!(event.type === 'plugin.event' ? await prepareAndRetainAuthority() : retainAuthority()))
+				return;
+			executorMayHaveStarted = true;
 			const runResult = await deps.onCueRun({
 				runId,
 				sessionId,
@@ -692,6 +746,19 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				turnSettings,
 				signal: abortController.signal,
 			});
+			if (runResult.executionStarted === false) executorMayHaveStarted = false;
+			if (
+				!(event.type === 'plugin.event' ? await prepareAndRetainAuthority() : retainAuthority())
+			) {
+				if (!activeRuns.has(runId))
+					safeUpdateCueEventStatus(
+						runId,
+						'stopped',
+						runResult.providerSessionId,
+						completionInfoFromResult(result)
+					);
+				return;
+			}
 			if (!activeRuns.has(runId)) {
 				// Engine was stopped (or run was cleared) while onCueRun was in
 				// flight. The finally block's cleanup is gated on activeRuns
@@ -750,15 +817,19 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				const slicedOutput = sliceHeadByChars(result.stdout, SOURCE_OUTPUT_MAX_CHARS);
 
 				const outputRunId = crypto.randomUUID();
-				const outputEvent: CueEvent = {
-					...event,
-					id: crypto.randomUUID(),
-					payload: {
-						...event.payload,
-						sourceOutput: slicedOutput,
-						outputPromptPhase: true,
-					},
-				};
+				// Plugin provenance authenticates the exact opaque metadata. Agent output
+				// belongs in the output prompt/result, never in the authenticated event payload.
+				const outputEvent: CueEvent = isDurableCueEvent(event)
+					? event
+					: {
+							...event,
+							id: crypto.randomUUID(),
+							payload: {
+								...event.payload,
+								sourceOutput: slicedOutput,
+								outputPromptPhase: true,
+							},
+						};
 
 				// Output-prompt phase is logically a child of the parent run:
 				// inherit the same chain root, point parent at the parent run.
@@ -793,6 +864,14 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				let outputResult: CueRunResult | undefined;
 				let outputStatus: CueRunResult['status'] = 'failed';
 				try {
+					if (
+						!(event.type === 'plugin.event' ? await prepareAndRetainAuthority() : retainAuthority())
+					) {
+						outputStatus = 'stopped';
+						return;
+					}
+					const startedBeforeOutput = executorMayHaveStarted;
+					executorMayHaveStarted = true;
 					outputResult = await deps.onCueRun({
 						runId: outputRunId,
 						sessionId,
@@ -806,6 +885,14 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 						// The same signal: a stop during this phase cancels its launch too.
 						signal: abortController.signal,
 					});
+					if (outputResult.executionStarted === false) executorMayHaveStarted = startedBeforeOutput;
+					if (
+						!(event.type === 'plugin.event' ? await prepareAndRetainAuthority() : retainAuthority())
+					) {
+						outputStatus = 'stopped';
+						outputResult = { ...outputResult, status: 'stopped', stdout: '', stderr: '' };
+						return;
+					}
 					outputStatus = outputResult.status;
 				} finally {
 					// Use the raw (throwing) updateCueEventStatus with our own
@@ -870,6 +957,9 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				}
 			}
 
+			if (!(event.type === 'plugin.event' ? await prepareAndRetainAuthority() : retainAuthority()))
+				return;
+
 			// Phase 3: legacy cli_output delivery - shell out to maestro-cli send --live.
 			// New code should use a downstream `action: command` subscription with
 			// `command.mode: 'cli'` instead; this path remains for YAML files that
@@ -905,7 +995,19 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 							`[CUE] "${subscriptionName}" CLI output target resolved to empty string (raw="${cliOutput.target}") - skipping delivery`
 						);
 					} else {
+						if (
+							!(event.type === 'plugin.event'
+								? await prepareAndRetainAuthority()
+								: retainAuthority())
+						)
+							return;
 						const sendResult = await runMaestroCliSend(resolvedTarget, result.stdout);
+						if (
+							!(event.type === 'plugin.event'
+								? await prepareAndRetainAuthority()
+								: retainAuthority())
+						)
+							return;
 						if (!sendResult.ok) {
 							throw new Error(`CLI exited with code ${sendResult.exitCode}: ${sendResult.stderr}`);
 						}
@@ -915,6 +1017,10 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 						);
 					}
 				} catch (cliError) {
+					if (
+						!(event.type === 'plugin.event' ? await prepareAndRetainAuthority() : retainAuthority())
+					)
+						return;
 					captureException(cliError, {
 						operation: 'cue:cliOutputDelivery',
 						subscriptionName,
@@ -938,59 +1044,101 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			result.status = 'failed';
 			result.stderr = error instanceof Error ? error.message : String(error);
 		} finally {
-			// A stopped run's launch has returned: nothing of it is left to spawn.
-			unsettledStoppedRuns.delete(runId);
-			// Only clean up if the run is still tracked. If it was already removed
-			// (by stopRun or reset), that caller handled its own cleanup.
-			if (activeRuns.has(runId)) {
-				// Natural completion - set final timing and perform all cleanup
-				result.endedAt = new Date().toISOString();
-				result.durationMs = Date.now() - new Date(result.startedAt).getTime();
+			try {
+				await finishPluginCueEvent(event, runId, executorMayHaveStarted);
+			} catch {
+				// A missing ACK never reopens a claimed event. Preserve uncertainty.
+			}
+			try {
+				// A stopped run's launch has returned: nothing of it is left to spawn.
+				unsettledStoppedRuns.delete(runId);
+				drainStoppedRuns.delete(runId);
+				// Only clean up if the run is still tracked. If it was already removed
+				// (by stopRun or reset), that caller handled its own cleanup.
+				if (activeRuns.has(runId)) {
+					// Natural completion - set final timing and perform all cleanup
+					result.endedAt = new Date().toISOString();
+					result.durationMs = Date.now() - new Date(result.startedAt).getTime();
 
-				transitionRun(runId, 'finished');
-				activeRuns.delete(runId);
-				deps.onAllowSleep?.(`cue:run:${runId}`);
+					if (
+						event.type === 'plugin.event' &&
+						!(await preparePluginCueEvent(event, sessionId, subscriptionName))
+					) {
+						result.status = 'stopped';
+						result.stdout = '';
+						result.stderr = '';
+					}
+					retainAuthority();
+					if (activeRuns.has(runId)) {
+						transitionRun(runId, 'finished');
+						activeRuns.delete(runId);
+						deps.onAllowSleep?.(`cue:run:${runId}`);
 
-				const count = activeRunCount.get(sessionId) ?? 0;
-				activeRunCount.set(sessionId, Math.max(0, count - 1));
-				// Release the self-overlap guard BEFORE draining so a same-root
-				// sibling that was held back can now be admitted by drainQueue.
-				if (myRootKey) activeRootKeys.delete(myRootKey);
-				drainQueue(sessionId);
+						const count = activeRunCount.get(sessionId) ?? 0;
+						activeRunCount.set(sessionId, Math.max(0, count - 1));
+						// Release the self-overlap guard BEFORE draining so a same-root
+						// sibling that was held back can now be admitted by drainQueue.
+						if (myRootKey) activeRootKeys.delete(myRootKey);
+						drainQueue(sessionId);
 
-				try {
-					updateCueEventStatus(
-						runId,
-						result.status,
-						result.providerSessionId,
-						completionInfoFromResult(result)
-					);
-				} catch (err) {
-					deps.onLog('warn', `[CUE] Failed to update DB status for run ${runId}`);
-					captureException(err, {
-						operation: 'cue:updateEventStatus',
-						runId,
-						status: result.status,
-					});
+						// Cleanup/drain callbacks can revoke too. Fence the FIRST terminal
+						// write and status notification, not only the later chain callback.
+						retainAuthority();
+						try {
+							updateCueEventStatus(
+								runId,
+								result.status,
+								result.providerSessionId,
+								completionInfoFromResult(result)
+							);
+						} catch (err) {
+							deps.onLog('warn', `[CUE] Failed to update DB status for run ${runId}`);
+							captureException(err, {
+								operation: 'cue:updateEventStatus',
+								runId,
+								status: result.status,
+							});
+						}
+						deps.onLog('cue', `[CUE] Run finished: ${subscriptionName} (${result.status})`, {
+							type: 'runFinished',
+							runId,
+							sessionId,
+							subscriptionName,
+							status: result.status,
+							...(pipelineName ? { pipelineId: pipelineName } : {}),
+						} satisfies CueLogPayload);
+
+						// Notify engine of completion (for activity log + chain propagation).
+						// Forward this run's chainRootId so the engine can stamp it onto
+						// the AgentCompletionData passed to the completion service -
+						// the next run dispatched off this completion inherits the
+						// same root identity (or this run's runId, if it was itself
+						// a root).
+						if (!retainAuthority()) {
+							safeUpdateCueEventStatus(
+								runId,
+								'stopped',
+								result.providerSessionId,
+								completionInfoFromResult(result)
+							);
+						}
+						if (result.status === 'stopped') deps.onRunStopped(result);
+						else
+							deps.onRunCompleted(
+								sessionId,
+								result,
+								subscriptionName,
+								chainDepth,
+								effectiveChainRootId
+							);
+						// After onRunCompleted, which can queue this run's successors: a drain
+						// waiting for idleness must see them before it persists the queue.
+						notifyIfIdle();
+					}
 				}
-				deps.onLog('cue', `[CUE] Run finished: ${subscriptionName} (${result.status})`, {
-					type: 'runFinished',
-					runId,
-					sessionId,
-					subscriptionName,
-					status: result.status,
-					...(pipelineName ? { pipelineId: pipelineName } : {}),
-				} satisfies CueLogPayload);
-
-				// Notify engine of completion (for activity log + chain propagation).
-				// Forward this run's chainRootId so the engine can stamp it onto
-				// the AgentCompletionData passed to the completion service -
-				// the next run dispatched off this completion inherits the
-				// same root identity (or this run's runId, if it was itself
-				// a root).
-				deps.onRunCompleted(sessionId, result, subscriptionName, chainDepth, effectiveChainRootId);
-				// After onRunCompleted, which can queue this run's successors: a drain
-				// waiting for idleness must see them before it persists the queue.
+			} finally {
+				unsettledStoppedRuns.delete(runId);
+				drainStoppedRuns.delete(runId);
 				notifyIfIdle();
 			}
 		}
@@ -1015,7 +1163,8 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			autoRun?: CueAutoRunConfig,
 			turnSettings?: CueTurnSettings,
 			exemptFromQueueCap?: boolean
-		): void {
+		): void | boolean {
+			if (!authorizePluginCueEvent(event, sessionId, subscriptionName)) return false;
 			const settings = deps.getSessionSettings(sessionId);
 			const maxConcurrent = settings?.max_concurrent ?? 1;
 			const queueSize = settings?.queue_size ?? 0;
@@ -1058,12 +1207,13 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 						sessionName,
 						subscriptionName,
 						queuedAt: queuedAtOverride ?? Date.now(),
+						outcome: 'incoming-rejected',
 					});
 					deps.onLog(
 						'cue',
 						`[CUE] Queue disabled for "${sessionName}" (queue_size=${queueSize}), dropping incoming event`
 					);
-					return;
+					return false;
 				}
 
 				if (!eventQueue.has(sessionId)) {
@@ -1076,11 +1226,26 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 					// onQueueOverflow callback (12B) - without it the drop is
 					// invisible except to someone scraping logs.
 					const dropped = queue[0];
+					if (isDurableCueEvent(event) || isDurableCueEvent(dropped.event)) {
+						deps.onQueueOverflow?.({
+							sessionId,
+							sessionName,
+							subscriptionName,
+							queuedAt: queuedAtOverride ?? Date.now(),
+							outcome: 'incoming-rejected',
+						});
+						deps.onLog(
+							'cue',
+							`[CUE] Queue full for "${sessionName}" and durable admission prevents eviction, dropping incoming event`
+						);
+						return false;
+					}
 					deps.onQueueOverflow?.({
 						sessionId,
 						sessionName,
 						subscriptionName: dropped.subscriptionName,
 						queuedAt: dropped.queuedAt,
+						outcome: 'oldest-evicted',
 					});
 					// Remove the persisted row before shifting from memory so
 					// persistence and in-memory stay in lockstep.
@@ -1119,7 +1284,16 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				// entries that actually made it into the live queue. Safe
 				// wrappers mean a persist failure cannot break the live queue.
 				if (deps.queuePersistence && persistId) {
-					deps.queuePersistence.persist(sessionId, persistId, toPersistableEntry(queuedEntry));
+					const persisted = deps.queuePersistence.persist(
+						sessionId,
+						persistId,
+						toPersistableEntry(queuedEntry)
+					);
+					if (isDurableCueEvent(event) && persisted !== true) {
+						queue.splice(queue.indexOf(queuedEntry), 1);
+						deps.queuePersistence.remove(persistId);
+						return false;
+					}
 				}
 
 				deps.onLog(
@@ -1128,12 +1302,41 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 						? `[CUE] Event deferred for "${sessionName}" (engine draining, ${queue.length} in queue)`
 						: `[CUE] Event queued for "${sessionName}" (${queue.length}/${queueSize} in queue, ${currentCount}/${maxConcurrent} concurrent)`
 				);
-				return;
+				if (isDurableCueEvent(event) && !deps.queuePersistence) {
+					queue.splice(queue.indexOf(queuedEntry), 1);
+					return false;
+				}
+				return true;
 			}
 
 			// Slot available - dispatch immediately
+			let durablePersistId: string | undefined;
+			if (isDurableCueEvent(event)) {
+				if (!deps.queuePersistence) return false;
+				durablePersistId = crypto.randomUUID();
+				const persisted = deps.queuePersistence.persist(sessionId, durablePersistId, {
+					event,
+					subscriptionName,
+					prompt,
+					outputPrompt,
+					cliOutput,
+					action,
+					command,
+					chainDepth,
+					queuedAt: queuedAtOverride ?? Date.now(),
+					chainRootId,
+					parentEventId,
+					autoRun,
+					notify,
+					turnSettings,
+				});
+				if (persisted !== true || !authorizePluginCueEvent(event, sessionId, subscriptionName)) {
+					deps.queuePersistence.remove(durablePersistId);
+					return false;
+				}
+			}
 			activeRunCount.set(sessionId, currentCount + 1);
-			doExecuteCueRun(
+			const execution = doExecuteCueRun(
 				sessionId,
 				prompt,
 				event,
@@ -1150,6 +1353,12 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				autoRun,
 				turnSettings
 			);
+			if (durablePersistId)
+				void execution.then(
+					() => deps.queuePersistence?.remove(durablePersistId!),
+					() => deps.queuePersistence?.remove(durablePersistId!)
+				);
+			return true;
 		},
 
 		stopRun(runId: string): boolean {
@@ -1288,33 +1497,24 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 		},
 
 		clearQueue(sessionId: string, preserveStartup = false): void {
-			if (!preserveStartup) {
-				// Mirror the in-memory clear on disk so persisted rows don't
-				// outlive the live queue they represent.
-				const queue = eventQueue.get(sessionId);
-				if (queue) {
-					for (const entry of queue) {
-						if (entry.persistId) deps.queuePersistence?.remove(entry.persistId);
-					}
-				}
-				eventQueue.delete(sessionId);
-				return;
-			}
 			const queue = eventQueue.get(sessionId);
 			if (!queue) return;
-			const keep = (e: QueuedEvent) => e.event.type === 'app.startup';
+			const keep = (e: QueuedEvent) => preserveStartup && e.event.type === 'app.startup';
 			const kept = queue.filter(keep);
-			// Remove persisted rows for entries we are dropping.
+			const detached: QueuedEvent[] = [];
+			// Ordinary drops are terminal. Acknowledged durable rows remain on
+			// disk and must re-enter the engine's deferred-owner restore set.
 			for (const entry of queue) {
-				if (!keep(entry) && entry.persistId) {
-					deps.queuePersistence?.remove(entry.persistId);
-				}
+				if (keep(entry) || !entry.persistId) continue;
+				if (isDurableCueEvent(entry.event)) detached.push(entry);
+				else deps.queuePersistence?.remove(entry.persistId);
 			}
 			if (kept.length === 0) {
 				eventQueue.delete(sessionId);
 			} else {
 				eventQueue.set(sessionId, kept);
 			}
+			if (detached.length) deps.onDurableRowsDetached?.(sessionId, detached);
 		},
 
 		retainQueue(
@@ -1357,6 +1557,13 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 					{ type: 'queueDropped', sessionId, count, reason } satisfies CueLogPayload
 				);
 			}
+			// Refresh registers sources synchronously after settling this queue.
+			// Recheck the current map/readiness in the next microtask, never a
+			// captured entry; stop/reset/deletion can empty it before then.
+			if (kept.some((entry) => isDurableCueEvent(entry.event)))
+				queueMicrotask(() => {
+					if (deps.canDrainSession?.(sessionId) !== false) drainQueue(sessionId);
+				});
 			return dropped;
 		},
 
@@ -1369,8 +1576,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			activeRuns.clear();
 			activeRunCount.clear();
 			activeRootKeys.clear();
-			// Reset tears down persisted copies too. Any re-enqueue after reset()
-			// will generate fresh persist IDs.
+			// Reset clears ordinary persisted work; acknowledged plugin rows survive for restore.
 			forgetQueue();
 			notifyIfIdle();
 		},
