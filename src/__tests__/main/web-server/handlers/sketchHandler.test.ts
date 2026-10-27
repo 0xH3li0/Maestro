@@ -249,8 +249,8 @@ describe('sketch_command handler', () => {
 	});
 
 	it('refuses an unknown action', async () => {
-		const reply = await send({ action: 'kick', sketchId: SKETCH_ID });
-		expect(reply).toMatchObject({ success: false, error: 'Unknown Sketch Book action: kick' });
+		const reply = await send({ action: 'explode', sketchId: SKETCH_ID });
+		expect(reply).toMatchObject({ success: false, error: 'Unknown Sketch Book action: explode' });
 		expect(service.openSketch).not.toHaveBeenCalled();
 	});
 
