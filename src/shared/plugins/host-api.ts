@@ -23,10 +23,9 @@ import semver from 'semver';
 /**
  * The host API version this Maestro build implements. 1.30.0 adds separately
  * consented bounded original-audio staging for supported local agent sends.
- * Release prerequisite: integrate shared Dictation API1.27 (PR1880) and generic
- * primitives API1.29 (PR1881) before publishing this API1.30 build. Those earlier
- * additive host/SDK contracts must remain present; this focused review branch
- * alone is not a complete release surface. isHostApiCompatible remains strict.
+ * 1.29.0 adds generic verified invocations, consented TLS, opaque secrets,
+ * confirmed records, durable plugin Cue events and parentSessionId metadata.
+ * Shared Dictation API1.27 (PR1880) remains a release prerequisite.
  * 1.25.0 adds resumable
  * agents.send with public progress, verified plugin-tool caller identity, and
  * isolated agents.generateTitle. 1.24.0 added host-mediated services.

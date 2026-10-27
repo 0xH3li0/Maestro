@@ -98,6 +98,31 @@ expectTypeOf<MediaRunOptions>().toEqualTypeOf<SrcMediaOptions>();
 expectTypeOf<MediaToolStatus>().toEqualTypeOf<SrcMediaStatus>();
 expectTypeOf<MediaFailure>().toEqualTypeOf<SrcMediaFailure>();
 
+import type {
+	PluginEndpoint,
+	PluginTlsPart,
+	PluginRecordValue,
+	PluginConsumer,
+	PluginReceipt,
+	PluginJson,
+	PluginPrimitiveErrorCode,
+} from '../index';
+import type {
+	PluginEndpoint as SourceEndpoint,
+	PluginTlsPart as SourceTlsPart,
+	PluginRecordValue as SourceRecord,
+	PluginConsumer as SourceConsumer,
+	PluginReceipt as SourceReceipt,
+	PluginJson as SourceJson,
+	PluginPrimitiveErrorCode as SourceErrorCode,
+} from '../../../../src/shared/plugins/primitives';
+expectTypeOf<PluginEndpoint>().toEqualTypeOf<SourceEndpoint>();
+expectTypeOf<PluginTlsPart>().toEqualTypeOf<SourceTlsPart>();
+expectTypeOf<PluginRecordValue>().toEqualTypeOf<SourceRecord>();
+expectTypeOf<PluginConsumer>().toEqualTypeOf<SourceConsumer>();
+expectTypeOf<PluginReceipt>().toEqualTypeOf<SourceReceipt>();
+expectTypeOf<PluginJson>().toEqualTypeOf<SourceJson>();
+expectTypeOf<PluginPrimitiveErrorCode>().toEqualTypeOf<SourceErrorCode>();
 import type { OriginalAttachmentRef, OriginalAttachmentReceipt } from '../index';
 import type {
 	OriginalAttachmentRef as SrcOriginalAttachmentRef,
