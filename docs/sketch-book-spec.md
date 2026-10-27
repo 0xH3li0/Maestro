@@ -410,6 +410,8 @@ Findings from the measurement:
 
 The server counts `guardrail_rejected` toward `deny_streak` and `guardrail_total`; 3 locks a guest, 5 on one cap suspends `toBot` for the link. `screen_unavailable` changes no locking counter (X1); the server counts it separately in `unavailableTotal` (Y4). The Room panel shows each actor's counters from `room.stats` with Unlock, Unsuspend, Kick and Revoke, and a banner "Your screen failed N guest requests" whenever any `unavailableTotal` is above 0.
 
+Desktop (built 2026-10-27): the room client keeps the newest `room.stats` push in the session (`room.stats`). The Sketch tab shows the Y4 banner above the canvas (`<SketchScreenOutageBanner>`), and its header badges the room's screening value as the server holds it (`<SketchScreeningBadge>`: "Local screening", or "Cloud screening: Jev" / "OpenJev", the engine and host read from the consent module while the value is `cloud`). The words come from `src/shared/sketch/room-stats.ts`; the Room panel mounts the same two components.
+
 ### 8.10 Cloud screening: consent and disclosure (G1-G4)
 
 The engine in force answers for every System One task, so one choice covers both `injection-screen` and the `secret-screen` model pass. "Cloud" means the System One engine is Jev (TypeSafe, `api.typesafe.ai`) or OpenJev (a server at a URL the conductor gives). A local classifier and the local judge are "local".

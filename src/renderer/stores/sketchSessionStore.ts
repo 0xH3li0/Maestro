@@ -61,6 +61,7 @@ import type { SketchBotRequestStatus } from '../../shared/sketch/bot-requests';
 import type { SketchImageApprovals } from '../../shared/sketch/commands';
 import type { SketchWireElement } from '../../shared/sketch/payloads';
 import type { Screening } from '../../shared/sketch/protocol';
+import type { SketchRoomStats } from '../../shared/sketch/room-stats';
 import type {
 	BotPolicy,
 	SketchActor,
@@ -211,6 +212,12 @@ export interface SketchRoomState {
 	 * Sketch tab until dismissed or B2 is turned on again.
 	 */
 	botPolicyNotice: string | null;
+	/**
+	 * The newest `room.stats` the server pushed (hosted spec section 8), or
+	 * null before one. Kept across a reconnect: the next `welcome` brings a
+	 * fresh one.
+	 */
+	stats: SketchRoomStats | null;
 }
 
 /**

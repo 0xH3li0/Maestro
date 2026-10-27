@@ -348,24 +348,45 @@ describe('hello and welcome', () => {
 		});
 	});
 
-	it('keeps later room frames in the session: bot presence, policy, guestEdited', async () => {
+	it('keeps later room frames in the session: bot presence, policy, guestEdited, stats', async () => {
 		await startClient();
 		await joinLive();
+		expect(room().stats).toBeNull();
 
 		receive({ t: 'presence.bot', online: true, agentId: 'a9', name: 'Codex' });
 		receive({ t: 'policy', botPolicy: 'writers' });
-		receive({
-			t: 'room.stats',
+		const statsFrame = {
+			t: 'room.stats' as const,
 			guestEdited: true,
-			actors: [],
+			actors: [
+				{
+					actorId: 'g1',
+					kind: 'guest' as const,
+					name: 'Sam',
+					role: 'rw' as const,
+					online: true,
+					ops: 3,
+					toBot: 1,
+					denyStreak: 0,
+					denialsTotal: 0,
+					guardrailTotal: 0,
+					guardrailByReason: { injection: 0, other: 0 },
+					unavailableTotal: 2,
+					lockedOut: false,
+					lastSeen: 5,
+				},
+			],
 			caps: [],
 			flaggedActors: [],
-			screening: null,
-			screeningSince: null,
-		});
+			screening: 'local' as const,
+			screeningSince: 1,
+		};
+		receive(statsFrame);
 		await until(() => room().guestEdited, 'room.stats');
 
+		const { t: _t, ...stats } = statsFrame;
 		expect(room()).toMatchObject({ botOnline: true, botPolicy: 'writers', guestEdited: true });
+		expect(room().stats).toEqual(stats);
 	});
 });
 

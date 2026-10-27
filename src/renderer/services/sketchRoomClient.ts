@@ -311,6 +311,7 @@ function initialRoomState(roomId: string, syncedSeq: number): SketchRoomState {
 		syncedSeq,
 		screening: { reported: null, server: null, since: null },
 		botPolicyNotice: null,
+		stats: null,
 	};
 }
 
@@ -631,9 +632,13 @@ export class SketchRoomClient {
 			case 'policy':
 				this.updateRoom((room) => (room ? { ...room, botPolicy: frame.botPolicy } : room));
 				break;
-			case 'room.stats':
-				this.updateRoom((room) => (room ? { ...room, guestEdited: frame.guestEdited } : room));
+			case 'room.stats': {
+				const { t: _t, ...stats } = frame;
+				this.updateRoom((room) =>
+					room ? { ...room, guestEdited: frame.guestEdited, stats } : room
+				);
 				break;
+			}
 			case 'error':
 				logger.warn('The room refused a frame', LOG_CTX, { code: frame.code, ref: frame.ref });
 				break;

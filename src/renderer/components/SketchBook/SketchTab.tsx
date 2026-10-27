@@ -18,7 +18,10 @@
  * show in the chat pane. A shared sketch's room notice (a close code, a
  * reconnect; `sketchRoomClient.ts`) shows above the canvas, and so does the
  * reason a room was put back on `conductor` when its screen became unusable
- * while collaborators could ask the agent (spec section 8.3, rule 2).
+ * while collaborators could ask the agent (spec section 8.3, rule 2). The bar
+ * above the canvas badges the room's screening value ("Local screening",
+ * "Cloud screening: Jev"), and a banner counts the guest requests the screen
+ * could not check (Y4).
  *
  * The chat pane also holds the conductor's decisions on `@bot` (spec section
  * 5): a guest's request waits on its approval chip (Run / Deny, at most three
@@ -56,6 +59,7 @@ import {
 import { loadExcalidraw } from './excalidrawAssets';
 import { SketchChatPane } from './SketchChatPane';
 import { SketchSharePanel } from './SketchSharePanel';
+import { SketchScreenOutageBanner, SketchScreeningBadge } from './SketchRoomScreening';
 import { HeaderActionButton } from '../ui/HeaderActionButton';
 import { ensureSketchRoomConnected } from '../../services/sketchSharing';
 import { dismissSketchBotPolicyNotice } from '../../services/sketchBotPolicy';
@@ -135,6 +139,11 @@ export function SketchTabView({ sketchId, theme }: SketchTabViewProps) {
 	const botPolicyNotice = useSketchSessionStore(
 		(s) => s.sessions[sketchId]?.room?.botPolicyNotice ?? null
 	);
+	const roomScreening = useSketchSessionStore((s) => {
+		const room = s.sessions[sketchId]?.room;
+		return room && room.connection !== 'stopped' ? room.screening.server : null;
+	});
+	const roomStats = useSketchSessionStore((s) => s.sessions[sketchId]?.room?.stats ?? null);
 	const [api, setApi] = React.useState<ExcalidrawImperativeAPI | null>(null);
 	const [shareOpen, setShareOpen] = React.useState(false);
 
@@ -272,6 +281,7 @@ export function SketchTabView({ sketchId, theme }: SketchTabViewProps) {
 				className="px-2 py-1 flex items-center justify-end gap-2 select-none"
 				style={{ borderBottom: `1px solid ${theme.colors.border}` }}
 			>
+				<SketchScreeningBadge screening={roomScreening} theme={theme} />
 				{roomConnection === 'live' && (
 					<span className="text-xs" style={{ color: theme.colors.textDim }}>
 						Shared
@@ -332,6 +342,7 @@ export function SketchTabView({ sketchId, theme }: SketchTabViewProps) {
 					</button>
 				</div>
 			)}
+			<SketchScreenOutageBanner stats={roomStats} theme={theme} />
 			<div className="flex-1 min-h-0 flex">
 				<div className="flex-1 min-w-0 relative">
 					<div className="absolute inset-0">

@@ -39,6 +39,7 @@ function liveRoom(overrides: Partial<SketchRoomState> = {}): SketchRoomState {
 		syncedSeq: 0,
 		screening: { reported: 'local', server: 'local', since: 1 },
 		botPolicyNotice: null,
+		stats: null,
 		...overrides,
 	};
 }

@@ -35,6 +35,7 @@ function room(botPolicy: BotPolicy, connection: SketchRoomState['connection'] = 
 		syncedSeq: 0,
 		screening: { reported: 'local', server: 'local', since: 1 },
 		botPolicyNotice: null,
+		stats: null,
 	};
 	useSketchSessionStore.getState().updateSketchRoom(SKETCH_ID, () => state);
 }

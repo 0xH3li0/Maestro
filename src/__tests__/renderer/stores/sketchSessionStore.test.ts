@@ -522,6 +522,7 @@ describe('room state', () => {
 			syncedSeq: 0,
 			screening: { reported, server, since: server ? 100 : null },
 			botPolicyNotice: null,
+			stats: null,
 		};
 	}
 

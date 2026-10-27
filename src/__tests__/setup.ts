@@ -648,6 +648,12 @@ const mockMaestro = {
 			sourceCovered: false,
 			rooms: [],
 		}),
+		screeningConsentStatus: vi.fn().mockResolvedValue({
+			consent: {},
+			source: null,
+			sourceCovered: false,
+			rooms: [],
+		}),
 		onScreeningChanged: vi.fn(() => () => {}),
 		onBotPolicyChanged: vi.fn(() => () => {}),
 	},

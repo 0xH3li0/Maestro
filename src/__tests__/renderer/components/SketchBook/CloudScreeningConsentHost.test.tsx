@@ -37,6 +37,7 @@ function holdRoom() {
 		syncedSeq: 0,
 		screening: { reported: 'local', server: 'local', since: 1 },
 		botPolicyNotice: null,
+		stats: null,
 	};
 	useSketchSessionStore.setState({
 		sessions: { [SKETCH_ID]: { room: state } as never },
