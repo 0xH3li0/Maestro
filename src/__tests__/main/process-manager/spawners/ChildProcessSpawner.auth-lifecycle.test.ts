@@ -37,6 +37,47 @@ afterEach(() => {
 });
 
 describe.skipIf(process.platform !== 'linux')('real desktop Codex auth/MCP lifecycle', () => {
+	it('terminates a timed-out resistant predecessor before disposing its supervision', async () => {
+		const processes = new Map<string, ManagedProcess>();
+		const emitter = new EventEmitter();
+		const spawner = new ChildProcessSpawner(
+			processes,
+			emitter,
+			new DataBufferManager(processes, emitter)
+		);
+		const failed = new Promise<void>((resolve) => emitter.once('agent-error', () => resolve()));
+		const config = {
+			sessionId: 'resistant-fixture',
+			toolType: 'codex',
+			cwd: process.cwd(),
+			command: process.execPath,
+			args: [
+				resolve('src/__tests__/fixtures/process-lifecycle/codex-auth-stall.cjs'),
+				'--fixture-phase=resistant',
+			],
+			prompt: 'fixture',
+			promptAlreadyInArgs: true,
+		};
+		expect(spawner.spawn(config).success).toBe(true);
+		const predecessor = processes.get(config.sessionId)!;
+		owned.push(predecessor);
+		await failed;
+		// Model ProcessManager.kill(): reuse the existing stop ladder and remove
+		// the map entry before registering the next turn under the same id.
+		stopProcess({ child: predecessor.childProcess }, { from: 'terminate', graceMs: 2_000 });
+		processes.delete(config.sessionId);
+		expect(spawner.spawn({ ...config, args: ['-e', 'setInterval(() => {}, 1000)'] }).success).toBe(
+			true
+		);
+		const successor = processes.get(config.sessionId)!;
+		owned.push(successor);
+		await vi.waitFor(() => expect(predecessor.childProcess?.signalCode).toBe('SIGKILL'), {
+			timeout: 1_000,
+		});
+		expect(processes.get(config.sessionId)).toBe(successor);
+		expect(successor.childProcess?.exitCode).toBeNull();
+		expect(successor.childProcess?.signalCode).toBeNull();
+	});
 	it.each(['startup', 'after-model', 'mcp-tool'] as const)(
 		'settles %s blockage, forwards an error and releases its own MCP child',
 		async (phase) => {

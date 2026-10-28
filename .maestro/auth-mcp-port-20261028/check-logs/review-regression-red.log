@@ -1,0 +1,41 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vitest.config.mts:135:22). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vitest.config.mts:135:22). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vitest.config.mts:135:22). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v4.1.11 /home/chris/code/worktrees/fix/auth-mcp-supervision-rc-20261028
+
+ ❯ |node| src/__tests__/main/process-manager/spawners/ChildProcessSpawner.auth-lifecycle.test.ts (4 tests | 1 failed | 3 skipped) 1785ms
+     × terminates a timed-out resistant predecessor before disposing its supervision 1783ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |node| src/__tests__/main/process-manager/spawners/ChildProcessSpawner.auth-lifecycle.test.ts > real desktop Codex auth/MCP lifecycle > terminates a timed-out resistant predecessor before disposing its supervision
+AssertionError: expected null to be 'SIGKILL' // Object.is equality
+
+- Expected:
+"SIGKILL"
+
++ Received:
+null
+
+ ❯ vi.waitFor.timeout src/__tests__/main/process-manager/spawners/ChildProcessSpawner.auth-lifecycle.test.ts:62:71
+     60|   const successor = processes.get(config.sessionId)!;
+     61|   owned.push(successor);
+     62|   await vi.waitFor(() => expect(predecessor.childProcess?.signalCode).…
+       |                                                                       ^
+     63|   expect(processes.get(config.sessionId)).toBe(successor);
+     64|   expect(successor.childProcess?.exitCode).toBeNull();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 3 skipped (4)
+   Start at  20:42:40
+   Duration  3.65s (transform 1.24s, setup 0ms, import 1.66s, tests 1.79s, environment 0ms)

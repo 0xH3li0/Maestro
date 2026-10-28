@@ -6,6 +6,7 @@ const phase = process.argv.find((arg) => arg.startsWith('--fixture-phase='))?.sp
 const pidFile = process.argv
 	.find((arg) => arg.startsWith('--fixture-pids='))
 	?.slice('--fixture-pids='.length);
+if (phase === 'resistant') process.on('SIGTERM', () => {});
 if (phase === 'success') {
 	console.log(
 		JSON.stringify({
@@ -21,7 +22,7 @@ const mcp = spawn(process.execPath, ['-e', "setInterval(() => {}, 1000); console
 mcp.stdout.once('data', () => {
 	if (pidFile) writeFileSync(pidFile, JSON.stringify({ agent: process.pid, mcp: mcp.pid }));
 	console.log('MCP_READY:' + mcp.pid);
-	if (phase !== 'startup')
+	if (phase !== 'startup' && phase !== 'resistant')
 		console.log(
 			JSON.stringify({
 				type: 'item.completed',

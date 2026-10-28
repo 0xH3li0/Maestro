@@ -36,7 +36,10 @@ import type { WindowsShellReason } from '../../../shared/maestro-lib/launch/wind
 import { captureException } from '../../utils/sentry';
 import { nextSpawnGeneration, isSupersededGeneration } from '../generation';
 import { startTurn } from '../../../shared/maestro-lib/run/start-turn';
-import { INTERACTIVE_STOP_GRACE_MS } from '../../../shared/maestro-lib/control/termination';
+import {
+	INTERACTIVE_STOP_GRACE_MS,
+	stopProcess,
+} from '../../../shared/maestro-lib/control/termination';
 import { superviseAgentProcess } from '../../../shared/maestro-lib/control/agent-process-supervisor';
 import type { ParsedEvent } from '../../parsers/agent-output-parser';
 import {
@@ -690,6 +693,14 @@ export class ChildProcessSpawner {
 					this.supervisions.delete(sessionId);
 			};
 			const supersedeSupervision = (): void => {
+				// Disposal cancels the supervisor's shared stop ladder. Finish an
+				// already-failed predecessor first so SIGTERM resistance cannot leave
+				// an unowned writer behind when a replacement takes this session.
+				if (supervisionFailed)
+					stopProcess(
+						{ child: childProcess },
+						{ from: 'terminate', graceMs: INTERACTIVE_STOP_GRACE_MS, immediate: true }
+					);
 				disposeSupervision();
 				forceCompletion();
 			};

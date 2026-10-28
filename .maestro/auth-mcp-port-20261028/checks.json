@@ -38,5 +38,35 @@
   "initial_failures": "See check-logs/vitest.log and vitest-rerun.log. Restored explicit idle profile validation when timeout omitted; increased compressed budgets and waited boundedly for descendant termination.",
   "omitted": "Full test suite and validate:push intentionally omitted per task. No live providers, credentials, MCP, installation or restart.",
   "model": "/proc/228109 command line: gpt-6.1-terra, model_reasoning_effort=medium.",
-  "images_analyzed": 0
+  "images_analyzed": 0,
+  "review_checks": [
+    {
+      "command": "./node_modules/.bin/vitest run src/__tests__/cli/services/agent-spawner.auth-lifecycle.test.ts src/__tests__/cli/services/agent-process-supervisor.test.ts src/__tests__/cli/services/agent-spawner.test.ts src/__tests__/main/cross-agent/consult-runner.test.ts src/__tests__/main/process-manager/spawners/ChildProcessSpawner.auth-lifecycle.test.ts src/shared/maestro-lib/agents/__tests__/consult.test.ts src/__tests__/main/process-manager/spawners/ChildProcessSpawner.test.ts src/__tests__/main/process-manager/handlers/StdoutHandler.test.ts",
+      "exit": 0,
+      "result": "8 suites, 485 tests passed",
+      "log": "check-logs/review-regression-green.log"
+    },
+    {
+      "command": "vitest run desktop auth lifecycle suite -t 'resistant predecessor' (before fix)",
+      "exit": 1,
+      "result": "Expected SIGKILL, received null; reproduced supersession cancellation",
+      "log": "check-logs/review-regression-red.log"
+    },
+    {
+      "command": "eslint three review-changed source/test/fixture files",
+      "exit": 0,
+      "result": "0 errors; test/fixture ignored by repository config",
+      "log": "check-logs/review-eslint.log"
+    },
+    {
+      "command": "prettier --check three review-changed source/test/fixture files",
+      "exit": 0,
+      "log": "check-logs/review-prettier.log"
+    },
+    {
+      "command": "git diff --check upstream/rc",
+      "exit": 0
+    }
+  ],
+  "review_source_tree": "47a5dec601c17dad3dcfbde85cae97bd603aaeff"
 }
