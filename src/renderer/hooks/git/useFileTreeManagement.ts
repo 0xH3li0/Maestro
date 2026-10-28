@@ -159,9 +159,13 @@ export interface UseFileTreeManagementDeps {
 	sshReduceEntryCapFraction?: number;
 }
 
-/**
- * Return type for useFileTreeManagement hook.
- */
+/** Options retained by direct refreshes and coalesced reconnect retries. */
+interface FileTreeRefreshOptions {
+	maxEntriesOverride?: number;
+	skipStats?: boolean;
+}
+
+/** Return type for useFileTreeManagement hook. */
 export interface UseFileTreeManagementReturn {
 	/**
 	 * Refresh file tree for a session and return detected changes. `skipStats`
@@ -170,7 +174,7 @@ export interface UseFileTreeManagementReturn {
 	 */
 	refreshFileTree: (
 		sessionId: string,
-		options?: { maxEntriesOverride?: number; skipStats?: boolean }
+		options?: FileTreeRefreshOptions
 	) => Promise<FileTreeChanges | undefined>;
 	/** Refresh both file tree and git state for a session */
 	refreshGitFileState: (sessionId: string) => Promise<void>;
@@ -199,7 +203,27 @@ export interface UseFileTreeManagementReturn {
 export function useFileTreeManagement(
 	deps: UseFileTreeManagementDeps
 ): UseFileTreeManagementReturn {
-	const pendingTransportRefreshes = useRef(new Set<string>());
+	const pendingTransportRefreshes = useRef(new Map<string, FileTreeRefreshOptions>());
+	/** Keep the widest queued load; skip stats only when every request permits it. */
+	const queueTransportRefresh = useCallback(
+		(sessionId: string, options?: FileTreeRefreshOptions) => {
+			const pending = pendingTransportRefreshes.current.get(sessionId);
+			const previousCap = pending?.maxEntriesOverride;
+			const requestedCap = options?.maxEntriesOverride;
+			pendingTransportRefreshes.current.set(sessionId, {
+				maxEntriesOverride:
+					previousCap === undefined
+						? requestedCap
+						: requestedCap === undefined
+							? previousCap
+							: Math.max(previousCap, requestedCap),
+				skipStats: pending
+					? pending.skipStats === true && options?.skipStats === true
+					: options?.skipStats,
+			});
+		},
+		[]
+	);
 	const {
 		sessionsRef,
 		setSessions,
@@ -452,10 +476,10 @@ export function useFileTreeManagement(
 	const refreshFileTree = useCallback(
 		async (
 			sessionId: string,
-			options?: { maxEntriesOverride?: number; skipStats?: boolean }
+			options?: FileTreeRefreshOptions
 		): Promise<FileTreeChanges | undefined> => {
 			if (!isBridgeTransportReady()) {
-				pendingTransportRefreshes.current.add(sessionId);
+				queueTransportRefresh(sessionId, options);
 				return undefined;
 			}
 			const seq = nextSeq(sessionId);
@@ -566,7 +590,7 @@ export function useFileTreeManagement(
 				return changes;
 			} catch (error) {
 				if (isExpectedBridgeError(error) && !isBridgeTransportReady()) {
-					pendingTransportRefreshes.current.add(sessionId);
+					queueTransportRefresh(sessionId, options);
 					return undefined;
 				}
 				// Refresh failed - log it but preserve the existing file tree.
@@ -594,6 +618,7 @@ export function useFileTreeManagement(
 			}
 		},
 		[
+			queueTransportRefresh,
 			sessionsRef,
 			setSessions,
 			sshContextOptions,
@@ -610,7 +635,7 @@ export function useFileTreeManagement(
 		if (!isBridgeTransportReady()) return;
 		const pending = [...pendingTransportRefreshes.current];
 		pendingTransportRefreshes.current.clear();
-		for (const sessionId of pending) void refreshFileTree(sessionId);
+		for (const [sessionId, options] of pending) void refreshFileTree(sessionId, options);
 	});
 
 	/**
@@ -768,7 +793,7 @@ export function useFileTreeManagement(
 		const session = activeSession;
 		if (!session) return;
 		if (!isBridgeTransportReady()) {
-			pendingTransportRefreshes.current.add(session.id);
+			queueTransportRefresh(session.id);
 			return;
 		}
 
@@ -995,7 +1020,7 @@ export function useFileTreeManagement(
 					// cancelFileTreeLoad already cleared loading UI; this just guards against
 					// the race where the load completes before the cancel state-write lands.
 					if (error instanceof FileTreeAbortError || isExpectedBridgeError(error)) {
-						if (isExpectedBridgeError(error)) pendingTransportRefreshes.current.add(sessionId);
+						if (isExpectedBridgeError(error)) queueTransportRefresh(sessionId);
 						setSessions((prev) =>
 							prev.map((s) =>
 								s.id === sessionId
@@ -1046,6 +1071,7 @@ export function useFileTreeManagement(
 				});
 		}
 	}, [
+		queueTransportRefresh,
 		activeSession,
 		setSessions,
 		sshContextOptions,

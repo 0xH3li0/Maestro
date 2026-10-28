@@ -159,6 +159,67 @@ describe('useFileTreeManagement', () => {
 		expect(loadFileTree).toHaveBeenCalledOnce();
 	});
 
+	it.each([200_000, Infinity])(
+		'keeps the requested entry cap %s when polling also queues a refresh during recovery',
+		async (maxEntriesOverride) => {
+			const bridge = window as unknown as Record<string, unknown>;
+			bridge.__MAESTRO_BRIDGE_STATE__ = 'restoring';
+			const tree: FileNode[] = [{ name: 'retained.txt', type: 'file' }];
+			const state = createSessionsState([createMockSession({ fileTree: tree })]);
+			vi.mocked(loadFileTree).mockResolvedValue(asResult(tree));
+			vi.mocked(compareFileTrees).mockReturnValue({ totalChanges: 0 } as any);
+			const { result } = renderHook(() =>
+				useFileTreeManagement(createDeps(state, { activeSession: null, activeSessionId: null }))
+			);
+			const sessionId = state.getSessions()[0].id;
+			await act(async () => {
+				await result.current.refreshFileTree(sessionId, { maxEntriesOverride, skipStats: true });
+				await result.current.refreshFileTree(sessionId);
+				await result.current.refreshFileTree(sessionId, { maxEntriesOverride: 150_000 });
+			});
+			expect(loadFileTree).not.toHaveBeenCalled();
+			await act(async () => {
+				bridge.__MAESTRO_BRIDGE_STATE__ = 'connected';
+				window.dispatchEvent(new CustomEvent('maestro:bridge-state'));
+			});
+			expect(loadFileTree).toHaveBeenCalledOnce();
+			expect(vi.mocked(loadFileTree).mock.calls[0][6]).toBe(maxEntriesOverride);
+			expect(state.getSessions()[0].fileTreeLoadedCap).toBe(maxEntriesOverride);
+			// A coalesced normal refresh still requires its directory stats.
+			expect(window.maestro.fs.directorySize).toHaveBeenCalledOnce();
+		}
+	);
+
+	it('preserves refresh options when a reconnect interrupts an in-flight load', async () => {
+		const bridge = window as unknown as Record<string, unknown>;
+		bridge.__MAESTRO_BRIDGE_STATE__ = 'connected';
+		const tree: FileNode[] = [{ name: 'retained.txt', type: 'file' }];
+		const state = createSessionsState([createMockSession({ fileTree: tree })]);
+		vi.mocked(loadFileTree)
+			.mockImplementationOnce(async () => {
+				bridge.__MAESTRO_BRIDGE_STATE__ = 'restoring';
+				throw new BridgeTransportError('Reconnecting', 'BRIDGE_RECONNECTING');
+			})
+			.mockResolvedValue(asResult(tree));
+		vi.mocked(compareFileTrees).mockReturnValue({ totalChanges: 0 } as any);
+		const { result } = renderHook(() =>
+			useFileTreeManagement(createDeps(state, { activeSession: null, activeSessionId: null }))
+		);
+		await act(async () => {
+			await result.current.refreshFileTree(state.getSessions()[0].id, {
+				maxEntriesOverride: Infinity,
+				skipStats: true,
+			});
+		});
+		await act(async () => {
+			bridge.__MAESTRO_BRIDGE_STATE__ = 'connected';
+			window.dispatchEvent(new CustomEvent('maestro:bridge-state'));
+		});
+		expect(loadFileTree).toHaveBeenCalledTimes(2);
+		expect(vi.mocked(loadFileTree).mock.calls[1][6]).toBe(Infinity);
+		expect(window.maestro.fs.directorySize).not.toHaveBeenCalled();
+	});
+
 	it('retains the working tree and avoids error logs for a reconnect racing a refresh', async () => {
 		const tree: FileNode[] = [{ name: 'retained.txt', type: 'file' }];
 		const state = createSessionsState([createMockSession({ fileTree: tree })]);
