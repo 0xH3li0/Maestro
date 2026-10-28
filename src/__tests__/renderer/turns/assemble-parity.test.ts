@@ -115,6 +115,7 @@ import type { AITab, BatchRunState, Session } from '../../../renderer/types';
 import { assembleTurn } from '../../../shared/maestro-lib/turns/assemble';
 import { loadTurnContext } from '../../../shared/maestro-lib/turns/context';
 import { historyFilePath } from '../../../shared/maestro-lib/store/read-history';
+import { journeyFilePath } from '../../../shared/maestro-lib/store/read-journey';
 import { computerHistoryDir } from '../../../shared/computer-history/paths';
 import { prepareMaestroSystemPrompt } from '../../../renderer/utils/spawnHelpers';
 import { createPromptLoader } from '../../../shared/maestro-lib/prompts/load';
@@ -543,6 +544,10 @@ describe('the system prompt: library reads against prepareMaestroSystemPrompt', 
 					})),
 				},
 				history: { getFilePath: vi.fn().mockResolvedValue(historyFile) },
+				journey: {
+					...win.maestro?.journey,
+					getPath: vi.fn(async () => journeyFilePath(tmp, session.id)),
+				},
 				maestroRun: {
 					...win.maestro?.maestroRun,
 					readyPath: vi.fn(async () => (fixture.maestroRunReady ? RUN_BINARY : null)),

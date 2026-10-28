@@ -126,6 +126,8 @@ export interface MaestroSettings {
 	lastSelectedPromptId: string | null;
 	// Spell check in input areas
 	spellCheck: boolean;
+	// Record the User Journey (src/main/user-journey-manager.ts). Off stops recording.
+	userJourneyEnabled: boolean;
 	// Usage Dashboard provider quota auto-refresh cadence, keyed by provider id
 	// ('claude-code' | 'codex'); value is the interval in ms (0 = off). Read by
 	// the main-process background scheduler (usage-refresh-scheduler.ts).

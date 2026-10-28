@@ -617,6 +617,10 @@ export interface UseSettingsReturn {
 	// Spell check
 	spellCheck: boolean;
 	setSpellCheck: (value: boolean) => void;
+
+	// User Journey recording
+	userJourneyEnabled: boolean;
+	setUserJourneyEnabled: (value: boolean) => void;
 }
 
 // PERF: Identity selector reused across renders so the hook doesn't allocate a new

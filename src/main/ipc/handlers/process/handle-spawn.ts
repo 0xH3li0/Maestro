@@ -548,7 +548,12 @@ async function handleProcessSpawnImpl(
 			(session) => session?.id === baseSessionId
 		);
 		if (mcpTools.length > 0 && storedAgent) {
-			pluginRunToken = pluginToolRunIdentity.issue(baseSessionId);
+			pluginRunToken = pluginToolRunIdentity.issue(
+				baseSessionId,
+				undefined,
+				undefined,
+				config.querySource !== 'user'
+			);
 			try {
 				pluginRunProofFile = createPluginRunProofFile(pluginRunToken);
 			} catch (error) {

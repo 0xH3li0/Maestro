@@ -241,7 +241,10 @@ that started is not exit evidence. If termination cannot be observed, cleanup an
 must not claim successful cleanup. A late observed exit resumes normal cleanup.
 Generic text and native voice keep the existing timely forced-stop behavior.
 
-This extraction retains the current `rc` 60-minute runner bound (61-minute proof
-completion bound); original-audio preflight consumes that budget. Ordinary sends
-retain their existing full runner budget after preflight. The silence-based
-watchdog in upstream PR #1847 is a separate change.
+Original-bearing sends share the host-owned six-hour safety ceiling and semantic
+silence watchdog with ordinary headless sends. Detection, prompt preparation and
+original-audio staging all consume that ceiling before the provider starts.
+The watchdog warns after ten minutes without model activity and stops after twenty;
+opaque tools and waits receive a nonrenewable one-hour allowance. The completion
+proof has one additional minute for cleanup, but its expiry never proves process
+exit or releases original-audio resources before termination is observed.
