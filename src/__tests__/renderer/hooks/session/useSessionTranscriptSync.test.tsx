@@ -81,6 +81,28 @@ beforeEach(() => {
 });
 
 describe('owning host transcript identities', () => {
+	it('answers an owner snapshot requested before native session hydration completes', async () => {
+		let finish!: () => void;
+		const hydration = new Promise<void>((resolve) => {
+			finish = resolve;
+		});
+		renderHook(() => useSessionTranscriptSync(() => hydration));
+		request({ sessionId: 'loading', tabId: '', requestId: 'early-owner', metadataOnly: true });
+		const session = createMockSession({ id: 'loading', aiTabs: [createMockAITab({ id: 'tab' })] });
+		await act(async () => {
+			useSessionStore.setState({ sessions: [session] });
+			finish();
+		});
+		expect(window.maestro.sessions.publishTranscript).toHaveBeenCalledWith(
+			expect.objectContaining({
+				sessionId: 'loading',
+				snapshot: true,
+				tabInventory: expect.any(Array),
+			}),
+			'early-owner'
+		);
+	});
+
 	it('keeps two mirrors on the exact host OMP thinking, stdout, stderr, tool and user rows without generating their own output IDs', async () => {
 		const tab = createMockAITab({ id: 'tab', logs: [], showThinking: 'sticky' });
 		const session = createMockSession({

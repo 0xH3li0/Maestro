@@ -4,6 +4,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import * as Sentry from '@sentry/electron/renderer';
 import { shouldDropSentryEvent } from '../shared/sentryFilters';
+import { isExpectedBridgeError } from '../shared/bridgeError';
 import MaestroConsole from './App';
 import { CadenzaHudRoot } from './cadenzaHud';
 import { QuickChatRoot } from './quickChat/QuickChatRoot';
@@ -73,6 +74,10 @@ initSentry();
 
 // Set up global error handlers for uncaught exceptions in renderer process
 window.addEventListener('error', (event: ErrorEvent) => {
+	if (isExpectedBridgeError(event.error ?? event.message)) {
+		event.preventDefault();
+		return;
+	}
 	logger.error(`Uncaught Error: ${event.message}`, 'UncaughtError', {
 		filename: event.filename,
 		lineno: event.lineno,
@@ -94,6 +99,10 @@ window.addEventListener('error', (event: ErrorEvent) => {
 });
 
 window.addEventListener('unhandledrejection', (event: PromiseRejectionEvent) => {
+	if (isExpectedBridgeError(event.reason)) {
+		event.preventDefault();
+		return;
+	}
 	logger.error(
 		`Unhandled Promise Rejection: ${event.reason?.message || String(event.reason)}`,
 		'UnhandledRejection',

@@ -4,6 +4,11 @@ import type { Session } from '../../../types';
 import type { FileTreeChanges } from '../../../utils/fileExplorer';
 import { logger } from '../../../utils/logger';
 import { captureException } from '../../../utils/sentry';
+import {
+	isBridgeTransportReady,
+	isExpectedBridgeError,
+	WEB_BRIDGE_STATE_EVENT,
+} from '../../../../shared/bridgeError';
 
 interface UseAutoRefreshArgs {
 	sessionId: string;
@@ -64,6 +69,7 @@ export function useAutoRefresh({
 
 	// Handle refresh with animation and flash notification
 	const handleRefresh = useCallback(async () => {
+		if (!isBridgeTransportReady()) return;
 		setIsRefreshing(true);
 
 		try {
@@ -75,6 +81,12 @@ export function useAutoRefresh({
 						? 'No changes detected'
 						: `Detected ${changes.totalChanges} change${changes.totalChanges === 1 ? '' : 's'}`;
 				onShowFlash(message);
+			}
+		} catch (error) {
+			if (!isExpectedBridgeError(error)) {
+				logger.error('[FileExplorer] Refresh failed:', undefined, error);
+				captureException(error, { extra: { sessionId, operation: 'fileExplorer.refresh' } });
+				onShowFlash?.('File refresh failed');
 			}
 		} finally {
 			// Keep spinner visible for at least 500ms for visual feedback
@@ -89,34 +101,41 @@ export function useAutoRefresh({
 			autoRefreshTimerRef.current = null;
 		}
 
-		if (autoRefreshInterval > 0) {
-			autoRefreshTimerRef.current = setInterval(async () => {
-				// Skip if a previous auto-refresh is still in flight
-				if (autoRefreshInFlightRef.current) return;
-				autoRefreshInFlightRef.current = true;
+		const refresh = async () => {
+			// Skip if a previous auto-refresh is still in flight
+			if (autoRefreshInFlightRef.current || !isBridgeTransportReady()) return;
+			autoRefreshInFlightRef.current = true;
 
-				// Brief spin animation so user can see auto-refresh is active
-				setIsRefreshing(true);
-				try {
-					await refreshFileTreeRef.current(sessionIdRef.current);
-				} catch (error) {
-					logger.error('[FileExplorer] Auto-refresh failed:', undefined, error);
-					captureException(error, {
-						extra: {
-							sessionId: sessionIdRef.current,
-							operation: 'fileExplorer.autoRefresh',
-						},
-					});
-				} finally {
-					autoRefreshSpinTimeoutRef.current = setTimeout(() => {
-						setIsRefreshing(false);
-						autoRefreshInFlightRef.current = false;
-					}, 500);
-				}
-			}, autoRefreshInterval * 1000);
+			// Brief spin animation so user can see auto-refresh is active
+			setIsRefreshing(true);
+			try {
+				await refreshFileTreeRef.current(sessionIdRef.current);
+			} catch (error) {
+				if (isExpectedBridgeError(error)) return;
+				logger.error('[FileExplorer] Auto-refresh failed:', undefined, error);
+				captureException(error, {
+					extra: {
+						sessionId: sessionIdRef.current,
+						operation: 'fileExplorer.autoRefresh',
+					},
+				});
+			} finally {
+				autoRefreshSpinTimeoutRef.current = setTimeout(() => {
+					setIsRefreshing(false);
+					autoRefreshInFlightRef.current = false;
+				}, 500);
+			}
+		};
+		const onBridgeState = () => {
+			if (isBridgeTransportReady()) void refresh();
+		};
+		if (autoRefreshInterval > 0) {
+			autoRefreshTimerRef.current = setInterval(() => void refresh(), autoRefreshInterval * 1000);
+			window.addEventListener(WEB_BRIDGE_STATE_EVENT, onBridgeState);
 		}
 
 		return () => {
+			window.removeEventListener(WEB_BRIDGE_STATE_EVENT, onBridgeState);
 			if (autoRefreshTimerRef.current) {
 				clearInterval(autoRefreshTimerRef.current);
 				autoRefreshTimerRef.current = null;

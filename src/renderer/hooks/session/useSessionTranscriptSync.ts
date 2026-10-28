@@ -275,12 +275,21 @@ export function useSessionTranscriptSync(whenSessionsLoaded: () => Promise<void>
 		const unsubscribeRequest = api.onTranscriptRequest?.(
 			({ sessionId, tabId, requestId, metadataOnly }) => {
 				if (!ownsTranscript.current?.(sessionId)) return;
-				const session = useSessionStore.getState().sessions.find((item) => item.id === sessionId);
-				const tab = session?.aiTabs.find((item) => item.id === tabId);
-				if (session && tab)
-					publish(session, tab, undefined, 'logs', tabId, requestId, metadataOnly);
-				else if (session && !tabId)
-					publish(session, session, undefined, 'shellLogs', undefined, requestId, metadataOnly);
+				void (async () => {
+					// Requests can arrive while the native owner is still hydrating. Do
+					// not drop that request permanently: answer once its tree is ready.
+					if (!useSessionStore.getState().sessions.some((item) => item.id === sessionId))
+						await whenSessionsLoaded();
+					if (disposed || !ownsTranscript.current?.(sessionId)) return;
+					const session = useSessionStore.getState().sessions.find((item) => item.id === sessionId);
+					const tab = session?.aiTabs.find((item) => item.id === tabId);
+					if (session && tab)
+						publish(session, tab, undefined, 'logs', tabId, requestId, metadataOnly);
+					else if (session && !tabId)
+						publish(session, session, undefined, 'shellLogs', undefined, requestId, metadataOnly);
+				})().catch((error) =>
+					logger.error('Failed to answer owning host snapshot', 'Sessions', error)
+				);
 			}
 		);
 		const unsubscribeStore = useSessionStore.subscribe((state, previousState) => {

@@ -11,7 +11,10 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
-import { useFileTreeManagement, type UseFileTreeManagementDeps } from '../../../renderer/hooks';
+import {
+	useFileTreeManagement,
+	type UseFileTreeManagementDeps,
+} from '../../../renderer/hooks/git/useFileTreeManagement';
 import type { Session } from '../../../renderer/types';
 import { createMockSession } from '../../helpers/mockSession';
 import { withWorkingDirectory } from '../../../renderer/utils/agentWorkingDirectory';
@@ -26,6 +29,7 @@ import {
 import { gitService } from '../../../renderer/services/git';
 import { useFileExplorerStore } from '../../../renderer/stores/fileExplorerStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { logger } from '../../../renderer/utils/logger';
 import { isWebDesktop } from '../../../renderer/utils/runtimeContext';
 
 vi.mock('../../../renderer/utils/fileExplorer', async (importOriginal) => {
@@ -123,12 +127,52 @@ describe('useFileTreeManagement', () => {
 	});
 
 	afterEach(() => {
+		delete (window as unknown as Record<string, unknown>).__MAESTRO_BRIDGE_STATE__;
 		useSessionStore.setState({ sessionsLoaded: false, initialFileTreeReady: false });
 		if (originalHistory) {
 			window.maestro.history = originalHistory;
 		} else {
 			delete (window.maestro as { history?: unknown }).history;
 		}
+	});
+
+	it('does not scan while restoring and refreshes the retained tree after recovery', async () => {
+		const bridge = window as unknown as Record<string, unknown>;
+		bridge.__MAESTRO_BRIDGE_STATE__ = 'restoring';
+		const tree: FileNode[] = [{ name: 'retained.txt', type: 'file' }];
+		const state = createSessionsState([createMockSession({ fileTree: tree })]);
+		vi.mocked(loadFileTree).mockResolvedValue(asResult(tree));
+		vi.mocked(compareFileTrees).mockReturnValue({ totalChanges: 0 } as any);
+		const { result } = renderHook(() => useFileTreeManagement(createDeps(state)));
+		await act(async () => {
+			await result.current.refreshFileTree(state.getSessions()[0].id);
+		});
+		expect(loadFileTree).not.toHaveBeenCalled();
+		expect(state.getSessions()[0].fileTree).toBe(tree);
+		await act(async () => {
+			bridge.__MAESTRO_BRIDGE_STATE__ = 'connected';
+			window.dispatchEvent(
+				new CustomEvent('maestro:bridge-state', { detail: { state: 'connected' } })
+			);
+		});
+		expect(loadFileTree).toHaveBeenCalledOnce();
+	});
+
+	it('retains the working tree and avoids error logs for a reconnect racing a refresh', async () => {
+		const tree: FileNode[] = [{ name: 'retained.txt', type: 'file' }];
+		const state = createSessionsState([createMockSession({ fileTree: tree })]);
+		vi.mocked(loadFileTree).mockRejectedValue(
+			new Error('Not submitted: restoring authoritative host state. Your current work is retained.')
+		);
+		const spy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+		const { result } = renderHook(() => useFileTreeManagement(createDeps(state)));
+		await act(async () => {
+			await result.current.refreshFileTree(state.getSessions()[0].id);
+		});
+		expect(state.getSessions()[0].fileTree).toBe(tree);
+		expect(state.getSessions()[0].fileTreeError).toBeUndefined();
+		expect(spy).not.toHaveBeenCalled();
+		spy.mockRestore();
 	});
 
 	it('refreshFileTree updates tree and returns changes', async () => {
@@ -1081,6 +1125,7 @@ describe('useFileTreeManagement', () => {
 		vi.useFakeTimers();
 
 		// Start with sessionsLoaded = false (simulates startup before sessions restore)
+		delete (window as unknown as Record<string, unknown>).__MAESTRO_BRIDGE_STATE__;
 		useSessionStore.setState({ sessionsLoaded: false, initialFileTreeReady: false });
 
 		const state = createSessionsState([createMockSession({ fileTree: [] })]);
@@ -1122,6 +1167,7 @@ describe('useFileTreeManagement', () => {
 		vi.useFakeTimers();
 
 		// sessionsLoaded stays false - simulates a stuck session restoration
+		delete (window as unknown as Record<string, unknown>).__MAESTRO_BRIDGE_STATE__;
 		useSessionStore.setState({ sessionsLoaded: false, initialFileTreeReady: false });
 
 		const state = createSessionsState([createMockSession({ fileTree: [] })]);

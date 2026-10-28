@@ -1,3 +1,8 @@
+import {
+	isBridgeTransportReady,
+	isExpectedBridgeError,
+	WEB_BRIDGE_STATE_EVENT,
+} from '../../../shared/bridgeError';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 import type { RightPanelHandle } from '../../components/RightPanel';
@@ -99,21 +104,7 @@ function getSshContext(session: Session, options?: SshContextOptions): SshContex
 		sshRemoteId = session.sessionSshRemoteConfig.remoteId;
 	}
 
-	logger.debug('getSshContext: session.sshRemoteId', 'FileTreeManagement', {
-		sshRemoteId: session.sshRemoteId,
-	});
-	logger.debug('getSshContext: session.sessionSshRemoteConfig', 'FileTreeManagement', {
-		sessionSshRemoteConfig: session.sessionSshRemoteConfig,
-	});
-	logger.debug('getSshContext: resolved sshRemoteId', 'FileTreeManagement', { sshRemoteId });
-
-	if (!sshRemoteId) {
-		logger.debug(
-			'getSshContext: No SSH remote ID found, returning undefined',
-			'FileTreeManagement'
-		);
-		return undefined;
-	}
+	if (!sshRemoteId) return undefined;
 
 	const context: SshContext = {
 		sshRemoteId,
@@ -121,7 +112,6 @@ function getSshContext(session: Session, options?: SshContextOptions): SshContex
 		ignorePatterns: options?.ignorePatterns,
 		honorGitignore: options?.honorGitignore,
 	};
-	logger.debug('getSshContext: Returning context', 'FileTreeManagement', context);
 	return context;
 }
 
@@ -208,6 +198,7 @@ export interface UseFileTreeManagementReturn {
 export function useFileTreeManagement(
 	deps: UseFileTreeManagementDeps
 ): UseFileTreeManagementReturn {
+	const pendingTransportRefreshes = useRef(new Set<string>());
 	const {
 		sessionsRef,
 		setSessions,
@@ -462,6 +453,10 @@ export function useFileTreeManagement(
 			sessionId: string,
 			options?: { maxEntriesOverride?: number; skipStats?: boolean }
 		): Promise<FileTreeChanges | undefined> => {
+			if (!isBridgeTransportReady()) {
+				pendingTransportRefreshes.current.add(sessionId);
+				return undefined;
+			}
 			const seq = nextSeq(sessionId);
 			// Use sessionsRef to avoid dependency on sessions state (prevents timer reset on every session change)
 			const session = sessionsRef.current.find((s) => s.id === sessionId);
@@ -515,6 +510,7 @@ export function useFileTreeManagement(
 							);
 						})
 						.catch((err) => {
+							if (isExpectedBridgeError(err)) return;
 							logger.warn('directorySize failed during refresh (non-fatal)', 'FileTreeManagement', {
 								error: err?.message || 'Unknown error',
 							});
@@ -568,6 +564,10 @@ export function useFileTreeManagement(
 
 				return changes;
 			} catch (error) {
+				if (isExpectedBridgeError(error)) {
+					pendingTransportRefreshes.current.add(sessionId);
+					return undefined;
+				}
 				// Refresh failed - log it but preserve the existing file tree.
 				// A transient SSH failure shouldn't wipe out a working tree.
 				const errorMsg = (error as Error)?.message || 'Unknown error';
@@ -605,6 +605,17 @@ export function useFileTreeManagement(
 		]
 	);
 
+	useEffect(() => {
+		const resume = () => {
+			if (!isBridgeTransportReady()) return;
+			const pending = [...pendingTransportRefreshes.current];
+			pendingTransportRefreshes.current.clear();
+			for (const sessionId of pending) void refreshFileTree(sessionId);
+		};
+		window.addEventListener(WEB_BRIDGE_STATE_EVENT, resume);
+		return () => window.removeEventListener(WEB_BRIDGE_STATE_EVENT, resume);
+	}, [refreshFileTree]);
+
 	/**
 	 * Refresh both file tree and git state for a session.
 	 * Loads file tree, checks git repo status, and fetches branches/tags if applicable.
@@ -612,6 +623,7 @@ export function useFileTreeManagement(
 	 */
 	const refreshGitFileState = useCallback(
 		async (sessionId: string) => {
+			if (!isBridgeTransportReady()) return;
 			const seq = nextSeq(sessionId);
 			const session = sessionsRef.current.find((s) => s.id === sessionId);
 			if (!session) return;
@@ -660,6 +672,7 @@ export function useFileTreeManagement(
 						);
 					})
 					.catch((err) => {
+						if (isExpectedBridgeError(err)) return;
 						logger.warn(
 							'directorySize failed during git refresh (non-fatal)',
 							'FileTreeManagement',
@@ -723,6 +736,7 @@ export function useFileTreeManagement(
 				await window.maestro.history.reload();
 				rightPanelRef.current?.refreshHistoryPanel();
 			} catch (error) {
+				if (isExpectedBridgeError(error)) return;
 				// Refresh failed - log it but preserve the existing file tree.
 				// A transient SSH failure shouldn't wipe out a working tree.
 				logger.error('Git/file state refresh error', 'FileTreeManagement', {
@@ -756,6 +770,10 @@ export function useFileTreeManagement(
 	useEffect(() => {
 		const session = activeSession;
 		if (!session) return;
+		if (!isBridgeTransportReady()) {
+			pendingTransportRefreshes.current.add(session.id);
+			return;
+		}
 
 		// Only load if file tree is empty, not already loading, and hasn't been loaded yet.
 		// fileTreeStats is set after successful load, so we use it to detect "loaded but empty".
@@ -942,6 +960,7 @@ export function useFileTreeManagement(
 					);
 				})
 				.catch((err) => {
+					if (isExpectedBridgeError(err)) return;
 					logger.warn('directorySize failed (non-fatal)', 'FileTreeManagement', {
 						error: err?.message || 'Unknown error',
 					});
@@ -978,11 +997,19 @@ export function useFileTreeManagement(
 					// User cancelled - clear loading state but don't surface an error.
 					// cancelFileTreeLoad already cleared loading UI; this just guards against
 					// the race where the load completes before the cancel state-write lands.
-					if (error instanceof FileTreeAbortError) {
+					if (error instanceof FileTreeAbortError || isExpectedBridgeError(error)) {
+						if (isExpectedBridgeError(error)) pendingTransportRefreshes.current.add(sessionId);
 						setSessions((prev) =>
 							prev.map((s) =>
 								s.id === sessionId
-									? { ...s, fileTreeLoading: false, fileTreeLoadingProgress: undefined }
+									? {
+											...s,
+											fileTreeLoading: false,
+											fileTreeLoadingProgress: undefined,
+											...(isExpectedBridgeError(error) && isBridgeTransportReady()
+												? { fileTreeRetryAt: Date.now() + FILE_TREE_RETRY_DELAY_MS }
+												: {}),
+										}
 									: s
 							)
 						);
@@ -1102,7 +1129,7 @@ export function useFileTreeManagement(
 			!session.fileTreeError &&
 			!session.fileTreeLoading;
 
-		if (!needsStatsMigration) return;
+		if (!needsStatsMigration || !isBridgeTransportReady()) return;
 
 		// Capture stable session ID for async callback (same stale closure fix as initial load)
 		const sessionId = session.id;
@@ -1135,6 +1162,7 @@ export function useFileTreeManagement(
 				);
 			})
 			.catch((error) => {
+				if (isExpectedBridgeError(error)) return;
 				// Stats fetch failed - log but don't set error state (tree is still valid)
 				logger.warn('Stats migration failed', 'FileTreeManagement', {
 					error: error?.message || 'Unknown error',

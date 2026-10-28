@@ -16,6 +16,11 @@
  * Contexts: useInlineWizardContext, useWizard, useInputContext
  */
 
+import {
+	isBridgeTransportReady,
+	isExpectedBridgeError,
+	WEB_BRIDGE_STATE_EVENT,
+} from '../../../shared/bridgeError';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import type {
 	ToolType,
@@ -288,7 +293,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 					});
 				}
 			} catch (error) {
-				if (!cancelled) {
+				if (!cancelled && !isExpectedBridgeError(error)) {
 					logger.error(
 						'[SlashCommandDiscovery] Failed to fetch custom commands:',
 						undefined,
@@ -335,7 +340,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 					});
 				}
 			} catch (error) {
-				if (!cancelled) {
+				if (!cancelled && !isExpectedBridgeError(error)) {
 					logger.error(
 						'[SlashCommandDiscovery] Failed to discover agent commands:',
 						undefined,
@@ -345,13 +350,19 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 			}
 		};
 
-		if (currentSession.toolType === 'claude-code') {
-			fetchCustomCommands();
-		}
-		discoverAgentCommands();
+		const discover = () => {
+			if (!isBridgeTransportReady()) return;
+			if (currentSession.toolType === 'claude-code') {
+				void fetchCustomCommands();
+			}
+			void discoverAgentCommands();
+		};
+		window.addEventListener(WEB_BRIDGE_STATE_EVENT, discover);
+		discover();
 
 		return () => {
 			cancelled = true;
+			window.removeEventListener(WEB_BRIDGE_STATE_EVENT, discover);
 		};
 	}, [
 		activeSessionId,

@@ -1,3 +1,4 @@
+import { isBridgeTransportReady, WEB_BRIDGE_STATE_EVENT } from '../../../shared/bridgeError';
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import type { Session } from '../../types';
 import { gitService } from '../../services/git';
@@ -318,6 +319,7 @@ export function useGitStatusPolling(
 
 	// Poll git status for all Git sessions
 	const pollGitStatusOnce = useCallback(async () => {
+		if (!isBridgeTransportReady()) return;
 		// Skip polling if document is hidden (app in background)
 		if (pauseWhenHidden && document.hidden) return;
 
@@ -472,6 +474,9 @@ export function useGitStatusPolling(
 				})
 			);
 
+			// A disconnect can settle IPC wrappers with placeholders. Keep the last
+			// authoritative status until the post-recovery poll has real answers.
+			if (!isBridgeTransportReady()) return;
 			const newStatusMap = new Map<string, GitStatusData>();
 			const newLastGood = new Map<string, { queryKey: string; data: GitStatusData }>();
 			for (const result of results) {
@@ -526,7 +531,11 @@ export function useGitStatusPolling(
 	gitSessionCountRef.current = gitSessionCount;
 
 	const startPolling = useCallback(() => {
-		if (!intervalRef.current && (!pauseWhenHidden || !document.hidden)) {
+		if (
+			isBridgeTransportReady() &&
+			!intervalRef.current &&
+			(!pauseWhenHidden || !document.hidden)
+		) {
 			pollGitStatus();
 			// Scale interval based on how many git sessions are active
 			const scaledInterval = getScaledPollInterval(pollInterval, gitSessionCountRef.current);
@@ -547,7 +556,7 @@ export function useGitStatusPolling(
 				}
 			}, scaledInterval);
 		}
-	}, [pollInterval, inactivityTimeout, pollGitStatus, runPoll]);
+	}, [pollInterval, inactivityTimeout, pollGitStatus, runPoll, pauseWhenHidden]);
 
 	const stopPolling = useCallback(() => {
 		if (intervalRef.current) {
@@ -555,6 +564,15 @@ export function useGitStatusPolling(
 			intervalRef.current = null;
 		}
 	}, []);
+
+	useEffect(() => {
+		const onBridgeState = () => {
+			if (!isBridgeTransportReady()) stopPolling();
+			else if (isActiveRef.current) startPolling();
+		};
+		window.addEventListener(WEB_BRIDGE_STATE_EVENT, onBridgeState);
+		return () => window.removeEventListener(WEB_BRIDGE_STATE_EVENT, onBridgeState);
+	}, [startPolling, stopPolling]);
 
 	// Handle visibility changes
 	useEffect(() => {
