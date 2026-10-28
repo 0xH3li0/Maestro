@@ -286,15 +286,15 @@ describe('scope decision rendered lifecycle and guarded human controls', () => {
 	});
 
 	it.each([
-		['mira_processing', 'manager', 'Manager processing', 'Manager', 'Review the bounded naming question'],
-		['waiting_human', 'human', 'Waiting for human', 'Human', 'Choose count or total'],
 		[
-			'agent_running',
-			'recipient',
-			'Agent continuing',
-			'Agent',
-			'Continue the acknowledged task',
+			'mira_processing',
+			'manager',
+			'Manager processing',
+			'Manager',
+			'Review the bounded naming question',
 		],
+		['waiting_human', 'human', 'Waiting for human', 'Human', 'Choose count or total'],
+		['agent_running', 'recipient', 'Agent continuing', 'Agent', 'Continue the acknowledged task'],
 		['blocked', 'operator', 'Blocked', 'Operator', 'Restore native transcript access'],
 		['paused', 'none', 'Paused', 'None', 'Explicitly resume the scope'],
 		['done', 'none', 'Done', 'None', 'Completion confirmed in transcript'],
@@ -403,24 +403,40 @@ describe('scope decision rendered lifecycle and guarded human controls', () => {
 		rejected.deliveryStatus = 'admitted';
 		vi.mocked(window.maestro.pianola.resolveDecision).mockResolvedValueOnce({ status: 'accepted' });
 		const view = render(<PianolaDashboard theme={theme} onJumpToAgent={vi.fn()} />);
-		hookMock.usePianolaDashboardData.mockReturnValue({ data: emptyData(), decisions: [rejected], refresh });
+		hookMock.usePianolaDashboardData.mockReturnValue({
+			data: emptyData(),
+			decisions: [rejected],
+			refresh,
+		});
 		view.rerender(<PianolaDashboard theme={theme} onJumpToAgent={vi.fn()} />);
-		fireEvent.change(screen.getByRole('textbox', { name: 'Human answer' }), { target: { value: 'Try again' } });
+		fireEvent.change(screen.getByRole('textbox', { name: 'Human answer' }), {
+			target: { value: 'Try again' },
+		});
 		fireEvent.click(screen.getByRole('button', { name: 'Send human answer' }));
-		await waitFor(() => expect(window.maestro.pianola.resolveDecision).toHaveBeenCalledWith({ decisionId: rejected.id, answer: 'Try again' }));
+		await waitFor(() =>
+			expect(window.maestro.pianola.resolveDecision).toHaveBeenCalledWith({
+				decisionId: rejected.id,
+				answer: 'Try again',
+			})
+		);
 		expect(await screen.findByRole('status')).toHaveTextContent('Answer accepted for delivery');
 	});
 
 	it('shows the handler message without the Electron IPC wrapper', async () => {
 		vi.mocked(window.maestro.pianola.resolveDecision).mockRejectedValueOnce(
-			new Error("Error invoking remote method 'pianola:resolveDecision': Error: Pending question changed")
+			new Error(
+				"Error invoking remote method 'pianola:resolveDecision': Error: Pending question changed"
+			)
 		);
 		render(<PianolaDashboard theme={theme} onJumpToAgent={vi.fn()} />);
-		fireEvent.change(screen.getByRole('textbox', { name: 'Human answer' }), { target: { value: 'Use count' } });
+		fireEvent.change(screen.getByRole('textbox', { name: 'Human answer' }), {
+			target: { value: 'Use count' },
+		});
 		fireEvent.click(screen.getByRole('button', { name: 'Send human answer' }));
-		await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Pending question changed'));
+		await waitFor(() =>
+			expect(screen.getByRole('status')).toHaveTextContent('Pending question changed')
+		);
 		expect(screen.getByRole('status')).not.toHaveTextContent('Error invoking remote method');
 		expect(screen.getByRole('textbox', { name: 'Human answer' })).toHaveValue('Use count');
 	});
-
 });

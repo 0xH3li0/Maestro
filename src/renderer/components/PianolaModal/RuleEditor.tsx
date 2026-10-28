@@ -226,7 +226,9 @@ export function RuleEditor({ theme, rule, onCancel, onSave }: RuleEditorProps) {
 						{draft.scope !== 'global' && (
 							<div className="flex-[2]">
 								<label className="block text-xs mb-1" style={labelStyle}>
-									{SCOPE_IDENTIFIER[draft.scope].label.replace(/^./, (letter) => letter.toUpperCase())}
+									{SCOPE_IDENTIFIER[draft.scope].label.replace(/^./, (letter) =>
+										letter.toUpperCase()
+									)}
 								</label>
 								<input
 									value={draft.scopeId}

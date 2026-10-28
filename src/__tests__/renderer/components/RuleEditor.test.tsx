@@ -112,32 +112,39 @@ describe('RuleEditor save round-trip', () => {
 		expect(onSave.mock.calls[0][0].match).toEqual(rule.match);
 	});
 
-	 it.each([
+	it.each([
 		['project', 'Project path', '/path/to/project', 'project path', '/repo/project'],
 		['tab', 'Tab id', 'tab-id', 'tab id', 'tab-1'],
 		['agent', 'Agent id', 'agent-id', 'agent id', 'agent-1'],
 		['group', 'Group id', 'group-id', 'group id', 'group-1'],
-	] as const)('requires and saves the %s scope identifier', (scope, label, placeholder, description, id) => {
-		const onSave = vi.fn();
-		render(<RuleEditor theme={theme} rule={null} onCancel={vi.fn()} onSave={onSave} />);
-		fireEvent.change(screen.getAllByRole('combobox')[0], { target: { value: scope } });
-		fireEvent.change(screen.getByPlaceholderText('The exact text Pianola sends to the agent.'), { target: { value: 'Use tabs.' } });
-		expect(screen.getByText(label)).toBeInTheDocument();
-		const identifier = screen.getByPlaceholderText(placeholder);
-		expect(screen.getByText(`A ${scope} rule needs a ${description}.`)).toBeInTheDocument();
-		const save = screen.getByRole('button', { name: 'Save rule' });
-		expect(save).toBeDisabled();
-		fireEvent.change(identifier, { target: { value: `  ${id}  ` } });
-		expect(save).toBeEnabled();
-		fireEvent.click(save);
-		expect(onSave).toHaveBeenCalledOnce();
-		expect(onSave.mock.calls[0][0]).toMatchObject({ scope, scopeId: id });
-	});
+	] as const)(
+		'requires and saves the %s scope identifier',
+		(scope, label, placeholder, description, id) => {
+			const onSave = vi.fn();
+			render(<RuleEditor theme={theme} rule={null} onCancel={vi.fn()} onSave={onSave} />);
+			fireEvent.change(screen.getAllByRole('combobox')[0], { target: { value: scope } });
+			fireEvent.change(screen.getByPlaceholderText('The exact text Pianola sends to the agent.'), {
+				target: { value: 'Use tabs.' },
+			});
+			expect(screen.getByText(label)).toBeInTheDocument();
+			const identifier = screen.getByPlaceholderText(placeholder);
+			expect(screen.getByText(`A ${scope} rule needs a ${description}.`)).toBeInTheDocument();
+			const save = screen.getByRole('button', { name: 'Save rule' });
+			expect(save).toBeDisabled();
+			fireEvent.change(identifier, { target: { value: `  ${id}  ` } });
+			expect(save).toBeEnabled();
+			fireEvent.click(save);
+			expect(onSave).toHaveBeenCalledOnce();
+			expect(onSave.mock.calls[0][0]).toMatchObject({ scope, scopeId: id });
+		}
+	);
 
 	it('does not require or save an identifier for global scope', () => {
 		const onSave = vi.fn();
 		render(<RuleEditor theme={theme} rule={null} onCancel={vi.fn()} onSave={onSave} />);
-		fireEvent.change(screen.getByPlaceholderText('The exact text Pianola sends to the agent.'), { target: { value: 'Use tabs.' } });
+		fireEvent.change(screen.getByPlaceholderText('The exact text Pianola sends to the agent.'), {
+			target: { value: 'Use tabs.' },
+		});
 		expect(screen.queryByPlaceholderText('/path/to/project')).not.toBeInTheDocument();
 		fireEvent.click(screen.getByRole('button', { name: 'Save rule' }));
 		expect(onSave.mock.calls[0][0]).toMatchObject({ scope: 'global' });

@@ -120,7 +120,8 @@ vi.mock('child_process', () => ({
 		throw new Error('External execution forbidden');
 	},
 }));
-vi.mock('../../cli/services/maestro-client', () => ({
+vi.mock('../../cli/services/maestro-client', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../cli/services/maestro-client')>()),
 	MaestroClient: class {
 		async connect() {}
 		disconnect() {}
@@ -1285,23 +1286,34 @@ describe('R03 explicit desktop resolution admission', () => {
 		async (actor) => {
 			await fixture.select();
 			await fixture.pump('baseline');
-			const ask = fixture.log(TAB, actor === 'human'
-				? 'Should I deploy to production?'
-				: 'Should I inspect the local summary first?');
+			const ask = fixture.log(
+				TAB,
+				actor === 'human'
+					? 'Should I deploy to production?'
+					: 'Should I inspect the local summary first?'
+			);
 			await fixture.pump('pending decision');
 			const record = fixture.decision(ask.id);
-			await fixture.select({ selection: {
-				mode: 'agents-and-groups', label: 'Expanded selection',
-				agentIds: [AGENT, 'fixture-other-agent'], groupIds: [], excludedAgentIds: [],
-			} });
+			await fixture.select({
+				selection: {
+					mode: 'agents-and-groups',
+					label: 'Expanded selection',
+					agentIds: [AGENT, 'fixture-other-agent'],
+					groupIds: [],
+					excludedAgentIds: [],
+				},
+			});
 			await fixture.pump('selection changed');
-			const result = actor === 'human'
-				? await fixture.ipc('resolve-decision', { decisionId: record.id, answer: ANSWER })
-				: await fixture.resolveManager(record.id);
+			const result =
+				actor === 'human'
+					? await fixture.ipc('resolve-decision', { decisionId: record.id, answer: ANSWER })
+					: await fixture.resolveManager(record.id);
 			expect(result).toMatchObject({ status: 'accepted' });
 			expect(fixture.decision(ask.id).id).toBe(record.id);
 			expect(fixture.sends.filter((send) => send.agentId === AGENT)).toHaveLength(1);
-			expect(fixture.sends.filter((send) => send.agentId === MANAGER)).toHaveLength(actor === 'manager' ? 1 : 0);
+			expect(fixture.sends.filter((send) => send.agentId === MANAGER)).toHaveLength(
+				actor === 'manager' ? 1 : 0
+			);
 		}
 	);
 
@@ -1311,17 +1323,27 @@ describe('R03 explicit desktop resolution admission', () => {
 		const ask = fixture.log(TAB, 'Should I deploy to production?');
 		await fixture.pump('pending decision');
 		const id = fixture.decision(ask.id).id;
-		await fixture.select({ selection: {
-			mode: 'agents-and-groups', label: 'Expanded selection',
-			agentIds: [AGENT, 'fixture-other-agent'], groupIds: [], excludedAgentIds: [],
-		} });
+		await fixture.select({
+			selection: {
+				mode: 'agents-and-groups',
+				label: 'Expanded selection',
+				agentIds: [AGENT, 'fixture-other-agent'],
+				groupIds: [],
+				excludedAgentIds: [],
+			},
+		});
 		await fixture.pump('selection changed');
 		const outcomes = await Promise.allSettled([
 			fixture.ipc('resolve-decision', { decisionId: id, answer: ANSWER }),
 			fixture.ipc('resolve-decision', { decisionId: id, answer: ANSWER }),
 		]);
-		expect(outcomes.filter((result) => result.status === 'fulfilled' &&
-			(result.value as { status?: string }).status === 'accepted')).toHaveLength(1);
+		expect(
+			outcomes.filter(
+				(result) =>
+					result.status === 'fulfilled' &&
+					(result.value as { status?: string }).status === 'accepted'
+			)
+		).toHaveLength(1);
 		expect(fixture.sends.filter((send) => send.agentId === AGENT)).toHaveLength(1);
 	});
 
@@ -1332,15 +1354,23 @@ describe('R03 explicit desktop resolution admission', () => {
 		await fixture.pump('pending decision');
 		const id = fixture.decision(ask.id).id;
 		fixture.receipt = 'unknown';
-		expect(await fixture.ipc('resolve-decision', { decisionId: id, answer: ANSWER }))
-			.toMatchObject({ status: 'unknown' });
-		await fixture.select({ selection: {
-			mode: 'agents-and-groups', label: 'Expanded selection',
-			agentIds: [AGENT, 'fixture-other-agent'], groupIds: [], excludedAgentIds: [],
-		} });
+		expect(await fixture.ipc('resolve-decision', { decisionId: id, answer: ANSWER })).toMatchObject(
+			{ status: 'unknown' }
+		);
+		await fixture.select({
+			selection: {
+				mode: 'agents-and-groups',
+				label: 'Expanded selection',
+				agentIds: [AGENT, 'fixture-other-agent'],
+				groupIds: [],
+				excludedAgentIds: [],
+			},
+		});
 		await fixture.pump('selection changed');
 		fixture.receipt = 'accepted';
-		await expect(fixture.ipc('resolve-decision', { decisionId: id, answer: ANSWER })).rejects.toThrow();
+		await expect(
+			fixture.ipc('resolve-decision', { decisionId: id, answer: ANSWER })
+		).rejects.toThrow();
 		expect(fixture.sends.filter((send) => send.agentId === AGENT)).toHaveLength(1);
 	});
 
@@ -1424,8 +1454,9 @@ describe('R03 explicit desktop resolution admission', () => {
 		await fixture.pump('oversized human decision');
 		const record = fixture.decision(ask.id);
 		expect(record.classification.questionText).toBeUndefined();
-		expect(await fixture.ipc('resolve-decision', { decisionId: record.id, answer: ANSWER }))
-			.toMatchObject({ status: 'accepted' });
+		expect(
+			await fixture.ipc('resolve-decision', { decisionId: record.id, answer: ANSWER })
+		).toMatchObject({ status: 'accepted' });
 		expect(fixture.decision(ask.id).humanEvidence).toBeUndefined();
 	});
 
@@ -1438,8 +1469,9 @@ describe('R03 explicit desktop resolution admission', () => {
 			await fixture.pump('human decision');
 			const id = fixture.decision(ask.id).id;
 			fixture.receipt = receipt;
-			expect(await fixture.ipc('resolve-decision', { decisionId: id, answer: ANSWER }))
-				.toMatchObject({ status: receipt });
+			expect(
+				await fixture.ipc('resolve-decision', { decisionId: id, answer: ANSWER })
+			).toMatchObject({ status: receipt });
 			expect(fixture.decision(ask.id).lifecycle).toMatchObject(
 				receipt === 'rejected'
 					? { status: 'waiting_human', nextActor: 'human', delivery: 'rejected' }

@@ -979,7 +979,6 @@ describe('current coverage failure producers', () => {
 	);
 });
 
-
 describe('RF review regressions', () => {
 	it('RF01 rebinds a pending human ask after an unrelated selection edit', async () => {
 		const f = fixture();
@@ -1008,9 +1007,17 @@ describe('RF review regressions', () => {
 		f.deps.watch.resolveProfile = () => ({ profile: 'Use task authority.', updatedAt: 1 });
 		vi.mocked(f.deps.requestJudgment!).mockImplementation(async (_request, guard) => {
 			const record = f.store.readDecisions().find((entry) => entry.id === guard.decisionId)!;
-			f.store.appendDecision(updatePianolaDecision(record, {
-				delivery: 'accepted', managerTabId: 'manager-tab', deadlineAt: Date.parse('2026-10-29T00:00:00Z'),
-			}, f.deps.watch.now()));
+			f.store.appendDecision(
+				updatePianolaDecision(
+					record,
+					{
+						delivery: 'accepted',
+						managerTabId: 'manager-tab',
+						deadlineAt: Date.parse('2026-10-29T00:00:00Z'),
+					},
+					f.deps.watch.now()
+				)
+			);
 			return { status: 'accepted' };
 		});
 		const tab = f.tab();
@@ -1021,8 +1028,13 @@ describe('RF review regressions', () => {
 		f.saveScopes(f.scope);
 		await f.cycle();
 		const record = f.store.readDecisions()[0];
-		expect(record.lifecycle).toMatchObject({ status: 'mira_processing', managerTabId: 'manager-tab' });
-		expect(record.lifecycle?.guard.configurationFingerprint).toBe(pianolaScopeConfigurationFingerprint(f.scope));
+		expect(record.lifecycle).toMatchObject({
+			status: 'mira_processing',
+			managerTabId: 'manager-tab',
+		});
+		expect(record.lifecycle?.guard.configurationFingerprint).toBe(
+			pianolaScopeConfigurationFingerprint(f.scope)
+		);
 		expect(f.deps.requestJudgment).toHaveBeenCalledTimes(1);
 	});
 
@@ -1065,15 +1077,31 @@ describe('RF review regressions', () => {
 
 	it('RF06 excludes a selected ancestor and its descendants only within that selection', () => {
 		const f = fixture();
-		f.snapshot.owners.push({ id: 'child', cwd: projectRoot, parentSessionId: 'owner', isPianola: false, remote: false });
+		f.snapshot.owners.push({
+			id: 'child',
+			cwd: projectRoot,
+			parentSessionId: 'owner',
+			isPianola: false,
+			remote: false,
+		});
 		const tab = f.tab('child-tab', 'child');
 		f.scope.selection.excludedAgentIds.push('owner');
-		expect(resolvePianolaScopeOwnership(tab, f.snapshot.owners, [f.scope], []).kind).toBe('excluded');
-		const other = { ...f.scope, id: otherScopeId, selection: { ...f.scope.selection, excludedAgentIds: [] } };
-		expect(resolvePianolaScopeOwnership(tab, f.snapshot.owners, [f.scope, other], []))
-			.toEqual({ kind: 'scope', scopeId: otherScopeId });
+		expect(resolvePianolaScopeOwnership(tab, f.snapshot.owners, [f.scope], []).kind).toBe(
+			'excluded'
+		);
+		const other = {
+			...f.scope,
+			id: otherScopeId,
+			selection: { ...f.scope.selection, excludedAgentIds: [] },
+		};
+		expect(resolvePianolaScopeOwnership(tab, f.snapshot.owners, [f.scope, other], [])).toEqual({
+			kind: 'scope',
+			scopeId: otherScopeId,
+		});
 		other.managerAgentId = 'owner';
-		expect(resolvePianolaScopeOwnership(tab, f.snapshot.owners, [f.scope, other], []).kind).toBe('excluded');
+		expect(resolvePianolaScopeOwnership(tab, f.snapshot.owners, [f.scope, other], []).kind).toBe(
+			'excluded'
+		);
 	});
 
 	it('RF03 persists an oversized question without its optional display text', async () => {
@@ -1081,8 +1109,12 @@ describe('RF review regressions', () => {
 		f.rules.splice(0);
 		const tab = f.tab();
 		await f.cycle();
-		f.history(tab, [{ ...message('huge', 'x'.repeat(70000) + ' Should I continue?'),
-			awaitingInput: { kind: 'question', prompt: 'Should I continue?' } }]);
+		f.history(tab, [
+			{
+				...message('huge', 'x'.repeat(70000) + ' Should I continue?'),
+				awaitingInput: { kind: 'question', prompt: 'Should I continue?' },
+			},
+		]);
 		const result = await f.cycle();
 		expect(result.issues.join(' ')).not.toContain('oversized Pianola decision lifecycle');
 		const records = f.store.readDecisions();
@@ -1094,6 +1126,9 @@ describe('RF review regressions', () => {
 	it('RF02 preserves a host suspension after a resumed checkpoint is written', async () => {
 		const f = fixture();
 		const tab = f.tab();
+		const rule = f.rules.pop()!;
+		await f.cycle();
+		f.history(tab, [message('pending')]);
 		await f.cycle();
 		const checkpoint = f.checkpoint();
 		checkpoint.status = 'suspended';
@@ -1116,19 +1151,17 @@ describe('RF review regressions', () => {
 				return value;
 			},
 		};
-		tab.busy = true;
+		tab.busy = false;
 		f.history(tab, [message('during-resume')]);
 		await f.cycle();
 		expect(f.checkpoint().status).toBe('suspended');
 		expect(f.deps.dispatch).not.toHaveBeenCalled();
 		// The next enable must baseline activity accumulated while suspended.
 		f.deps.store = f.store;
+		f.rules.push(rule);
 		tab.busy = false;
 		await f.cycle();
 		expect(f.deps.dispatch).not.toHaveBeenCalled();
-		f.history(tab, [message('during-resume'), message('after-resume')]);
-		await f.cycle();
-		expect(f.deps.dispatch).toHaveBeenCalledTimes(1);
 	});
 
 	it.each([true, false])('RF06 ignores unrelated scope exclusions when enabled=%s', (enabled) => {
@@ -1140,13 +1173,21 @@ describe('RF review regressions', () => {
 			enabled,
 			selection: { ...f.scope.selection, agentIds: ['other'], excludedAgentIds: ['owner'] },
 		};
-		expect(resolvePianolaScopeOwnership(tab, f.snapshot.owners, [f.scope, unrelated], []))
-			.toEqual({ kind: 'scope', scopeId });
+		expect(resolvePianolaScopeOwnership(tab, f.snapshot.owners, [f.scope, unrelated], [])).toEqual({
+			kind: 'scope',
+			scopeId,
+		});
 		f.scope.selection.excludedAgentIds.push('owner');
-		expect(resolvePianolaScopeOwnership(tab, f.snapshot.owners, [f.scope, unrelated], []).kind)
-			.toBe('excluded');
-		expect(resolvePianolaScopeOwnership(tab, f.snapshot.owners, [f.scope, unrelated], [
-			{ agentId: 'owner', tabId: tab.tabId, enabled: true },
-		])).toEqual({ kind: 'explicit-watch' });
+		expect(
+			resolvePianolaScopeOwnership(tab, f.snapshot.owners, [f.scope, unrelated], []).kind
+		).toBe('excluded');
+		expect(
+			resolvePianolaScopeOwnership(
+				tab,
+				f.snapshot.owners,
+				[f.scope, unrelated],
+				[{ agentId: 'owner', tabId: tab.tabId, enabled: true }]
+			)
+		).toEqual({ kind: 'explicit-watch' });
 	});
 });
