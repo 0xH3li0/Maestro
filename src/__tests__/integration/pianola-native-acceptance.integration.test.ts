@@ -1314,6 +1314,57 @@ describe('R03 explicit desktop resolution admission', () => {
 		}
 	);
 
+	it('RF02 retries an incomplete census on the normal interval and stops on cancellation', async () => {
+		await fixture.select();
+		const request = boundary.request!;
+		let censusCalls = 0;
+		boundary.request = async (message, resultType) => {
+			if (message.type === 'list_desktop_sessions' && ++censusCalls === 1)
+				return { success: false };
+			return request(message, resultType);
+		};
+		const worker = pianolaWatchScope(SCOPE, {});
+		await vi.advanceTimersByTimeAsync(0);
+		expect(censusCalls).toBe(1);
+		expect(cliStore.readPianolaScopeCheckpoint(SCOPE)?.lastCycleError?.reason).toContain('census');
+		await vi.advanceTimersByTimeAsync(4999);
+		expect(censusCalls).toBe(1);
+		await vi.advanceTimersByTimeAsync(1);
+		expect(censusCalls).toBe(2);
+		process.emit('SIGTERM');
+		await worker;
+		await vi.advanceTimersByTimeAsync(5000);
+		expect(censusCalls).toBe(2);
+	});
+
+	it('RF02 propagates an incomplete census in once mode', async () => {
+		await fixture.select();
+		boundary.request = async () => ({ success: false });
+		await expect(pianolaWatchScope(SCOPE, { once: true })).rejects.toThrow(/census/i);
+		expect(cliStore.readPianolaScopeCheckpoint(SCOPE)?.lastCycleError?.reason).toContain('census');
+	});
+
+	it('RF02 propagates checkpoint write failure instead of retrying a census error', async () => {
+		await fixture.select();
+		boundary.request = async () => ({ success: false });
+		vi.spyOn(cliStore, 'writePianolaScopeCheckpoint').mockImplementation(() => {
+			throw new Error('fixture checkpoint write failed');
+		});
+		await expect(pianolaWatchScope(SCOPE, {})).rejects.toThrow('fixture checkpoint write failed');
+	});
+
+	it('RF03 resolves an oversized question without fabricating human evidence', async () => {
+		await fixture.select();
+		await fixture.pump('baseline');
+		const ask = fixture.log(TAB, 'x'.repeat(70000) + ' Should I deploy to production?');
+		await fixture.pump('oversized human decision');
+		const record = fixture.decision(ask.id);
+		expect(record.classification.questionText).toBeUndefined();
+		expect(await fixture.ipc('resolve-decision', { decisionId: record.id, answer: ANSWER }))
+			.toMatchObject({ status: 'accepted' });
+		expect(fixture.decision(ask.id).humanEvidence).toBeUndefined();
+	});
+
 	 it.each(['rejected', 'unknown'] as const)(
 		'RF04 permits a human retry only after a definitive %s receipt',
 		async (receipt) => {

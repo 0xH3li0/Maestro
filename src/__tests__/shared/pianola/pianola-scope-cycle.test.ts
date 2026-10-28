@@ -1040,6 +1040,42 @@ describe('RF review regressions', () => {
 		expect(f.deps.dispatch).toHaveBeenCalledTimes(1);
 	});
 
+	it.each(['removed-owner', 'changed-cursor'] as const)(
+		'RF01 does not rebind a pending decision after %s',
+		async (change) => {
+			const f = fixture();
+			f.rules.splice(0);
+			const tab = f.tab();
+			await f.cycle();
+			f.history(tab, [message('pending')]);
+			await f.cycle();
+			const original = f.store.readDecisions()[0];
+			f.scope.selection.agentIds.push('another-owner');
+			if (change === 'removed-owner') f.scope.selection.excludedAgentIds.push('owner');
+			else f.history(tab, [message('different', 'No question here.')]);
+			f.saveScopes(f.scope);
+			await f.cycle();
+			const existing = f.store.readDecisions().find((record) => record.id === original.id)!;
+			expect(existing.lifecycle?.guard.configurationFingerprint).toBe(
+				original.lifecycle?.guard.configurationFingerprint
+			);
+			expect(f.deps.dispatch).not.toHaveBeenCalled();
+		}
+	);
+
+	it('RF06 excludes a selected ancestor and its descendants only within that selection', () => {
+		const f = fixture();
+		f.snapshot.owners.push({ id: 'child', cwd: projectRoot, parentSessionId: 'owner', isPianola: false, remote: false });
+		const tab = f.tab('child-tab', 'child');
+		f.scope.selection.excludedAgentIds.push('owner');
+		expect(resolvePianolaScopeOwnership(tab, f.snapshot.owners, [f.scope], []).kind).toBe('excluded');
+		const other = { ...f.scope, id: otherScopeId, selection: { ...f.scope.selection, excludedAgentIds: [] } };
+		expect(resolvePianolaScopeOwnership(tab, f.snapshot.owners, [f.scope, other], []))
+			.toEqual({ kind: 'scope', scopeId: otherScopeId });
+		other.managerAgentId = 'owner';
+		expect(resolvePianolaScopeOwnership(tab, f.snapshot.owners, [f.scope, other], []).kind).toBe('excluded');
+	});
+
 	it('RF03 persists an oversized question without its optional display text', async () => {
 		const f = fixture();
 		f.rules.splice(0);
