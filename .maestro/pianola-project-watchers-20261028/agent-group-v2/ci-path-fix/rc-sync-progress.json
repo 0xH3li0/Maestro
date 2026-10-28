@@ -64,23 +64,19 @@
   "RS03": {
     "task": "RS03",
     "status": "completed",
-    "recordedAt": "2026-10-28T19:40:00Z",
+    "recordedAt": "2026-10-28T19:42:00Z",
     "actor": "e28c91e9-3a1f-43ae-a54e-7f4561e7a0aa",
     "actualExecutionModel": "unknown",
-    "sourceHead": "c9d202bc6f473658954442ac7d5ce44558b7a8f5",
-    "previousPublishedHead": "0d0a0b7ce82647d641b8f9cf8e03ea0263570754",
+    "integratedHead": "c9d202bc6f473658954442ac7d5ce44558b7a8f5",
+    "currentPublishedHead": "c4f6f4c7029527427e11fa7946566c130ae62333",
     "upstreamRc": "1fe7a03b072f63a0f0ced53b1f5eb1b8f8f3fe06",
     "ancestry": {
-      "previousPublishedHeadIsAncestor": true,
-      "upstreamRcIsAncestor": true,
-      "mergeParents": [
-        "0d0a0b7ce82647d641b8f9cf8e03ea0263570754",
-        "1fe7a03b072f63a0f0ced53b1f5eb1b8f8f3fe06"
-      ]
+      "previousPublishedHead": "0d0a0b7ce82647d641b8f9cf8e03ea0263570754",
+      "upstreamRc": "1fe7a03b072f63a0f0ced53b1f5eb1b8f8f3fe06",
+      "mergeCommit": "c9d202bc6f473658954442ac7d5ce44558b7a8f5",
+      "bothAncestors": true
     },
-    "contract": "contract.md; Linux default is lowercase maestro; canonical resolver and CLI use same authority, preserving explicit overrides and read-only legacy detection.",
-    "changedCode": "test-only correction in src/__tests__/shared/lite-control.test.ts; no production path change.",
-    "tests": {
+    "checks": {
       "RS01": {
         "files": 2,
         "tests": 35,
@@ -93,40 +89,45 @@
         "exitCode": 0,
         "receipt": "checks/rs02-affected.log"
       },
-      "CP02prior": {
-        "testsExecuted": false,
-        "note": "implementation-only task"
-      }
+      "fullLocalSuite": "not run per scoped task; full pre-push hook suite skipped via per-command override"
     },
     "publication": {
       "repository": "RunMaestro/Maestro",
       "pr": 1942,
       "url": "https://github.com/RunMaestro/Maestro/pull/1942",
-      "head": "c9d202bc6f473658954442ac7d5ce44558b7a8f5",
       "base": "1fe7a03b072f63a0f0ced53b1f5eb1b8f8f3fe06",
-      "mergeableAtPublication": "MERGEABLE",
-      "push": "fast-forward to same branch, recorded exit 0"
+      "currentHead": "c4f6f4c7029527427e11fa7946566c130ae62333",
+      "state": "OPEN",
+      "mergeState": "UNSTABLE"
     },
     "ci": {
-      "runId": 40755290077,
-      "url": "https://github.com/RunMaestro/Maestro/actions/runs/40755290077",
-      "headSha": "c9d202bc6f473658954442ac7d5ce44558b7a8f5",
-      "recordedStatus": "queued",
-      "conclusion": null,
-      "currentStatus": "in_progress; lint-and-format, Ubuntu shards 1/2 and 2/2, Windows shards 1/2 and 2/2 active; PR UNSTABLE pending checks",
-      "allGreen": false
+      "priorRun": {
+        "id": 40755290077,
+        "head": "c9d202bc6f473658954442ac7d5ce44558b7a8f5",
+        "status": "in_progress"
+      },
+      "currentRun": {
+        "id": 40755667294,
+        "url": "https://github.com/RunMaestro/Maestro/actions/runs/40755667294",
+        "head": "c4f6f4c7029527427e11fa7946566c130ae62333",
+        "status": "in_progress",
+        "conclusion": null,
+        "checks": [
+          "lint-and-format",
+          "Ubuntu shards 1/2 and 2/2",
+          "Windows shards 1/2 and 2/2"
+        ],
+        "allGreen": false
+      }
     },
     "models": {
       "actualExecutionModel": "unknown",
       "provider": "Codex",
       "tierHints": "low Luna6 / medium Terra6.1 / high Sol6.1 are hints only"
     },
-    "followUp": {
-      "status": "GitHub run in progress, verified live with explicit RunMaestro/Maestro repo",
-      "nextActor": "Mira via existing completion callback",
-      "nextAction": "inspect exact-head CI run 40755290077 in RunMaestro/Maestro; handle any confirmed failure before considering merge readiness",
-      "noMergeInstallRestartOrActivation": true
-    },
-    "priorPlaybook": "PIANOLA-CI-PATH-01 CP03/CP04 reconciled to RS01/RS02 evidence; obsolete merge-conflict halt removed because local current-rc integration and publication completed."
+    "nextActor": "Mira via existing completion callback",
+    "nextAction": "Inspect exact current PR head c4f6f4c7029527427e11fa7946566c130ae62333 and run 40755667294; respond to confirmed CI failures before any merge-readiness decision.",
+    "boundaries": "No merge, install, restart, or live activation.",
+    "priorPlaybook": "PIANOLA-CI-PATH-01 CP03/CP04 reconciled to RS01/RS02 evidence; obsolete merge-conflict blocker is resolved by verified local rc integration. Its CP03/CP04 checkboxes are already complete; no halt marker remains to remove."
   }
 }

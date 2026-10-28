@@ -5,7 +5,7 @@
   "changedFiles": [
     "src/__tests__/shared/lite-control.test.ts"
   ],
-  "finalHead": "c9d202bc6f473658954442ac7d5ce44558b7a8f5",
+  "finalHead": "c4f6f4c7029527427e11fa7946566c130ae62333",
   "integration": {
     "mergeCommit": "c9d202bc6f473658954442ac7d5ce44558b7a8f5",
     "previousPublishedHead": "0d0a0b7ce82647d641b8f9cf8e03ea0263570754",
@@ -32,16 +32,22 @@
   "pr": {
     "number": 1942,
     "url": "https://github.com/RunMaestro/Maestro/pull/1942",
-    "head": "c9d202bc6f473658954442ac7d5ce44558b7a8f5",
+    "head": "c4f6f4c7029527427e11fa7946566c130ae62333",
     "base": "1fe7a03b072f63a0f0ced53b1f5eb1b8f8f3fe06",
     "reviewDecision": "none"
   },
   "ci": {
-    "runId": 40755290077,
-    "url": "https://github.com/RunMaestro/Maestro/actions/runs/40755290077",
-    "head": "c9d202bc6f473658954442ac7d5ce44558b7a8f5",
-    "recorded": "queued; live verified with gh --repo RunMaestro/Maestro as in_progress; lint-and-format and Ubuntu/Windows shards in progress",
-    "current": "in_progress; PR UNSTABLE while checks run",
+    "priorRun": {
+      "runId": 40755290077,
+      "url": "https://github.com/RunMaestro/Maestro/actions/runs/40755290077",
+      "head": "c9d202bc6f473658954442ac7d5ce44558b7a8f5",
+      "status": "in_progress"
+    },
+    "runId": 40755667294,
+    "url": "https://github.com/RunMaestro/Maestro/actions/runs/40755667294",
+    "head": "c4f6f4c7029527427e11fa7946566c130ae62333",
+    "status": "in_progress",
+    "checks": "lint-and-format and Ubuntu/Windows test shards in progress",
     "green": false
   },
   "models": {
@@ -50,6 +56,6 @@
     "markersAreHintsOnly": true
   },
   "nextActor": "Mira via existing completion callback",
-  "nextAction": "Verify exact-head GitHub Actions run in RunMaestro/Maestro and respond to any confirmed failure; do not merge, install, restart, or activate.",
+  "nextAction": "Inspect current exact-head GitHub Actions run 40755667294 on PR #1942; handle confirmed failures. Do not merge, install, restart, or activate.",
   "imagesAnalyzed": 0
 }
