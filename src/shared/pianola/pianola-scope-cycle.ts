@@ -183,13 +183,21 @@ function assertSnapshot(snapshot: PianolaScopeSnapshot): void {
 		new Set(snapshot.tabs.map((tab) => canonicalJson([tab.agentId, tab.tabId]))).size !==
 			snapshot.tabs.length
 	)
-		throw new Error('Incomplete or ambiguous Pianola scope snapshot');
+		throw new PianolaCensusError('Incomplete or ambiguous Pianola scope snapshot');
+}
+
+/** A census could not be obtained or was incomplete; the worker may retry it. */
+export class PianolaCensusError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = 'PianolaCensusError';
+	}
 }
 
 /** Adapt the native tab-list response without accepting a legacy/partial census. */
 export function pianolaScopeSnapshotFromDesktop(raw: unknown): PianolaScopeSnapshot {
 	if (!raw || typeof raw !== 'object' || Array.isArray(raw))
-		throw new Error('Missing native supervision snapshot');
+		throw new PianolaCensusError('Missing native supervision snapshot');
 	const response = raw as Partial<DesktopSessionsSnapshot> & { success?: boolean };
 	if (
 		response.success !== true ||
@@ -211,10 +219,10 @@ export function pianolaScopeSnapshotFromDesktop(raw: unknown): PianolaScopeSnaps
 				typeof owner.remote !== 'boolean'
 		)
 	)
-		throw new Error('Incomplete native supervision census');
+		throw new PianolaCensusError('Incomplete native supervision census');
 	const owners = response.owners;
 	if (new Set(response.sessions.map((tab) => tab?.tabId)).size !== response.sessions.length)
-		throw new Error('Ambiguous native supervision tab IDs');
+		throw new PianolaCensusError('Ambiguous native supervision tab IDs');
 	const tabs = response.sessions.map((tab) => {
 		const info = tab?.supervision;
 		const owner = owners.find((candidate) => candidate.id === tab?.agentId);
@@ -235,7 +243,7 @@ export function pianolaScopeSnapshotFromDesktop(raw: unknown): PianolaScopeSnaps
 			typeof info.paused !== 'boolean' ||
 			typeof info.busy !== 'boolean'
 		)
-			throw new Error('Incomplete native supervision tab metadata');
+			throw new PianolaCensusError('Incomplete native supervision tab metadata');
 		return {
 			agentId: tab.agentId,
 			tabId: tab.tabId,
@@ -322,14 +330,15 @@ export async function runPianolaScopeCycle(
 	let checkpoint = deps.store.readScopeCheckpoint(scopeId);
 	const result: PianolaScopeCycleResult = { status: 'suspended', iterations: [], issues: [] };
 	let persistenceFailed = false;
-	const startedSuspended = checkpoint?.status === 'suspended';
+	let lastPersistedStatus = checkpoint?.status;
 	let externallySuspended = false;
 	const persist = (): void => {
 		try {
 			// The host may suspend the scope while this child awaits I/O. Never
 			// overwrite that pause with an older in-memory armed checkpoint.
 			const current = deps.store.readScopeCheckpoint(scopeId);
-			if (current?.status === 'suspended' && !startedSuspended) externallySuspended = true;
+			if (current?.status === 'suspended' && lastPersistedStatus !== 'suspended')
+				externallySuspended = true;
 			if (
 				externallySuspended ||
 				!deps.store
@@ -349,6 +358,7 @@ export async function runPianolaScopeCycle(
 					saved.unresolvedIntent.admitted = true;
 			}
 			deps.store.writeScopeCheckpoint(checkpoint!);
+			lastPersistedStatus = checkpoint!.status;
 		} catch (error) {
 			persistenceFailed = true;
 			throw error;

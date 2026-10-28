@@ -1,5 +1,7 @@
 /** One desktop-supervised scope worker; never one child per historical chat. */
-import { MaestroClient } from '../services/maestro-client';
+import { MaestroClient, CommandTimeoutError } from '../services/maestro-client';
+import { ConnectionClosedError } from '../../shared/maestro-lib/client/bridge-connection';
+import { MaestroNotRunningError } from '../services/maestro-not-running';
 import {
 	readPianolaSupervisorTargets,
 	readPianolaScopeCheckpoint,
@@ -13,6 +15,7 @@ import { generateUUID } from '../../shared/uuid';
 import { isPianolaScopeId } from '../../shared/pianola/pianola-scope';
 import {
 	runPianolaScopeCycle,
+	PianolaCensusError,
 	type PianolaScopeCycleDeps,
 	type PianolaScopeDeliveryResult,
 	type PianolaScopeDeliveryGuard,
@@ -79,7 +82,21 @@ export function createPianolaScopeWorkerDeps(
 			writeScopeCheckpoint: writePianolaScopeCheckpoint,
 			readDecisions: readPianolaDecisions,
 		},
-		readSnapshot: () => readPianolaScopeSnapshot(client),
+		readSnapshot: async () => {
+			try {
+				if (client instanceof MaestroClient && !client.isOpen) await client.connect();
+				return await readPianolaScopeSnapshot(client);
+			} catch (error) {
+				if (
+					error instanceof CommandTimeoutError ||
+					error instanceof ConnectionClosedError ||
+					error instanceof MaestroNotRunningError ||
+					(error instanceof Error && error.message === 'Not connected to Maestro')
+				)
+					throw new PianolaCensusError(error.message);
+				throw error;
+			}
+		},
 		readTranscript: async (target) => {
 			// No tail: the cycle checks the complete cursor and retains current-turn risk.
 			const response = await client.sendCommand<{
@@ -154,13 +171,18 @@ export async function pianolaWatchScope(
 			}
 			if (target.selection?.mode !== 'agents-and-groups')
 				throw new Error('Legacy scope requires explicit agent/group selection');
-			const result = await runPianolaScopeCycle(scopeId, deps, {
-				dryRun: !!options.dryRun,
-				maxTabs: 20,
-				shouldStop: () => stopped || !pianolaEnabledNow(),
-			});
-			if (options.json) console.log(JSON.stringify({ scopeId, ...result }));
-			else for (const issue of result.issues) console.error(`[pianola] ${scopeId}: ${issue}`);
+			try {
+				const result = await runPianolaScopeCycle(scopeId, deps, {
+					dryRun: !!options.dryRun,
+					maxTabs: 20,
+					shouldStop: () => stopped || !pianolaEnabledNow(),
+				});
+				if (options.json) console.log(JSON.stringify({ scopeId, ...result }));
+				else for (const issue of result.issues) console.error(`[pianola] ${scopeId}: ${issue}`);
+			} catch (error) {
+				if (!(error instanceof PianolaCensusError) || options.once) throw error;
+				console.error(`[pianola] ${scopeId}: ${error.message}`);
+			}
 			if (options.once || stopped) break;
 			await new Promise<void>((resolve) => {
 				const timer = setTimeout(
