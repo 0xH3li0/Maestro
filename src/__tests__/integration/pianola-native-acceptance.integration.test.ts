@@ -1280,6 +1280,70 @@ describe('R03 current native coverage status', () => {
 });
 
 describe('R03 explicit desktop resolution admission', () => {
+	it.each(['human', 'manager'] as const)(
+		'RF01 resolves the same pending %s decision after an unrelated selection edit',
+		async (actor) => {
+			await fixture.select();
+			await fixture.pump('baseline');
+			const ask = fixture.log(TAB, actor === 'human'
+				? 'Should I deploy to production?'
+				: 'Should I inspect the local summary first?');
+			await fixture.pump('pending decision');
+			const record = fixture.decision(ask.id);
+			await fixture.select({ selection: {
+				mode: 'agents-and-groups', label: 'Expanded selection',
+				agentIds: [AGENT, 'fixture-other-agent'], groupIds: [], excludedAgentIds: [],
+			} });
+			await fixture.pump('selection changed');
+			const result = actor === 'human'
+				? await fixture.ipc('resolve-decision', { decisionId: record.id, answer: ANSWER })
+				: await fixture.resolveManager(record.id);
+			expect(result).toMatchObject({ status: 'accepted' });
+			expect(fixture.decision(ask.id).id).toBe(record.id);
+			expect(fixture.sends.filter((send) => send.agentId === AGENT)).toHaveLength(1);
+			expect(fixture.sends.filter((send) => send.agentId === MANAGER)).toHaveLength(actor === 'manager' ? 1 : 0);
+		}
+	);
+
+	it('RF01 admits at most one concurrent human resolution after a selection edit', async () => {
+		await fixture.select();
+		await fixture.pump('baseline');
+		const ask = fixture.log(TAB, 'Should I deploy to production?');
+		await fixture.pump('pending decision');
+		const id = fixture.decision(ask.id).id;
+		await fixture.select({ selection: {
+			mode: 'agents-and-groups', label: 'Expanded selection',
+			agentIds: [AGENT, 'fixture-other-agent'], groupIds: [], excludedAgentIds: [],
+		} });
+		await fixture.pump('selection changed');
+		const outcomes = await Promise.allSettled([
+			fixture.ipc('resolve-decision', { decisionId: id, answer: ANSWER }),
+			fixture.ipc('resolve-decision', { decisionId: id, answer: ANSWER }),
+		]);
+		expect(outcomes.filter((result) => result.status === 'fulfilled' &&
+			(result.value as { status?: string }).status === 'accepted')).toHaveLength(1);
+		expect(fixture.sends.filter((send) => send.agentId === AGENT)).toHaveLength(1);
+	});
+
+	it('RF01 keeps an uncertain human send blocked after a selection edit', async () => {
+		await fixture.select();
+		await fixture.pump('baseline');
+		const ask = fixture.log(TAB, 'Should I deploy to production?');
+		await fixture.pump('pending decision');
+		const id = fixture.decision(ask.id).id;
+		fixture.receipt = 'unknown';
+		expect(await fixture.ipc('resolve-decision', { decisionId: id, answer: ANSWER }))
+			.toMatchObject({ status: 'unknown' });
+		await fixture.select({ selection: {
+			mode: 'agents-and-groups', label: 'Expanded selection',
+			agentIds: [AGENT, 'fixture-other-agent'], groupIds: [], excludedAgentIds: [],
+		} });
+		await fixture.pump('selection changed');
+		fixture.receipt = 'accepted';
+		await expect(fixture.ipc('resolve-decision', { decisionId: id, answer: ANSWER })).rejects.toThrow();
+		expect(fixture.sends.filter((send) => send.agentId === AGENT)).toHaveLength(1);
+	});
+
 	it.each(['paused', 'busy', 'removed', 'changed-ask', 'selection-changed'] as const)(
 		'revalidates %s before accepting a desktop human answer',
 		async (kind) => {
@@ -1365,7 +1429,7 @@ describe('R03 explicit desktop resolution admission', () => {
 		expect(fixture.decision(ask.id).humanEvidence).toBeUndefined();
 	});
 
-	 it.each(['rejected', 'unknown'] as const)(
+	it.each(['rejected', 'unknown'] as const)(
 		'RF04 permits a human retry only after a definitive %s receipt',
 		async (receipt) => {
 			await fixture.select();

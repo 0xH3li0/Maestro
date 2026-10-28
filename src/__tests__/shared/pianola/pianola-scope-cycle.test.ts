@@ -1121,6 +1121,14 @@ describe('RF review regressions', () => {
 		await f.cycle();
 		expect(f.checkpoint().status).toBe('suspended');
 		expect(f.deps.dispatch).not.toHaveBeenCalled();
+		// The next enable must baseline activity accumulated while suspended.
+		f.deps.store = f.store;
+		tab.busy = false;
+		await f.cycle();
+		expect(f.deps.dispatch).not.toHaveBeenCalled();
+		f.history(tab, [message('during-resume'), message('after-resume')]);
+		await f.cycle();
+		expect(f.deps.dispatch).toHaveBeenCalledTimes(1);
 	});
 
 	it.each([true, false])('RF06 ignores unrelated scope exclusions when enabled=%s', (enabled) => {
