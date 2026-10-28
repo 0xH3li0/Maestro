@@ -2,11 +2,12 @@
  * Where the CLI looks for Lite's control discovery file. The desktop writes it
  * under `app.getPath('userData')/Lite`; a process without Electron has to reach
  * the same directory through `resolveUserDataDir()`, the one shared resolver.
- * The lowercase `~/.config/maestro` fallback this replaced never matched a
- * packaged Linux install, which writes `~/.config/Maestro`.
+ * On Linux the default is lowercase `~/.config/maestro`, while the resolver
+ * also recognizes existing legacy directories and explicit overrides.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { resolveLiteDataDirectory } from '../../shared/lite-control';
@@ -46,12 +47,16 @@ describe('resolveLiteDataDirectory', () => {
 	});
 
 	it.runIf(os.platform() === 'linux')(
-		'lands on the installed `Maestro` spelling on Linux, not lowercase `maestro`',
+		'uses lowercase `maestro` on Linux when no existing directory takes precedence',
 		() => {
-			const xdg = path.join(os.tmpdir(), 'xdg-config');
-			process.env.XDG_CONFIG_HOME = xdg;
-			process.env.NODE_ENV = 'test';
-			expect(resolveLiteDataDirectory()).toBe(path.join(xdg, 'Maestro', 'Lite'));
+			const xdg = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-lite-xdg-'));
+			try {
+				process.env.XDG_CONFIG_HOME = xdg;
+				process.env.NODE_ENV = 'test';
+				expect(resolveLiteDataDirectory()).toBe(path.join(xdg, 'maestro', 'Lite'));
+			} finally {
+				fs.rmSync(xdg, { recursive: true, force: true });
+			}
 		}
 	);
 });
