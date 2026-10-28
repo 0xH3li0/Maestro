@@ -7,6 +7,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { PianolaRule } from '../../../shared/pianola/types';
+import type { PianolaSuggestionsFile } from '../../../shared/pianola/storage';
 
 const handlers = new Map<string, (...args: unknown[]) => unknown>();
 
@@ -30,7 +31,7 @@ const store = vi.hoisted(() => ({
 		proposedProfile: '',
 		previousProfile: '',
 	})),
-	writeSuggestions: vi.fn(),
+	writeSuggestions: vi.fn((suggestions: PianolaSuggestionsFile) => suggestions),
 	setProfile: vi.fn(),
 }));
 vi.mock('../../../main/pianola/pianola-store-main', () => store);
@@ -66,6 +67,16 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	store.readRulesResult.mockReturnValue({ rules: [], malformed: false });
 	store.writeRules.mockImplementation((rules: PianolaRule[]) => rules);
+	store.readSuggestions.mockReset();
+	store.readSuggestions.mockReturnValue({
+		generatedAt: 0,
+		pairCount: 0,
+		proposals: [],
+		proposedProfile: '',
+		previousProfile: '',
+	});
+	store.writeSuggestions.mockReset();
+	store.writeSuggestions.mockImplementation((suggestions) => suggestions);
 });
 
 describe('pianola suggestions IPC handlers', () => {
@@ -87,6 +98,9 @@ describe('pianola suggestions IPC handlers', () => {
 		registerPianolaHandlers({ settingsStore: settingsStore(true), supervisor });
 		const res = (await handlers.get('pianola:get-suggestions')!({})) as { generatedAt: number };
 		expect(res.generatedAt).toBe(7);
+		expect(store.writeSuggestions).toHaveBeenCalledWith(
+			expect.objectContaining({ generatedAt: 7, pairCount: 3 })
+		);
 	});
 
 	it('apply-suggestion throws when Pianola is disabled', async () => {
