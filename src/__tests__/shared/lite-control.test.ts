@@ -2,8 +2,9 @@
  * Where the CLI looks for Lite's control discovery file. The desktop writes it
  * under `app.getPath('userData')/Lite`; a process without Electron has to reach
  * the same directory through `resolveUserDataDir()`, the one shared resolver.
- * On Linux the default is lowercase `~/.config/maestro`, while the resolver
- * also recognizes existing legacy directories and explicit overrides.
+ * Linux defaults to lowercase, while an existing capitalized directory that
+ * holds desktop state remains discoverable through the canonical resolver.
+ * Explicit data directory overrides remain authoritative.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -46,17 +47,32 @@ describe('resolveLiteDataDirectory', () => {
 		expect(resolveLiteDataDirectory(undefined, base)).toBe(path.join(base, 'Lite'));
 	});
 
-	it.runIf(os.platform() === 'linux')(
-		'uses lowercase `maestro` on Linux when no existing directory takes precedence',
-		() => {
-			const xdg = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-lite-xdg-'));
-			try {
-				process.env.XDG_CONFIG_HOME = xdg;
-				process.env.NODE_ENV = 'test';
-				expect(resolveLiteDataDirectory()).toBe(path.join(xdg, 'maestro', 'Lite'));
-			} finally {
-				fs.rmSync(xdg, { recursive: true, force: true });
-			}
-		}
-	);
+	describe.runIf(os.platform() === 'linux')('Linux data directory spelling', () => {
+		let xdg: string;
+
+		beforeEach(() => {
+			xdg = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-lite-xdg-'));
+			process.env.XDG_CONFIG_HOME = xdg;
+			process.env.NODE_ENV = 'test';
+		});
+
+		afterEach(() => {
+			fs.rmSync(xdg, { recursive: true, force: true });
+		});
+
+		it('uses the lowercase Linux default when no existing installation is present', () => {
+			expect(resolveLiteDataDirectory()).toBe(path.join(xdg, 'maestro', 'Lite'));
+		});
+
+		it('finds capitalized desktop state beside an empty lowercase directory', () => {
+			fs.mkdirSync(path.join(xdg, 'maestro'));
+			fs.mkdirSync(path.join(xdg, 'Maestro'), { recursive: true });
+			fs.writeFileSync(path.join(xdg, 'Maestro', 'maestro-window-state.json'), '{}');
+			const resolved = resolveLiteDataDirectory();
+			expect(path.basename(resolved)).toBe('Lite');
+			expect(fs.realpathSync.native(path.dirname(resolved))).toBe(
+				fs.realpathSync.native(path.join(xdg, 'Maestro'))
+			);
+		});
+	});
 });
