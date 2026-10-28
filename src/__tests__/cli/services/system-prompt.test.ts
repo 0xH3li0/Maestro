@@ -20,6 +20,7 @@ vi.mock('../../../cli/services/prompt-loader', () => ({
 vi.mock('../../../cli/services/storage', () => ({
 	getConfigDirectory: vi.fn(() => '/mock/config'),
 	readSessions: vi.fn(() => []),
+	getJourneyFilePath: vi.fn((id: string) => `/mock/config/journey/${id}.jsonl`),
 	readSettingValue: vi.fn(),
 	resolveSessionHistoryFilePath: vi.fn(),
 }));
@@ -102,6 +103,19 @@ describe('prepareMaestroSystemPromptCli', () => {
 		// Default: the desktop app is not running, so System One cannot be asked about.
 		desktop.reply = null;
 		desktop.sendCommand = vi.fn(async () => desktop.reply);
+	});
+
+	it('fills the journey path, and leaves it empty for SSH sessions', async () => {
+		vi.mocked(getCliPrompt).mockResolvedValue('journey=[{{AGENT_JOURNEY_PATH}}]');
+
+		expect(await prepareMaestroSystemPromptCli(mockSession({ id: 'sess-1' }))).toBe(
+			'journey=[/mock/config/journey/sess-1.jsonl]'
+		);
+		expect(
+			await prepareMaestroSystemPromptCli(
+				mockSession({ id: 'sess-1', sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' } })
+			)
+		).toBe('journey=[]');
 	});
 
 	it('substitutes agent identity, branch, and conductor profile into the template', async () => {

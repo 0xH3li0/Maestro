@@ -262,6 +262,7 @@ import type { WindowCommandRequest, WindowCommandResult } from '../shared/window
 import type { WebUserPublic } from '../shared/webLogin';
 import type { ComputerHistoryApi } from '../main/preload/computerHistory';
 import type { MaestroRunApi } from '../main/preload/maestroRun';
+import type { JourneyApi } from '../main/preload/journey';
 import type { DataviewApi } from '../main/preload/dataview';
 
 interface MaestroAPI {
@@ -386,7 +387,10 @@ interface MaestroAPI {
 	};
 	groups: {
 		getAll: () => Promise<any[]>;
-		setAll: (groups: any[]) => Promise<boolean>;
+		setAll: (
+			groups: import('../shared/types').Group[],
+			baseline: import('../shared/types').Group[]
+		) => Promise<boolean>;
 	};
 	process: {
 		onRemoteStartAutoRun: (
@@ -1539,6 +1543,9 @@ interface MaestroAPI {
 		) => Promise<{ success: boolean }>;
 	};
 	web: {
+		getAutoRunStates: () => Promise<
+			Record<string, import('../shared/autoRunBroadcast').AutoRunBroadcastState>
+		>;
 		onLiteReady: (getReady: () => boolean) => () => void;
 		startAutoRun: (
 			sessionId: string,
@@ -4700,6 +4707,10 @@ interface MaestroAPI {
 		// armed dispatch callback that would otherwise time out an hour later.
 		notifyAiTabClosed: (agentId: string, tabId: string) => void;
 	};
+
+	// User Journey API (per-agent log of user actions inside Maestro). Record
+	// through recordJourney() in src/renderer/services/userJourney.ts.
+	journey: JourneyApi;
 
 	// AI Command API (plain-English request -> one shell command line)
 	aiCommand: {

@@ -2522,8 +2522,11 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			collapsed: false,
 		};
 		setGroups((prev: Group[]) => [...prev, newGroup]);
-		await flushGroupsToDisk(useSessionStore.getState().groups);
-		window.maestro.process.sendRemoteCreateGroupResponse(responseChannel, { id: newGroupId });
+		const persisted = await flushGroupsToDisk();
+		window.maestro.process.sendRemoteCreateGroupResponse(
+			responseChannel,
+			persisted ? { id: newGroupId } : null
+		);
 	});
 
 	// Handle remote rename group from web interface
@@ -2577,8 +2580,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 
 		const nextGroups = applyGroupUpdate(currentGroups, groupId, request, clear);
 		setGroups(() => nextGroups);
-		await flushGroupsToDisk(nextGroups);
-		respond(true);
+		respond(await flushGroupsToDisk());
 	});
 
 	// Handle a remote write to a group's Group Settings profile and pill label

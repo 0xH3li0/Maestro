@@ -1270,6 +1270,14 @@ export function NewInstanceModal({
 				[agentId]: withBlankEnvVarRow(prev[agentId] ?? {}),
 			}));
 		},
+		onEnvVarsReplace: (agentId: string, vars: Record<string, string>) => {
+			setCustomAgentEnvVars((prev) => {
+				const next = { ...prev };
+				if (Object.keys(vars).length > 0) next[agentId] = vars;
+				else delete next[agentId];
+				return next;
+			});
+		},
 	};
 
 	// Effects - load agents and optionally pre-fill from source session
@@ -1689,6 +1697,7 @@ export function NewInstanceModal({
 								onEnvVarValueChange={envVarHandlers.onEnvVarValueChange}
 								onEnvVarRemove={envVarHandlers.onEnvVarRemove}
 								onEnvVarAdd={envVarHandlers.onEnvVarAdd}
+								onEnvVarsReplace={envVarHandlers.onEnvVarsReplace}
 								onConfigChange={(agentId, key, value) => {
 									setAgentConfigs((prev) => ({
 										...prev,
@@ -1750,6 +1759,7 @@ export function NewInstanceModal({
 									}
 									onEnvVarRemove={(key) => envVarHandlers.onEnvVarRemove(selectedAgent, key)}
 									onEnvVarAdd={() => envVarHandlers.onEnvVarAdd(selectedAgent)}
+									onEnvVarsReplace={(vars) => envVarHandlers.onEnvVarsReplace(selectedAgent, vars)}
 									onEnvVarsBlur={() => {
 										/* Saved on agent create */
 									}}

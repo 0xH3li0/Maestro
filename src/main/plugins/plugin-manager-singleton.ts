@@ -20,6 +20,9 @@ import type { AutoTurnReport } from '../../shared/autoTurn';
 import type { ConsultChain } from '../../shared/consultBudget';
 
 export interface HeadlessAgentReply {
+	originalAttachments?: readonly [
+		import('../../shared/plugins/media-tools').OriginalAttachmentReceipt,
+	];
 	success: boolean;
 	response: string | null;
 	sessionId: string | null;
@@ -41,6 +44,10 @@ export interface HeadlessTurnSettings {
 	 */
 	consultChain?: ConsultChain;
 }
+export interface HeadlessTurnSettings {
+	originalAttachment?: import('./plugin-media-tools').OriginalAttachmentLease;
+}
+
 export type HeadlessAgentRunner = (
 	agentId: string,
 	prompt: string,

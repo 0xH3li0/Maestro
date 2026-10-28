@@ -361,6 +361,15 @@ export interface AgentConfigPanelProps extends Pick<
 	 * keep one prop shape either way.
 	 */
 	hideEnvVars?: boolean;
+	/**
+	 * Replace both records whole. Pass it to get the Basic / Advanced toggle,
+	 * where Advanced edits every variable as `.env` text; omit it and the panel
+	 * is rows only. It exists because the row callbacks above cannot express a
+	 * paste: several of them fired in one tick each rebuild the record from the
+	 * same stale copy, so only the last would survive. `disabledVars` is always
+	 * `{}` for a consumer that does not pass `customEnvVarsDisabled`.
+	 */
+	onEnvVarsReplace?: (vars: Record<string, string>, disabledVars: Record<string, string>) => void;
 	// Agent-specific config options
 	agentConfig: Record<string, any>;
 	/**
@@ -455,6 +464,7 @@ export function AgentConfigPanel({
 	onEnvVarAdd,
 	onEnvVarsBlur,
 	hideEnvVars = false,
+	onEnvVarsReplace,
 	agentConfig,
 	configOptionNotes,
 	onConfigChange,
@@ -860,6 +870,7 @@ export function AgentConfigPanel({
 					onEnvVarRemove={onEnvVarRemove}
 					onEnvVarAdd={onEnvVarAdd}
 					onEnvVarsBlur={onEnvVarsBlur}
+					onEnvVarsReplace={onEnvVarsReplace}
 					showBuiltInEnvVars={showBuiltInEnvVars}
 					compact={compact}
 					isSshEnabled={isSshEnabled}

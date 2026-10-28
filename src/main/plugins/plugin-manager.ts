@@ -34,7 +34,16 @@ import {
 	collectContributions,
 	type AggregatedContributions,
 } from '../../shared/plugins/contributions';
-import { isPermitted, type PermissionGrant } from '../../shared/plugins/permissions';
+import {
+	isPermitted,
+	isPermittedUnattended,
+	type PermissionGrant,
+} from '../../shared/plugins/permissions';
+import { isRelayConversationIdentity } from '../../shared/plugins/relay-identity';
+import { pluginJson } from './plugin-authority';
+import { relayMailReadOperation } from './relay-mail/contract';
+import { captureMailReadRequest } from './relay-mail/mail-service';
+import type { RelayMailReader } from './relay-mail/reader';
 import { createAgentRegistry, type AgentRegistry } from '../../shared/plugins/agent-registry';
 import {
 	pluginsDir,
@@ -97,6 +106,8 @@ export interface PluginSandboxLifecycle {
 }
 
 export interface PluginManagerDeps {
+	/** Host executor, not an SDK/plugin-selectable implementation. */
+	relayMailReader?: RelayMailReader;
 	serviceAvailable?: (pluginId: string, requirementId: string) => boolean;
 	/** Whether the `plugins` Encore flag is currently on. Re-read on every call. */
 	isEnabled: () => boolean;
@@ -1017,7 +1028,11 @@ export class PluginManager {
 				assertCurrent();
 			};
 			assertActive();
-			resource = files.create(agentId, Object.freeze({ signal, assertActive }), ttlMs);
+			resource = files.create(
+				agentId,
+				Object.freeze({ signal, assertActive, unattended: authority.unattended }),
+				ttlMs
+			);
 			resource.assertActive();
 			return resource;
 		} catch (error) {
@@ -1082,6 +1097,7 @@ export class PluginManager {
 		runProof: unknown,
 		publish?: (result: unknown, assertActive: () => void) => void
 	): Promise<unknown> {
+		let invocationId: string | undefined;
 		try {
 			if (publish !== undefined && typeof publish !== 'function')
 				throw new PluginAuthorityError('PLUGIN_DENIED');
@@ -1102,6 +1118,13 @@ export class PluginManager {
 			const localId = toolId.slice(sep + 1);
 			const lifetime = this.toolLifetime;
 			const record = getRecord(this.registry, pluginId);
+			const declared =
+				record?.manifest &&
+				collectContributions(record.manifest).tools.find((t) => t.id === toolId);
+			const mailOperation = declared ? relayMailReadOperation(declared) : undefined;
+			// Snapshot data before asynchronous admission, without executing accessors/toJSON.
+			if (mailOperation) captureMailReadRequest(mailOperation, args);
+			const readArgs = mailOperation ? pluginJson(args, 16 * 1024) : undefined;
 			const assertChild = sandbox.captureToolLifetime(pluginId);
 			if (typeof assertChild !== 'function') throw new PluginAuthorityError('PLUGIN_DENIED');
 			const assertCurrent = () => {
@@ -1140,23 +1163,57 @@ export class PluginManager {
 				assertRuntime();
 				context.assertActive();
 				assertRuntime();
+				if (
+					mailOperation &&
+					(!this.deps.relayMailReader ||
+						!isRelayConversationIdentity(pluginId, record?.signature) ||
+						(context.unattended &&
+							!isPermittedUnattended(
+								this.deps.getGrants?.(pluginId) ?? [],
+								'agents:dispatch',
+								context.callerAgentId
+							)))
+				)
+					throw new PluginAuthorityError('PLUGIN_DENIED');
 			};
 			if (!this.deps.prepareToolRecordActive) throw new PluginAuthorityError('PLUGIN_DENIED');
 			await this.deps.prepareToolRecordActive(record!);
 			assertActive();
-			// The sandbox owns bounded args snapshotting and exact-child handle cleanup.
-			const result = await sandbox.invokeTool(pluginId, localId, args, { runContext: context });
+			// Ordinary tools retain sandbox snapshotting and child-owned cleanup.
+			// The six known reads use the Host's bounded executor and invocation lease.
+			let result: unknown;
+			if (mailOperation) {
+				invocationId = identity.issueInvocation(context, pluginId, {
+					signal: this.toolRunLifetime.signal,
+					assertActive,
+				});
+				result = await this.deps.relayMailReader!.invoke(mailOperation, readArgs, {
+					callerAgentId: context.callerAgentId,
+					invocationId,
+				});
+				// Match the existing bounded tool transport; never publish raw MIME or secrets.
+				result = pluginJson(result, 1_000_000);
+			} else {
+				result = await sandbox.invokeTool(pluginId, localId, args, { runContext: context });
+			}
 			if (!this.deps.prepareToolRecordActive) throw new PluginAuthorityError('PLUGIN_DENIED');
 			await this.deps.prepareToolRecordActive(record!);
 			assertActive();
 			// Host callback only, never plugin/serialized input. Its send must be
 			// synchronous and follow its own transport check + this live assertion.
-			publish?.(result, assertActive);
+			const assertCompletion = () => {
+				assertActive();
+				if (invocationId) identity.resolveInvocation(pluginId, invocationId).assertActive();
+			};
+			assertCompletion();
+			publish?.(result, assertCompletion);
 			return result;
 		} catch (error) {
 			throw new PluginAuthorityError(
 				error instanceof PluginAuthorityError ? error.code : 'PLUGIN_DENIED'
 			);
+		} finally {
+			if (invocationId) this.toolIdentity?.releaseInvocation(invocationId);
 		}
 	}
 

@@ -137,6 +137,7 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	concertoStageFloating: false,
 	concertoStagePosition: null,
 	spellCheck: false,
+	userJourneyEnabled: true,
 	usageRefreshIntervals: {},
 	pianolaAutoWatchNewAgents: false,
 	// Consultation budget: peer consults and delegations per user message, whole

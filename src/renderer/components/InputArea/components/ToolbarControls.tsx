@@ -22,7 +22,6 @@ import { shortcutSuffix } from '../../ui/ShortcutHint';
 import { DictationButton } from '../../ui/DictationButton';
 import type { DictationTarget } from '../../../utils/dictationTargets';
 import { updateSessionWith } from '../../../stores/sessionStore';
-import { captureException } from '../../../utils/sentry';
 import { isCoarsePointer } from '../../../utils/touch';
 import { useViewportBreakpoint } from '../../../hooks/ui';
 import { usePhoneLayout } from '../../../hooks/ui/useViewportBreakpoint';
@@ -34,7 +33,7 @@ import {
 	permissionModeFields,
 	setShowThinkingFields,
 } from '../../../utils/tabHelpers';
-import { addStagedImageIfUnique } from '../utils/stagedImages';
+import { ImageAttachInput } from '../../ChatComposer';
 import { formatTerminalCwd } from '../utils/terminalPath';
 import { ComposerOptionsSheet } from './ComposerOptionsSheet';
 import { ModelEffortPills } from './ModelEffortPills';
@@ -212,57 +211,18 @@ export const ToolbarControls = memo(function ToolbarControls({
 
 	const activeTabId = activeTab?.id;
 
-	// One hidden file input, rendered by BOTH the phone row and the desktop row.
-	// The attach button reaches it by element id, so a second copy would give two
-	// elements the same id and the click would resolve to whichever mounted first.
+	// One hidden file input, rendered by whichever row (phone or desktop) is on
+	// screen. The attach buttons reach it through this ref rather than an element
+	// id, so the input stays unique however many buttons point at it.
+	const imageInputRef = useRef<HTMLInputElement>(null);
+	const openImagePicker = useCallback(() => imageInputRef.current?.click(), []);
 	const imageFileInput = (
-		<input
+		<ImageAttachInput
+			ref={imageInputRef}
 			id="image-file-input"
-			type="file"
-			accept="image/*"
-			multiple
-			className="hidden"
-			onChange={(e) => {
-				const files = Array.from(e.target.files || []);
-				files.forEach((file) => {
-					const reader = new FileReader();
-					reader.onload = (event) => {
-						if (event.target?.result) {
-							const imageData = event.target.result as string;
-							setStagedImages((prev) =>
-								addStagedImageIfUnique(prev, imageData, showFlashNotification)
-							);
-						}
-					};
-					reader.onerror = (event) => {
-						captureException(reader.error ?? event, {
-							extra: {
-								component: 'InputArea.ToolbarControls',
-								action: 'attachImage.readError',
-								fileName: file.name,
-								fileType: file.type,
-								fileSize: file.size,
-							},
-						});
-						showFlashNotification?.('Failed to attach image');
-					};
-					reader.onabort = (event) => {
-						captureException(new Error('Image attachment read aborted'), {
-							extra: {
-								component: 'InputArea.ToolbarControls',
-								action: 'attachImage.readAbort',
-								fileName: file.name,
-								fileType: file.type,
-								fileSize: file.size,
-								eventType: event.type,
-							},
-						});
-						showFlashNotification?.('Image attachment canceled');
-					};
-					reader.readAsDataURL(file);
-				});
-				e.target.value = '';
-			}}
+			setStagedImages={setStagedImages}
+			showFlashNotification={showFlashNotification}
+			reportComponent="InputArea.ToolbarControls"
 		/>
 	);
 
@@ -317,7 +277,7 @@ export const ToolbarControls = memo(function ToolbarControls({
 					)}
 					{isAiMode && canAttachImages && (
 						<button
-							onClick={() => document.getElementById('image-file-input')?.click()}
+							onClick={openImagePicker}
 							className="flex h-9 w-9 items-center justify-center rounded opacity-70"
 							title={isWebDesktop() ? 'Upload Image to Host' : 'Attach Image'}
 							aria-label={isWebDesktop() ? 'Upload Image to Host' : 'Attach Image'}
@@ -431,7 +391,7 @@ export const ToolbarControls = memo(function ToolbarControls({
 				)}
 				{isAiMode && canAttachImages && (
 					<button
-						onClick={() => document.getElementById('image-file-input')?.click()}
+						onClick={openImagePicker}
 						className="p-1 hover:bg-white/10 rounded opacity-50 hover:opacity-100"
 						title={isWebDesktop() ? 'Upload Image to Host' : 'Attach Image'}
 					>

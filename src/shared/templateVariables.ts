@@ -21,6 +21,7 @@ import type { SystemOnePromptVariables } from './local-models/system-one-prompt'
  *   {{AGENT_GROUP}}       - Agent's group name (if grouped)
  *   {{AGENT_SESSION_ID}}  - Agent session ID (for conversation continuity)
  *   {{AGENT_HISTORY_PATH}} - Path to agent's history JSON file (for task recall)
+ *   {{AGENT_JOURNEY_PATH}} - Path to agent's User Journey JSONL file (what the user did in Maestro)
  *   {{TAB_ID}}            - This conversation's AI tab ID (for CLI targeting; empty on headless spawns)
  *   {{TAB_NAME}}          - Custom tab name (alias: SESSION_NAME)
  *   {{TOOL_TYPE}}         - Agent type (claude-code, codex, opencode, factory-droid)
@@ -227,6 +228,11 @@ export interface TemplateContext {
 	// History file path for task recall
 	historyFilePath?: string;
 	/**
+	 * The agent's User Journey file, for {{AGENT_JOURNEY_PATH}}. Builders leave
+	 * it unset for SSH-remote agents, whose shell cannot reach that path.
+	 */
+	journeyFilePath?: string;
+	/**
 	 * `<userData>/computer-history` on the Maestro machine, for the Computer
 	 * History system-prompt section. Builders leave it unset for SSH-remote
 	 * agents, whose shell cannot reach that path.
@@ -378,6 +384,7 @@ export const TEMPLATE_VARIABLES = [
 		encoreFlag: 'maestroRun',
 	},
 	{ variable: '{{AGENT_HISTORY_PATH}}', description: 'History file path (task recall)' },
+	{ variable: '{{AGENT_JOURNEY_PATH}}', description: 'User Journey file path (user actions)' },
 	{ variable: '{{AGENT_NAME}}', description: 'Agent name' },
 	{ variable: '{{AGENT_PATH}}', description: 'Agent home directory path' },
 	{ variable: '{{AGENT_SESSION_ID}}', description: 'Agent session ID' },
@@ -763,6 +770,7 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		goalExitCriteria,
 		predecessorHandoff,
 		historyFilePath,
+		journeyFilePath,
 		computerHistoryDir,
 		maestroRunPath,
 		conductorProfile,
@@ -786,6 +794,7 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		AGENT_GROUP: groupName || '',
 		AGENT_SESSION_ID: session.agentSessionId || '',
 		AGENT_HISTORY_PATH: historyFilePath || '',
+		AGENT_JOURNEY_PATH: journeyFilePath || '',
 		COMPUTER_HISTORY_DIR: computerHistoryDir || '',
 		MAESTRO_RUN_PATH: maestroRunPath || '',
 		// The AI tab this spawn belongs to. Empty for headless spawns (CLI send,
