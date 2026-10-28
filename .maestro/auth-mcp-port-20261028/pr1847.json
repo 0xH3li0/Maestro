@@ -1,0 +1,113 @@
+{
+	"files": [
+		{
+			"path": "docs/relay-host-contract.md",
+			"additions": 7,
+			"deletions": 2,
+			"changeType": "MODIFIED"
+		},
+		{
+			"path": "src/__tests__/cli/commands/send.test.ts",
+			"additions": 1,
+			"deletions": 1,
+			"changeType": "MODIFIED"
+		},
+		{
+			"path": "src/__tests__/cli/services/agent-process-supervisor.test.ts",
+			"additions": 385,
+			"deletions": 10,
+			"changeType": "MODIFIED"
+		},
+		{
+			"path": "src/__tests__/cli/services/agent-spawner.test.ts",
+			"additions": 179,
+			"deletions": 11,
+			"changeType": "MODIFIED"
+		},
+		{
+			"path": "src/__tests__/main/parsers/omp-output-parser.test.ts",
+			"additions": 1,
+			"deletions": 0,
+			"changeType": "MODIFIED"
+		},
+		{
+			"path": "src/__tests__/main/plugins/plugin-headless-agent-runner.test.ts",
+			"additions": 92,
+			"deletions": 13,
+			"changeType": "MODIFIED"
+		},
+		{
+			"path": "src/__tests__/main/plugins/plugin-tool-run-identity.test.ts",
+			"additions": 2,
+			"deletions": 2,
+			"changeType": "MODIFIED"
+		},
+		{
+			"path": "src/cli/services/agent-process-supervisor.ts",
+			"additions": 236,
+			"deletions": 15,
+			"changeType": "MODIFIED"
+		},
+		{
+			"path": "src/cli/services/agent-spawner.ts",
+			"additions": 104,
+			"deletions": 23,
+			"changeType": "MODIFIED"
+		},
+		{
+			"path": "src/main/plugins/plugin-headless-agent-runner.ts",
+			"additions": 76,
+			"deletions": 29,
+			"changeType": "MODIFIED"
+		},
+		{
+			"path": "src/shared/maestro-lib/client/__tests__/bridge-connection.test.ts",
+			"additions": 36,
+			"deletions": 0,
+			"changeType": "MODIFIED"
+		},
+		{
+			"path": "src/shared/maestro-lib/parsers/agent-output-parser.ts",
+			"additions": 4,
+			"deletions": 3,
+			"changeType": "MODIFIED"
+		},
+		{
+			"path": "src/shared/maestro-lib/parsers/copilot-output-parser.ts",
+			"additions": 3,
+			"deletions": 0,
+			"changeType": "MODIFIED"
+		},
+		{
+			"path": "src/shared/maestro-lib/parsers/omp-output-parser.ts",
+			"additions": 4,
+			"deletions": 0,
+			"changeType": "MODIFIED"
+		},
+		{
+			"path": "src/shared/maestro-lib/parsers/opencode-output-parser.ts",
+			"additions": 2,
+			"deletions": 0,
+			"changeType": "MODIFIED"
+		},
+		{
+			"path": "src/shared/maestro-lib/parsers/pi-output-parser.ts",
+			"additions": 1,
+			"deletions": 0,
+			"changeType": "MODIFIED"
+		},
+		{
+			"path": "src/shared/plugins/headless-agent-timeouts.ts",
+			"additions": 22,
+			"deletions": 3,
+			"changeType": "MODIFIED"
+		}
+	],
+	"headRefOid": "00440cd298aac87bfe4d7934e6914c056de67ccd",
+	"mergeCommit": {
+		"oid": "aed0df5ef6e1b200dd2fe0359dca0f035474e819"
+	},
+	"number": 1847,
+	"state": "MERGED",
+	"title": "fix(relay): supervise headless turns with bounded inactivity"
+}

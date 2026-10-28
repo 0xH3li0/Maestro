@@ -1,0 +1,289 @@
+{
+	"captured_at": "2026-10-28T19:26:56.981816+00:00",
+	"related_agents": [
+		{
+			"id": "1952d09d-0d28-4eb9-8c26-55a8aa0935f9",
+			"name": "fix/keyring-auth-guard-20261020",
+			"toolType": "codex",
+			"cwd": "/home/chris/code/worktrees/fix/keyring-auth-guard-20261020",
+			"groupId": "group-e4f486d7-914c-4939-a783-1f0e852fea7a",
+			"autoRunFolderPath": "/home/chris/code/Maestro/.maestro/playbooks",
+			"worktreeBasePath": null,
+			"bookmarked": false,
+			"sessionSshRemoteConfig": {
+				"enabled": false,
+				"remoteId": null
+			}
+		},
+		{
+			"id": "f3ffaefc-87ab-4f0c-b278-53abddb5ea9c",
+			"name": "fix/keyring-auth-guard-20261020",
+			"toolType": "claude-code",
+			"cwd": "/home/chris/code/worktrees/fix/keyring-auth-guard-20261020",
+			"groupId": "group-e4f486d7-914c-4939-a783-1f0e852fea7a",
+			"autoRunFolderPath": "/home/chris/code/Maestro/.maestro/playbooks",
+			"worktreeBasePath": null,
+			"bookmarked": false,
+			"sessionSshRemoteConfig": {
+				"enabled": false,
+				"remoteId": null
+			}
+		},
+		{
+			"id": "986be521-bc82-4ccc-98b6-5ef0aabfe86f",
+			"name": "fix/keyring-auth-guard-20261020",
+			"toolType": "omp",
+			"cwd": "/home/chris/code/worktrees/fix/keyring-auth-guard-20261020",
+			"groupId": "group-e4f486d7-914c-4939-a783-1f0e852fea7a",
+			"autoRunFolderPath": "/home/chris/code/Maestro/.maestro/playbooks",
+			"worktreeBasePath": null,
+			"bookmarked": false,
+			"sessionSshRemoteConfig": {
+				"enabled": false,
+				"remoteId": null
+			}
+		},
+		{
+			"id": "06c6c2f9-c2ff-48a8-a865-c200e23f29f1",
+			"name": "fix/auth-mcp-supervision-rc-20261028",
+			"toolType": "codex",
+			"cwd": "/home/chris/code/worktrees/fix/auth-mcp-supervision-rc-20261028",
+			"groupId": "group-e4f486d7-914c-4939-a783-1f0e852fea7a",
+			"autoRunFolderPath": "/home/chris/code/Maestro/.maestro/playbooks",
+			"worktreeBasePath": null,
+			"bookmarked": false,
+			"sessionSshRemoteConfig": {
+				"enabled": false,
+				"remoteId": null
+			}
+		}
+	],
+	"related_tabs": [
+		{
+			"agentId": "1952d09d-0d28-4eb9-8c26-55a8aa0935f9",
+			"agentName": "fix/keyring-auth-guard-20261020",
+			"tabId": "d28bae6d-df95-45f1-859c-59b32917a6af",
+			"name": null,
+			"state": "idle",
+			"effectiveModel": "gpt-6.1-sol",
+			"effectiveEffort": null,
+			"agentSessionId": null
+		},
+		{
+			"agentId": "1952d09d-0d28-4eb9-8c26-55a8aa0935f9",
+			"agentName": "fix/keyring-auth-guard-20261020",
+			"tabId": "3df8ff50-b4e7-467a-890e-24453d6ccb9a",
+			"name": "Keyring Auth Guard",
+			"state": "idle",
+			"effectiveModel": "gpt-6.1-sol",
+			"effectiveEffort": null,
+			"agentSessionId": "01a15a8a-e38c-74b1-8a62-0998ba27afda"
+		},
+		{
+			"agentId": "f3ffaefc-87ab-4f0c-b278-53abddb5ea9c",
+			"agentName": "fix/keyring-auth-guard-20261020",
+			"tabId": "a7ebec1a-f054-460d-b502-88eb59cbe327",
+			"name": null,
+			"state": "idle",
+			"effectiveModel": "",
+			"effectiveEffort": null,
+			"agentSessionId": null
+		},
+		{
+			"agentId": "986be521-bc82-4ccc-98b6-5ef0aabfe86f",
+			"agentName": "fix/keyring-auth-guard-20261020",
+			"tabId": "0fce1ef6-c42f-4ff8-915d-7c967f4935c4",
+			"name": null,
+			"state": "idle",
+			"effectiveModel": "",
+			"effectiveEffort": null,
+			"agentSessionId": null
+		},
+		{
+			"agentId": "06c6c2f9-c2ff-48a8-a865-c200e23f29f1",
+			"agentName": "fix/auth-mcp-supervision-rc-20261028",
+			"tabId": "0dd4191d-bad4-4aa7-84ab-169d3739cc20",
+			"name": null,
+			"state": "idle",
+			"effectiveModel": null,
+			"effectiveEffort": null,
+			"agentSessionId": null
+		},
+		{
+			"agentId": "06c6c2f9-c2ff-48a8-a865-c200e23f29f1",
+			"agentName": "fix/auth-mcp-supervision-rc-20261028",
+			"tabId": "2e53b91f-6a1c-4136-b14d-672e9fce8979",
+			"name": "PORT-20261028",
+			"state": "idle",
+			"effectiveModel": null,
+			"effectiveEffort": null,
+			"agentSessionId": "01a183f6-d094-7292-8fc4-29174288ce8e"
+		}
+	],
+	"other_busy_tabs": [
+		{
+			"agentName": "Mira",
+			"name": "Synapse Status Review",
+			"state": "busy",
+			"tabId": "551fd5c8-5198-48cf-963f-de178728abaa"
+		},
+		{
+			"agentName": "Mira",
+			"name": "Maestro PR Review",
+			"state": "busy",
+			"tabId": "541b659d-15ad-4737-943d-2a37e90bed83"
+		}
+	],
+	"matching_queued_items": [],
+	"tier_configuration": [
+		{
+			"tier": "low",
+			"target": {
+				"type": "provider-model",
+				"model": "gpt-6-luna"
+			},
+			"spec": "provider:gpt-6-luna",
+			"label": "gpt-6-luna",
+			"source": "harness-default",
+			"builtIn": "gpt-6-luna"
+		},
+		{
+			"tier": "medium",
+			"target": {
+				"type": "provider-model",
+				"model": "gpt-6.1-terra"
+			},
+			"spec": "provider:gpt-6.1-terra",
+			"label": "gpt-6.1-terra",
+			"source": "harness-default",
+			"builtIn": "gpt-6.1-sol"
+		},
+		{
+			"tier": "high",
+			"target": {
+				"type": "provider-model",
+				"model": "gpt-6.1-sol"
+			},
+			"spec": "provider:gpt-6.1-sol",
+			"label": "gpt-6.1-sol",
+			"source": "harness-default",
+			"builtIn": "gpt-6-astra"
+		}
+	],
+	"runtime_model": [
+		{
+			"pid": "209402",
+			"executable": "/home/chris/.local/bin/codex",
+			"model_flags": [
+				"-m",
+				"gpt-6.1-sol",
+				"-c",
+				"model_reasoning_effort=\"medium\"",
+				"-c",
+				"model_reasoning_summary=\"auto\"",
+				"-c",
+				"model_reasoning_summary=auto"
+			]
+		},
+		{
+			"pid": "209610",
+			"executable": "/home/chris/.codex/packages/standalone/releases/0.164.0-x86_64-unknown-linux-musl/bin/codex-code-mode-host",
+			"model_flags": []
+		}
+	],
+	"model_limit": "Tier configuration is observed, future task execution is not yet proven. Native tab state was idle/unknown during this active CLI task; /proc supplies actual current launch model.",
+	"source_checkout_status": "",
+	"own_autorun": {
+		"success": true,
+		"sessionId": "06c6c2f9-c2ff-48a8-a865-c200e23f29f1",
+		"running": true,
+		"state": {
+			"isRunning": true,
+			"totalTasks": 8,
+			"completedTasks": 0,
+			"currentTaskIndex": 0,
+			"isStopping": false,
+			"totalDocuments": 1,
+			"currentDocumentIndex": 0,
+			"totalTasksAcrossAllDocs": 8,
+			"completedTasksAcrossAllDocs": 0,
+			"initialCompletedTasks": 0,
+			"errorPaused": false,
+			"documents": ["AUTH-MCP-PORT-20261028-01"],
+			"lockedDocuments": ["AUTH-MCP-PORT-20261028-01"],
+			"currentDocTasksTotal": 8,
+			"currentDocTasksCompleted": 0,
+			"worktreeActive": false,
+			"startTime": 1793215447060,
+			"loopEnabled": false,
+			"loopIteration": 0
+		}
+	},
+	"related_autoruns": [
+		{
+			"success": true,
+			"sessionId": "986be521-bc82-4ccc-98b6-5ef0aabfe86f",
+			"running": false,
+			"state": null
+		},
+		{
+			"success": true,
+			"sessionId": "06c6c2f9-c2ff-48a8-a865-c200e23f29f1",
+			"running": true,
+			"state": {
+				"isRunning": true,
+				"totalTasks": 8,
+				"completedTasks": 0,
+				"currentTaskIndex": 0,
+				"isStopping": false,
+				"totalDocuments": 1,
+				"currentDocumentIndex": 0,
+				"totalTasksAcrossAllDocs": 8,
+				"completedTasksAcrossAllDocs": 0,
+				"initialCompletedTasks": 0,
+				"errorPaused": false,
+				"documents": ["AUTH-MCP-PORT-20261028-01"],
+				"lockedDocuments": ["AUTH-MCP-PORT-20261028-01"],
+				"currentDocTasksTotal": 8,
+				"currentDocTasksCompleted": 0,
+				"worktreeActive": false,
+				"startTime": 1793215447060,
+				"loopEnabled": false,
+				"loopIteration": 0
+			}
+		},
+		{
+			"success": true,
+			"sessionId": "1952d09d-0d28-4eb9-8c26-55a8aa0935f9",
+			"running": false,
+			"state": null
+		},
+		{
+			"success": true,
+			"sessionId": "f3ffaefc-87ab-4f0c-b278-53abddb5ea9c",
+			"running": false,
+			"state": null
+		}
+	],
+	"matching_open_prs": [
+		{
+			"headRefName": "fix/pianola-agent-group-supervision-20261028",
+			"number": 1942,
+			"title": "feat(pianola): supervise agent groups and review learned decisions",
+			"url": "https://github.com/RunMaestro/Maestro/pull/1942"
+		},
+		{
+			"headRefName": "fix/windows-startup-stalls",
+			"number": 1882,
+			"title": "fix(windows): bound startup work and add background stall diagnostics",
+			"url": "https://github.com/RunMaestro/Maestro/pull/1882"
+		},
+		{
+			"headRefName": "fix/1696-feedback-auth-recovery",
+			"number": 1699,
+			"title": "fix(feedback): recover from provider and gh auth failures instead of losing the report",
+			"url": "https://github.com/RunMaestro/Maestro/pull/1699"
+		}
+	],
+	"duplicate_writer_conclusion": "No exact matching active writer, queued task, or open PR found. Source agents idle and Auto Runs stopped. Unrelated busy Mira reviews and distinct Pianola/Windows PRs remain untouched."
+}

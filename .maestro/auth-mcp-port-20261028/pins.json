@@ -1,0 +1,92 @@
+{
+	"created": "2026-10-28T19:26:56.981816+00:00",
+	"branch": "fix/auth-mcp-supervision-rc-20261028",
+	"upstream_ref": "upstream/rc",
+	"upstream_sha": "1fe7a03b072f63a0f0ced53b1f5eb1b8f8f3fe06",
+	"initial_head": "be54af4435",
+	"source_commit": "5d72b672fa7b9481087c112fc12166e8a17eb47d",
+	"source_parent": "98ab15ab3339d35eeae1a558b754c300db0a881f",
+	"source_checkout": "/home/chris/code/worktrees/fix/keyring-auth-guard-20261020",
+	"source_diff_sha256": "70dee05842d87f81983d005c55766b348338a7a9d153a17caa5a34a919d0c2b4",
+	"pr1847": {
+		"state": "MERGED",
+		"merge_commit": "aed0df5ef6e1b200dd2fe0359dca0f035474e819",
+		"ancestor_of_base": true
+	},
+	"source_files": [
+		{
+			"path": "src/__tests__/cli/services/agent-spawner.auth-lifecycle.test.ts",
+			"source_blob": "4c132a7f7da4b80206e659948d4bb5508f89c80c",
+			"upstream_blob": null
+		},
+		{
+			"path": "src/__tests__/fixtures/process-lifecycle/codex-auth-stall.cjs",
+			"source_blob": "2305d775cb2efd9e02023b564752a1264a62e0d1",
+			"upstream_blob": null
+		},
+		{
+			"path": "src/__tests__/main/cross-agent/consult-runner.test.ts",
+			"source_blob": "505159582ce496c9fa7d19e0b60eedf6215e3bf4",
+			"upstream_blob": null
+		},
+		{
+			"path": "src/__tests__/main/process-manager/spawners/ChildProcessSpawner.auth-lifecycle.test.ts",
+			"source_blob": "3c53a3d7c35a1b2f27aaa376149657bf02446f4b",
+			"upstream_blob": null
+		},
+		{
+			"path": "src/cli/services/agent-process-supervisor.ts",
+			"source_blob": "4638bda1fb2b0b4b7a944c3ec8a4715e750ba7a3",
+			"upstream_blob": "d59d4ed6d12581ac1747be2ffdea97c0c76ee3fa"
+		},
+		{
+			"path": "src/cli/services/agent-spawner.ts",
+			"source_blob": "022ff2c6302a9ffd2dc1110bffa04c4057cbd976",
+			"upstream_blob": "8220821c205fd752dd96d154de7c9b99827d0b84"
+		},
+		{
+			"path": "src/main/cross-agent/consult-runner.ts",
+			"source_blob": "c32133bfbfc605196a8d09688f43bfef891f6554",
+			"upstream_blob": "1636432a710348656ce6a3ca3a430033dbe9a25d"
+		},
+		{
+			"path": "src/main/process-manager/spawners/ChildProcessSpawner.ts",
+			"source_blob": "3e267563227978a1dad08f8d6b00516050c1c1a4",
+			"upstream_blob": "0ffa204431be19bb0746704152070640f2433318"
+		},
+		{
+			"path": "src/shared/maestro-lib/agents/__tests__/consult.test.ts",
+			"source_blob": "580e7b38f7bf7a5471975e65a69350da0fd4b91b",
+			"upstream_blob": "1cbe3c7d8c2956a5c0a62700797fc3f5f67ba55d"
+		},
+		{
+			"path": "src/shared/maestro-lib/agents/consult.ts",
+			"source_blob": "b7d746f0c05f575e49fafc79aee16b4c9e600e65",
+			"upstream_blob": "3e20a23296e81caa3de04c02564854a787578e76"
+		},
+		{
+			"path": "src/shared/maestro-lib/control/agent-process-supervisor.ts",
+			"source_blob": "a730afe26b335147181b4e75fc526c744a0c3998",
+			"upstream_blob": null
+		}
+	],
+	"reuse_files": {
+		"src/main/process-manager/utils/parsedEvent.ts": "7f0b19b1f0276a79fd06b3c4ad5f6051b103cfc8",
+		"src/shared/maestro-lib/control/termination.ts": "79f5dc74d94d82a658e6c37678c5e3f69ad31118",
+		"src/shared/maestro-lib/control/idle-watchdog.ts": "787b972d4f8706a14a30ca192a0cf3a1c04e6c7d",
+		"src/shared/maestro-lib/control/stdio-close-watchdog.ts": "e741e9ef56414691526c24bdb9d48173074e37ad",
+		"src/shared/plugins/headless-agent-timeouts.ts": "ffb94b97abdaf42f9e14bbf973702e4bbbb53110"
+	},
+	"rules": {
+		"AGENTS.md": "681311eb9cf453d0faddf3aacaec7357e97ba8e9",
+		"CLAUDE.md": "ed836ebb95102c5089e4cce4d0175649c4933da0",
+		"CLAUDE-PATTERNS.md": "767513dc9a384d5aa4deb238498b4a2f25cf64c7",
+		"docs/agent-guides/PROCESS-SYSTEM.md": "4a4288174b8be813138897662f1ee46e64eafd22",
+		"docs/agent-guides/AGENT-INFRA.md": "32c288fa2ede1fee0be38aa86588256520aadcf0"
+	},
+	"decision": "PORT_REQUIRED",
+	"implementation_started": false,
+	"tests_executed": false,
+	"images_analyzed": 0,
+	"source_patch_artifact": "source.patch.json"
+}
