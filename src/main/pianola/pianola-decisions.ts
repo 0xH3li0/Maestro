@@ -90,6 +90,7 @@ async function sendClaimedDecision(
 		canonicalJson(current.lifecycle.source) === canonicalJson(record.lifecycle!.source)
 	) {
 		const judgment = phase === 'judgment';
+		const humanRetry = phase === 'answer' && current.lifecycle.source.kind === 'human';
 		const next = updatePianolaDecision(
 			current,
 			{
@@ -97,7 +98,7 @@ async function sendClaimedDecision(
 				status:
 					result.status === 'accepted' && judgment
 						? 'mira_processing'
-						: result.status === 'rejected' && judgment
+						: result.status === 'rejected' && (judgment || humanRetry)
 							? 'waiting_human'
 							: 'blocked',
 				nextActor:
@@ -105,16 +106,16 @@ async function sendClaimedDecision(
 						? judgment
 							? 'manager'
 							: 'recipient'
-						: result.status === 'rejected' && judgment
+						: result.status === 'rejected' && (judgment || humanRetry)
 							? 'human'
 							: 'operator',
 				nextAction:
 					result.status === 'accepted'
 						? judgment
-							? 'Mira resolves this decision or escalates it to the human'
+							? 'The manager resolves this decision or escalates it to the human'
 							: 'Wait for recipient activity; an accepted send is not execution evidence'
 						: result.status === 'rejected' && judgment
-							? 'Mira could not receive the ask; decide the original question'
+							? 'The manager could not receive the ask; decide the original question'
 							: result.status === 'rejected'
 								? 'The renderer refused the answer; inspect the recipient before retrying'
 								: 'Reconcile the native receipt or recipient transcript; do not resend',

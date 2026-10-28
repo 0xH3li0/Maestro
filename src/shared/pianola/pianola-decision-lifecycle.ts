@@ -36,7 +36,7 @@ export function startPianolaDecision(
 			nextAction: ignored
 				? 'No reply requested'
 				: judgment
-					? 'Mira judges the pending ask'
+					? 'The manager judges the pending ask'
 					: rule
 						? 'Deliver the authorized rule answer'
 						: record.decision.reason,
@@ -180,12 +180,15 @@ export function reconcilePianolaDecision(
 			{
 				status: 'waiting_human',
 				nextActor: 'human',
-				nextAction: 'Mira did not settle the ask before the deadline; decide the original question',
+				nextAction:
+					'The manager did not settle the ask before the deadline; decide the original question',
 			},
 			now
 		);
 	if (life.status === 'paused') {
 		const uncertain = life.delivery === 'unknown';
+		const humanRetry =
+			life.phase === 'answer' && life.delivery === 'rejected' && life.source.kind === 'human';
 		const awaitingManager =
 			life.phase === 'judgment' &&
 			life.delivery === 'accepted' &&
@@ -196,7 +199,7 @@ export function reconcilePianolaDecision(
 			record,
 			{
 				status:
-					uncertain || life.phase === 'answer'
+					uncertain || (life.phase === 'answer' && !humanRetry)
 						? 'blocked'
 						: awaitingManager
 							? 'mira_processing'
@@ -205,7 +208,7 @@ export function reconcilePianolaDecision(
 					? 'operator'
 					: awaitingRecipient
 						? 'recipient'
-						: life.phase === 'answer'
+						: life.phase === 'answer' && !humanRetry
 							? 'operator'
 							: awaitingManager
 								? 'manager'

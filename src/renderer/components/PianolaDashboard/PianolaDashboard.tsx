@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import type { Theme } from '../../types';
 import { formatRelativeTime } from '../../../shared/formatters';
+import { ipcErrorMessage } from '../../utils/ipcErrorMessage';
 import {
 	usePianolaDashboardData,
 	type DashboardAgentRow,
@@ -40,20 +41,20 @@ import type {
 } from '../../../shared/pianola/storage';
 
 const DECISION_STATUS: Record<PianolaDecisionLifecycle['status'], string> = {
-	mira_processing: 'Mira bearbeitet',
-	waiting_human: 'Wartet auf Chris',
-	agent_running: 'Agent arbeitet weiter',
-	blocked: 'Technisch blockiert',
-	paused: 'Pausiert',
-	done: 'Erledigt',
+	mira_processing: 'Manager processing',
+	waiting_human: 'Waiting for human',
+	agent_running: 'Agent continuing',
+	blocked: 'Blocked',
+	paused: 'Paused',
+	done: 'Done',
 };
 
 const DECISION_ACTOR: Record<PianolaDecisionLifecycle['nextActor'], string> = {
-	manager: 'Mira',
-	human: 'Chris',
+	manager: 'Manager',
+	human: 'Human',
 	recipient: 'Agent',
-	operator: 'Betreiber',
-	none: 'Niemand',
+	operator: 'Operator',
+	none: 'None',
 };
 
 function HumanDecision({
@@ -83,7 +84,7 @@ function HumanDecision({
 						refresh();
 					})
 					.catch((error: unknown) => {
-						setMessage(error instanceof Error ? error.message : String(error));
+						setMessage(ipcErrorMessage(error));
 						refresh();
 					})
 					.finally(() => setPending(false));
@@ -512,7 +513,11 @@ export function PianolaDashboard({
 								life.nextActor === 'human' &&
 								!record.dryRun &&
 								!life.acknowledgedAt &&
-								!(life.phase === 'answer' && record.deliveryStatus === 'admitted') &&
+								!(
+									life.phase === 'answer' &&
+									record.deliveryStatus === 'admitted' &&
+									life.delivery !== 'rejected'
+								) &&
 								!(
 									life.phase === 'answer' &&
 									life.delivery !== 'not_sent' &&
