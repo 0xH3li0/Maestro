@@ -55,9 +55,10 @@ vi.mock('fs/promises', () => ({
 		if (!files.delete(p)) throw enoent();
 	}),
 	readdir: vi.fn(async (dir: string) => {
-		const names = [...files.keys()]
-			.filter((p) => p.startsWith(`${dir}/`))
-			.map((p) => p.slice(dir.length + 1));
+		// path.dirname/basename, not a '/' prefix: the store joins with the
+		// platform separator, which is '\\' on Windows.
+		const { dirname, basename } = await import('path');
+		const names = [...files.keys()].filter((p) => dirname(p) === dir).map((p) => basename(p));
 		if (names.length === 0) throw enoent();
 		return names;
 	}),
