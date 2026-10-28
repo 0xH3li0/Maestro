@@ -3,7 +3,6 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import * as os from 'os';
 import type { Group, SessionInfo, HistoryEntry, SshRemoteConfig } from '../../shared/types';
 import {
 	HISTORY_JSONL_EXT,
@@ -19,24 +18,13 @@ import {
 	normalizeHistoryEntries,
 } from '../../shared/history';
 import { resolveSyncDir } from '../../shared/syncPath';
+import { resolveUserDataDir } from '../../shared/userDataDir';
 
 // Get the Maestro config directory path
 export function getConfigDir(): string {
-	// Allow overriding the data directory (e.g. for dev mode: maestro-dev)
-	if (process.env.MAESTRO_USER_DATA) {
-		return path.resolve(process.env.MAESTRO_USER_DATA);
-	}
-	const platform = os.platform();
-	const home = os.homedir();
-
-	if (platform === 'darwin') {
-		return path.join(home, 'Library', 'Application Support', 'Maestro');
-	} else if (platform === 'win32') {
-		return path.join(process.env.APPDATA || path.join(home, 'AppData', 'Roaming'), 'Maestro');
-	} else {
-		// Linux and others
-		return path.join(process.env.XDG_CONFIG_HOME || path.join(home, '.config'), 'Maestro');
-	}
+	// MAESTRO_USER_DATA (e.g. dev mode's maestro-dev) and the on-disk spelling
+	// check both live in the shared resolver, so the CLI lands where the app does.
+	return resolveUserDataDir();
 }
 
 /**
@@ -53,12 +41,15 @@ export function getSyncDir(): string {
 /**
  * Store files the desktop opens under the sync directory. Must match the
  * stores `initializeStores()` (src/main/stores/instances.ts) gives
- * `cwd: _syncPath`; anything not listed is read from the config directory.
+ * `cwd: _syncPath`, for every one of them the CLI reads; anything not listed
+ * is read from the config directory. `maestro-agent-session-origins` is synced
+ * too, but nothing in the CLI reads it yet: list it here when something does.
  */
 const SYNCED_STORE_FILES: ReadonlySet<string> = new Set([
 	'maestro-sessions.json',
 	'maestro-groups.json',
 	'maestro-settings.json',
+	'maestro-claude-session-origins.json',
 ]);
 
 function getStoreFileDir(filename: string): string {
@@ -66,11 +57,20 @@ function getStoreFileDir(filename: string): string {
 }
 
 /**
+ * Absolute path of a desktop store file, in the directory the desktop keeps
+ * it in (see `SYNCED_STORE_FILES`). For readers outside this module that need
+ * their own error handling around the read.
+ */
+export function getStoreFilePath(filename: string): string {
+	return path.join(getStoreFileDir(filename), filename);
+}
+
+/**
  * Read and parse an Electron Store JSON file
  * Returns undefined if file doesn't exist
  */
 function readStoreFile<T>(filename: string): T | undefined {
-	const filePath = path.join(getStoreFileDir(filename), filename);
+	const filePath = getStoreFilePath(filename);
 
 	try {
 		const content = fs.readFileSync(filePath, 'utf-8');

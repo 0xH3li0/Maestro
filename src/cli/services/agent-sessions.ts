@@ -6,6 +6,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { encodeClaudeProjectPath } from '../../shared/pathUtils';
+import { getStoreFilePath } from './storage';
 import {
 	computeClaudeUsageWithSubagents,
 	readClaudeSubagentTranscriptsSync,
@@ -77,20 +78,14 @@ interface OriginsStore {
 	origins: Record<string, Record<string, string | StoredOriginData>>;
 }
 
+/**
+ * The desktop's `maestro-claude-session-origins` store. It moves with a custom
+ * Storage Location, so its directory comes from the CLI's synced-store rule.
+ */
+const CLAUDE_SESSION_ORIGINS_FILE = 'maestro-claude-session-origins.json';
+
 function readOriginsStore(): OriginsStore {
-	const platform = os.platform();
-	const home = os.homedir();
-	let configDir: string;
-
-	if (platform === 'darwin') {
-		configDir = path.join(home, 'Library', 'Application Support', 'Maestro');
-	} else if (platform === 'win32') {
-		configDir = path.join(process.env.APPDATA || path.join(home, 'AppData', 'Roaming'), 'Maestro');
-	} else {
-		configDir = path.join(process.env.XDG_CONFIG_HOME || path.join(home, '.config'), 'Maestro');
-	}
-
-	const filePath = path.join(configDir, 'claude-session-origins.json');
+	const filePath = getStoreFilePath(CLAUDE_SESSION_ORIGINS_FILE);
 
 	try {
 		const content = fs.readFileSync(filePath, 'utf-8');
