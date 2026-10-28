@@ -55,3 +55,9 @@ The real desktop lifecycle regression now also connects `createDesktopConsultRun
 The delivery commit records the final source subtree below. Its metadata cannot contain its own commit hash; resolve the exact published delivery head with `git rev-parse HEAD` and compare it to GitHub `headRefOid`. Source subtree identity binds the review across evidence-only changes. Final CI and full comment/thread readback are completion gates after publication, not inferred from an earlier head.
 
 Final independently reviewed source subtree: `c85f9c1dd0b6e66b98cc6c6a3caa1d315fc3a4b5`. Both reviewers accepted the partial-output correction before publication.
+
+## Final published-head verification and late formatting review
+
+Both independent reviewers verified published head `c1e62a750073f36f2cdd4f753c0d3844b3e3b11f` and exact source subtree `c85f9c1dd0b6e66b98cc6c6a3caa1d315fc3a4b5`: zero Standards/Spec findings. Greptile thread was answered with this SHA and red/green evidence, then resolved.
+
+CodeRabbit's complete review body and both inline comments were read after its delayed publication. No outside-diff/nitpick findings appeared. It requested tab indentation in checks.json and check-logs/source-diff.json. checks.json was already formatted in c1e62a7500; source-diff.json is now formatted without changing its parsed JSON value. Both pass explicit Prettier checks. This follow-up is evidence-only: source tree remains identical to the independently reviewed published source. Final-head CI must still be observed after its push.
