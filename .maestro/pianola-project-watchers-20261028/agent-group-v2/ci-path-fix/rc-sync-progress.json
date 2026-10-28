@@ -68,7 +68,7 @@
     "actor": "e28c91e9-3a1f-43ae-a54e-7f4561e7a0aa",
     "actualExecutionModel": "unknown",
     "integratedHead": "c9d202bc6f473658954442ac7d5ce44558b7a8f5",
-    "currentPublishedHead": "c4f6f4c7029527427e11fa7946566c130ae62333",
+    "currentPublishedHead": "727c4de55322d528d85eb58abe6dbf71e699528a",
     "upstreamRc": "1fe7a03b072f63a0f0ced53b1f5eb1b8f8f3fe06",
     "ancestry": {
       "previousPublishedHead": "0d0a0b7ce82647d641b8f9cf8e03ea0263570754",
@@ -101,22 +101,24 @@
       "mergeState": "UNSTABLE"
     },
     "ci": {
-      "priorRun": {
-        "id": 40755290077,
-        "head": "c9d202bc6f473658954442ac7d5ce44558b7a8f5",
-        "status": "in_progress"
-      },
+      "priorRuns": [
+        {
+          "id": 40755290077,
+          "head": "c9d202bc6f473658954442ac7d5ce44558b7a8f5",
+          "status": "in_progress"
+        },
+        {
+          "id": 40755667294,
+          "head": "c4f6f4c7029527427e11fa7946566c130ae62333",
+          "status": "in_progress"
+        }
+      ],
       "currentRun": {
-        "id": 40755667294,
-        "url": "https://github.com/RunMaestro/Maestro/actions/runs/40755667294",
-        "head": "c4f6f4c7029527427e11fa7946566c130ae62333",
-        "status": "in_progress",
+        "id": 40755910927,
+        "url": "https://github.com/RunMaestro/Maestro/actions/runs/40755910927",
+        "head": "727c4de55322d528d85eb58abe6dbf71e699528a",
+        "status": "queued",
         "conclusion": null,
-        "checks": [
-          "lint-and-format",
-          "Ubuntu shards 1/2 and 2/2",
-          "Windows shards 1/2 and 2/2"
-        ],
         "allGreen": false
       }
     },
@@ -126,7 +128,7 @@
       "tierHints": "low Luna6 / medium Terra6.1 / high Sol6.1 are hints only"
     },
     "nextActor": "Mira via existing completion callback",
-    "nextAction": "Inspect exact current PR head c4f6f4c7029527427e11fa7946566c130ae62333 and run 40755667294; respond to confirmed CI failures before any merge-readiness decision.",
+    "nextAction": "Inspect exact current PR head 727c4de55322d528d85eb58abe6dbf71e699528a and run 40755910927; respond to confirmed CI failures before any merge-readiness decision.",
     "boundaries": "No merge, install, restart, or live activation.",
     "priorPlaybook": "PIANOLA-CI-PATH-01 CP03/CP04 reconciled to RS01/RS02 evidence; obsolete merge-conflict blocker is resolved by verified local rc integration. Its CP03/CP04 checkboxes are already complete; no halt marker remains to remove."
   }
