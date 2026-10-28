@@ -170,6 +170,7 @@ function ownerMatches(
 			seen.has(current.id) ||
 			seen.size >= 100 ||
 			excluded.has(current.id) ||
+			selection.excludedAgentIds.includes(current.id) ||
 			current.remote !== false ||
 			current.isPianola !== false
 		)
@@ -220,11 +221,9 @@ export function resolvePianolaScopeOwnership(
 	) {
 		return { kind: 'excluded', reason: 'owner or tab is unavailable or ineligible' };
 	}
-	const excluded = new Set(
-		scopes.flatMap((scope) => [scope.managerAgentId, ...scope.selection.excludedAgentIds])
-	);
+	const excluded = new Set(scopes.map((scope) => scope.managerAgentId));
 	if (excluded.has(owner.id)) {
-		return { kind: 'excluded', reason: 'manager or excluded agent' };
+		return { kind: 'excluded', reason: 'manager agent' };
 	}
 	const explicit = watches.filter(
 		(watch) => watch.agentId === tab.agentId && watch.tabId === tab.tabId
