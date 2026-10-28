@@ -667,7 +667,79 @@ export async function runPianolaScopeCycle(
 					record.lifecycle.status === 'done'
 				)
 					continue;
-				const observed = reconcilePianolaDecision(record, tab, messages, deps.watch.now());
+				let observed = reconcilePianolaDecision(record, tab, messages, deps.watch.now());
+				const life = observed.lifecycle!;
+				// A selection edit can leave the same ask and owner in place. Rebind
+				// only an unsent answer (or an already delivered judgment), never an
+				// answer whose delivery may have reached the recipient.
+				if (
+					life.guard.configurationFingerprint !== configurationFingerprint &&
+					life.guard.bindingFingerprint === saved.bindingFingerprint &&
+					life.managerAgentId === scope.managerAgentId &&
+					!life.acknowledgedAt &&
+					!saved.unresolvedIntent &&
+					!tab.busy &&
+					sameCursor(life.guard.cursor, tab.cursor) &&
+					actionableIds.has(life.guard.messageId) &&
+					messages.some(
+						(message) => message.id === life.guard.messageId && message.role === 'assistant'
+					) &&
+					((life.phase === 'none' && life.delivery === 'not_sent') ||
+						(life.phase === 'judgment' && life.delivery === 'accepted') ||
+						(life.phase === 'answer' && life.delivery === 'rejected'))
+				) {
+					const currentTargets = deps.store.readSupervisorTargets();
+					const currentScopes = scopesFrom(currentTargets);
+					const currentScope = currentScopes.find((candidate) => candidate.id === scopeId);
+					const current = await deps.readSnapshot();
+					assertSnapshot(current);
+					const currentTab = current.tabs.find(
+						(candidate) => candidate.agentId === tab.agentId && candidate.tabId === tab.tabId
+					);
+					const owner =
+						currentTab &&
+						resolvePianolaScopeOwnership(
+							currentTab,
+							current.owners,
+							currentScopes,
+							currentTargets.filter((candidate) => candidate.kind === 'watch')
+						);
+					// A native resolver may have claimed or settled the decision while
+					// the fresh census was in flight. Never overwrite that writer.
+					if (
+						canonicalJson(
+							deps.store.readDecisions().find((candidate) => candidate.id === record.id)
+						) !== canonicalJson(record)
+					) {
+						pending = true;
+						continue;
+					}
+					if (
+						currentScope?.enabled &&
+						current.capturedAt >= snapshot.capturedAt &&
+						pianolaScopeConfigurationFingerprint(currentScope) === configurationFingerprint &&
+						currentTab &&
+						!currentTab.busy &&
+						!currentTab.paused &&
+						currentTab.cursorAvailable &&
+						sameCursor(currentTab.cursor, tab.cursor) &&
+						owner?.kind === 'scope' &&
+						owner.scopeId === scopeId &&
+						bindingFingerprint(currentScope, tab.agentId, current.owners) ===
+							saved.bindingFingerprint &&
+						!options.shouldStop?.() &&
+						!externallySuspended &&
+						deps.store.readScopeCheckpoint(scopeId)?.status === 'armed'
+					) {
+						observed = updatePianolaDecision(
+							observed,
+							{
+								guard: { ...life.guard, configurationFingerprint },
+							},
+							deps.watch.now()
+						);
+					}
+				}
 				if (observed !== record) {
 					deps.watch.recordDecision(observed);
 					if (
