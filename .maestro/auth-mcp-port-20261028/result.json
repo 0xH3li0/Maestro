@@ -3,7 +3,7 @@
 	"branch": "fix/auth-mcp-supervision-rc-20261028",
 	"head": {
 		"delivery_commit": "the commit containing this result.json; resolve git rev-parse HEAD after checkout",
-		"previous_published_head": "513de47abd041f9519d041de6525662a9d0587f0",
+		"previous_published_head": "d287a9a444991297aafac8931bcf0ba5103eeea7",
 		"source_tree": "6932c0aff9345a29cff19784dc882fd1cf09a4ff"
 	},
 	"upstream_basis": "1fe7a03b072f63a0f0ced53b1f5eb1b8f8f3fe06",
@@ -14,7 +14,7 @@
 		"human_reviews_at_capture": [],
 		"coderabbit_4405401116": "JSON artifact formatted, content preserved, Prettier verified",
 		"coderabbit_4405401127": "already corrected in c1e62a7500, Prettier verified",
-		"coderabbit_4405568024": "valid; reproduced error,data on SIGTERM final output; fixed with deferred host error after final output drain; 487 focused tests pass; reply/resolve after publication"
+		"coderabbit_4405568024": "fixed in d287a9a444991297aafac8931bcf0ba5103eeea7, 487 focused tests green, independent reviewers accepted, replied after push"
 	},
 	"ci": {
 		"checks_url": "https://github.com/RunMaestro/Maestro/pull/1944/checks",

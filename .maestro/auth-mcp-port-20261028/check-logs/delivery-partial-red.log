@@ -38,4 +38,3 @@ AssertionError: expected '' to be 'Starting work' // Object.is equality
       Tests  1 failed | 3 skipped (4)
    Start at  20:51:08
    Duration  3.00s (transform 992ms, setup 0ms, import 1.33s, tests 1.47s, environment 0ms)
-
