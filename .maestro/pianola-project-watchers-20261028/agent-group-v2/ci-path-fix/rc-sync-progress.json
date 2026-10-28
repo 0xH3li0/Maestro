@@ -113,7 +113,7 @@
       "headSha": "c9d202bc6f473658954442ac7d5ce44558b7a8f5",
       "recordedStatus": "queued",
       "conclusion": null,
-      "currentStatus": "unverified; configured chr1syy/Maestro gh context returns PR-not-found and run-404",
+      "currentStatus": "in_progress; lint-and-format, Ubuntu shards 1/2 and 2/2, Windows shards 1/2 and 2/2 active; PR UNSTABLE pending checks",
       "allGreen": false
     },
     "models": {
@@ -122,7 +122,7 @@
       "tierHints": "low Luna6 / medium Terra6.1 / high Sol6.1 are hints only"
     },
     "followUp": {
-      "status": "GitHub run pending/unverified",
+      "status": "GitHub run in progress, verified live with explicit RunMaestro/Maestro repo",
       "nextActor": "Mira via existing completion callback",
       "nextAction": "inspect exact-head CI run 40755290077 in RunMaestro/Maestro; handle any confirmed failure before considering merge readiness",
       "noMergeInstallRestartOrActivation": true
