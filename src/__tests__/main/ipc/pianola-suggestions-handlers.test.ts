@@ -97,14 +97,13 @@ describe('pianola suggestions IPC handlers', () => {
 		expect(store.writeRules).not.toHaveBeenCalled();
 	});
 
-	it('apply-suggestion appends a valid approved rule', async () => {
+	it('apply-suggestion rejects an unstaged caller-supplied rule', async () => {
 		registerPianolaHandlers({ settingsStore: settingsStore(true), supervisor });
 		const rule = autoAnswerRule();
-		const res = (await handlers.get('pianola:apply-suggestion')!({}, { rule })) as {
-			rules: PianolaRule[];
-		};
-		expect(store.writeRules).toHaveBeenCalledTimes(1);
-		expect(res.rules.some((r) => r.id === rule.id)).toBe(true);
+		await expect(handlers.get('pianola:apply-suggestion')!({}, { rule })).rejects.toThrow(
+			'StaleOrChangedSuggestion'
+		);
+		expect(store.writeRules).not.toHaveBeenCalled();
 	});
 
 	it('apply-suggestion rejects an invalid rule', async () => {
@@ -130,7 +129,7 @@ describe('pianola suggestions IPC handlers', () => {
 		);
 	});
 
-	it('apply-suggestion prunes the applied proposal from staging', async () => {
+	it('apply-suggestion rejects a staged rule without current Chris evidence', async () => {
 		const rule = autoAnswerRule();
 		const other = autoAnswerRule({ id: 'other-suggestion' });
 		store.readSuggestions.mockReturnValue({
@@ -141,16 +140,11 @@ describe('pianola suggestions IPC handlers', () => {
 			previousProfile: 'prev',
 		});
 		registerPianolaHandlers({ settingsStore: settingsStore(true), supervisor });
-		await handlers.get('pianola:apply-suggestion')!({}, { rule });
-		// The approved rule's proposal is dropped; the rest of the file is preserved.
-		expect(store.writeSuggestions).toHaveBeenCalledTimes(1);
-		expect(store.writeSuggestions).toHaveBeenCalledWith({
-			generatedAt: 5,
-			pairCount: 2,
-			proposals: [other],
-			proposedProfile: 'draft',
-			previousProfile: 'prev',
-		});
+		await expect(handlers.get('pianola:apply-suggestion')!({}, { rule })).rejects.toThrow(
+			'StaleOrChangedSuggestion'
+		);
+		expect(store.writeRules).not.toHaveBeenCalled();
+		expect(store.writeSuggestions).not.toHaveBeenCalled();
 	});
 
 	it('apply-suggestion does not touch staging for a profile-only apply', async () => {

@@ -89,6 +89,29 @@ describe('RuleEditor save round-trip', () => {
 		expect(typeof saved.updatedAt).toBe('number');
 	});
 
+	it('preserves exact question and native group conditions when editing a learned rule', () => {
+		const onSave = vi.fn();
+		const rule: PianolaRule = {
+			id: 'learned-inspection',
+			enabled: true,
+			scope: 'agent',
+			scopeId: 'agent-1',
+			match: { maxRisk: 'low', exactQuestion: 'Should I run `git status`?', groupId: 'group-1' },
+			action: 'auto_answer',
+			answer: 'Yes, inspect.',
+			priority: 100,
+			createdAt: 1,
+			updatedAt: 1,
+		};
+		render(<RuleEditor theme={theme} rule={rule} onCancel={vi.fn()} onSave={onSave} />);
+		fireEvent.change(screen.getByPlaceholderText('What this rule is for.'), {
+			target: { value: 'Local inspection' },
+		});
+		fireEvent.click(screen.getByText('Save rule'));
+		expect(onSave).toHaveBeenCalledOnce();
+		expect(onSave.mock.calls[0][0].match).toEqual(rule.match);
+	});
+
 	it('requires a scope id for a non-global rule before Save', () => {
 		const onSave = vi.fn();
 		render(<RuleEditor theme={theme} rule={null} onCancel={vi.fn()} onSave={onSave} />);

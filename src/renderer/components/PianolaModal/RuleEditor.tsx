@@ -73,12 +73,16 @@ export function RuleEditor({ theme, rule, onCancel, onSave }: RuleEditorProps) {
 			.split(',')
 			.map((s) => s.trim())
 			.filter(Boolean);
+		// These exact conditions are not editable in this legacy form. Preserve
+		// them when changing a description/answer instead of silently widening it.
 		const m: PianolaRule['match'] = {};
+		if (base.match.exactQuestion !== undefined) m.exactQuestion = base.match.exactQuestion;
+		if (base.match.groupId !== undefined) m.groupId = base.match.groupId;
 		if (draft.maxRisk) m.maxRisk = draft.maxRisk;
 		if (draft.kinds.length > 0) m.kinds = draft.kinds;
 		if (topicIncludes.length > 0) m.topicIncludes = topicIncludes;
 		return m;
-	}, [draft.maxRisk, draft.kinds, draft.topicIncludes]);
+	}, [base.match, draft.maxRisk, draft.kinds, draft.topicIncludes]);
 
 	// Mirror the policy's safety contract exactly (see hasNarrowingPredicate in
 	// pianola-policy.ts): max risk also counts as a narrowing predicate, so a

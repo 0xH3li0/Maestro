@@ -6,6 +6,7 @@ import type { PianolaRule } from '../../../shared/pianola/types';
 import type {
 	PianolaDecisionRecord,
 	PianolaSuggestionsFile,
+	PianolaSuggestionReview,
 } from '../../../shared/pianola/storage';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
@@ -153,20 +154,26 @@ export function PianolaModal({ theme, onClose }: PianolaModalProps) {
 		[rules, persistRules]
 	);
 
-	const handleApproveRule = useCallback(async (rule: PianolaRule) => {
-		try {
-			const res = await window.maestro.pianola.applySuggestion({ rule });
-			setRules(res.rules);
-			setSuggestions((prev) =>
-				prev ? { ...prev, proposals: prev.proposals.filter((p) => p.id !== rule.id) } : prev
-			);
-			notifyToast({ color: 'green', title: 'Pianola', message: 'Rule added from suggestion.' });
-		} catch (error) {
-			logger.error('[Pianola] Failed to apply suggestion', undefined, error);
-			if (!isExpectedError(error)) void captureException(error, { tags: { feature: 'pianola' } });
-			notifyToast({ color: 'red', title: 'Pianola', message: 'Could not apply suggestion.' });
-		}
-	}, []);
+	const handleReviewSuggestion = useCallback(
+		async (review: PianolaSuggestionReview) => {
+			try {
+				const result = await window.maestro.pianola.reviewSuggestion(review);
+				setRules(result.rules);
+				setSuggestions(result.suggestions);
+				notifyToast({ color: 'green', title: 'Pianola', message: 'Suggestion review saved.' });
+			} catch (error) {
+				logger.error('[Pianola] Failed to review suggestion', undefined, error);
+				if (!isExpectedError(error)) void captureException(error, { tags: { feature: 'pianola' } });
+				notifyToast({
+					color: 'red',
+					title: 'Pianola',
+					message: 'Review failed or evidence changed. Refresh and review again.',
+				});
+				void load();
+			}
+		},
+		[load]
+	);
 
 	const handleApplyProfile = useCallback(async (text: string) => {
 		try {
@@ -315,7 +322,9 @@ export function PianolaModal({ theme, onClose }: PianolaModalProps) {
 							theme={theme}
 							suggestions={suggestions}
 							loading={loading}
-							onApproveRule={handleApproveRule}
+							rules={rules}
+							onReview={handleReviewSuggestion}
+							onClose={onClose}
 							onApplyProfile={handleApplyProfile}
 						/>
 					)}

@@ -365,6 +365,7 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		registerPianolaHandlers({
 			settingsStore: deps.settingsStore,
 			supervisor: pianolaSupervisor,
+			getWebServer: deps.getWebServer,
 		});
 	}
 

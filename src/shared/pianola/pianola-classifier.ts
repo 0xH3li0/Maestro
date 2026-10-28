@@ -238,5 +238,9 @@ export function classifyMessages(messages: readonly PianolaMessage[]): PianolaCl
 	// destructive intent in an earlier assistant message of this turn still
 	// escalates even when the awaiting question itself reads low-risk. Preserves
 	// the existing kind/topic; only the risk severity incorporates the turn max.
-	return { ...classification, risk: maxRisk(classification.risk, currentTurnMaxRisk(messages)) };
+	return {
+		...classification,
+		questionText: assistant.content,
+		risk: maxRisk(classification.risk, currentTurnMaxRisk(messages)),
+	};
 }
