@@ -12,6 +12,7 @@
  */
 
 import type { SecretStorage } from '../secretStorage';
+import { isValidThemeId, RETIRED_THEME_IDS, type ThemeId } from '../theme-types';
 
 /** The hosted Sketch Book server. */
 export const SKETCH_DEFAULT_SERVER_URL = 'https://sketch.runmaestro.ai';
@@ -79,17 +80,45 @@ export function sketchRoomSocketUrl(serverUrl: unknown, roomId: string): string 
 }
 
 /**
- * Contract section 2: the share link, `<server>/s/<roomId>#<key>.<cap>`. The
- * key and the cap sit in the fragment, which a browser never sends, so the
- * server sees neither.
+ * Contract section 2: the share link,
+ * `<server>/s/<roomId>?theme=<themeId>#<key>.<cap>`. The key and the cap sit
+ * in the fragment, which a browser never sends, so the server sees neither.
+ * The theme is only a display hint: the guest page opens in the owner's theme
+ * unless the guest picked one of their own. With no `themeId` the query is
+ * left off and the guest page follows the guest's OS light or dark.
  */
 export function sketchShareLinkUrl(
 	serverUrl: unknown,
 	roomId: string,
 	roomKey: string,
-	cap: string
+	cap: string,
+	themeId?: string | null
 ): string {
-	return `${resolveSketchServerUrl(serverUrl)}/s/${encodeURIComponent(roomId)}#${roomKey}.${cap}`;
+	const theme = themeId ? `?theme=${encodeURIComponent(themeId)}` : '';
+	return `${resolveSketchServerUrl(serverUrl)}/s/${encodeURIComponent(roomId)}${theme}#${roomKey}.${cap}`;
+}
+
+/** A stored theme id that names a theme the guest page has, or null. */
+function knownThemeId(id: unknown): ThemeId | null {
+	if (typeof id !== 'string') return null;
+	if (isValidThemeId(id)) return id;
+	return RETIRED_THEME_IDS[id] ?? null;
+}
+
+/**
+ * The theme a share link carries, from the owner's `activeThemeId`. The guest
+ * page knows only the stock palettes, so a Custom theme sends the theme it was
+ * built on (`customThemeBaseId`). Null when neither names a known theme: the
+ * link then carries no theme rather than a wrong one.
+ */
+export function sketchShareThemeId(
+	activeThemeId: unknown,
+	customThemeBaseId?: unknown
+): ThemeId | null {
+	const active = knownThemeId(activeThemeId);
+	if (active !== 'custom') return active;
+	const base = knownThemeId(customThemeBaseId);
+	return base === 'custom' ? null : base;
 }
 
 /** Q7: how long a new link lives when the conductor does not say, in days. */

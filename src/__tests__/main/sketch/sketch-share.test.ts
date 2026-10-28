@@ -66,6 +66,7 @@ import type { SketchScene } from '../../../shared/sketch/types';
 const SERVER = 'https://sketch.example';
 const OWNER_TOKEN = 'T'.repeat(80);
 const ROOM_ID = 'R'.repeat(22);
+const THEME = 'pedurple';
 const IMAGE_ID = 'img-1';
 const NOW = 1_800_000_000_000;
 
@@ -131,6 +132,7 @@ describe('Sketch Book sharing', () => {
 	let linkCount: number;
 	let failSnapshot: boolean;
 	let failLink: boolean;
+	let theme: string | null;
 	let confirm: ReturnType<typeof vi.fn<(prompt: SketchDesktopConfirmPrompt) => Promise<boolean>>>;
 	let sketchId: string;
 
@@ -205,6 +207,7 @@ describe('Sketch Book sharing', () => {
 			renderer,
 			ownerAuth: () => ownerAuth,
 			serverUrl: () => SERVER,
+			themeId: () => theme,
 			roomApi,
 			confirm,
 			newRoomKey: () => {
@@ -229,6 +232,7 @@ describe('Sketch Book sharing', () => {
 		epoch = 0;
 		linkCount = 0;
 		failSnapshot = false;
+		theme = THEME;
 		failLink = false;
 		confirm = vi.fn(async () => true);
 		const record = await store.createSketch({ ownerAgentId: agent.id, name: 'Board' });
@@ -264,7 +268,7 @@ describe('Sketch Book sharing', () => {
 				role: 'rw',
 				label: 'Team',
 				expiresAt: NOW + 7 * 86_400_000,
-				url: sketchShareLinkUrl(SERVER, ROOM_ID, roomKey, '1'.repeat(43)),
+				url: sketchShareLinkUrl(SERVER, ROOM_ID, roomKey, '1'.repeat(43), THEME),
 			});
 			expect(ofKind('createLink')[0].input).toEqual({
 				role: 'rw',
@@ -350,7 +354,9 @@ describe('Sketch Book sharing', () => {
 			expect(kinds()).toEqual(['createLink']);
 			expect(result.createdRoom).toBe(false);
 			expect(ofKind('createLink')[0].input).toEqual({ role: 'ro', expiresInDays: 30 });
-			expect(result.link.url).toBe(sketchShareLinkUrl(SERVER, ROOM_ID, keys[0], '2'.repeat(43)));
+			expect(result.link.url).toBe(
+				sketchShareLinkUrl(SERVER, ROOM_ID, keys[0], '2'.repeat(43), THEME)
+			);
 			expect(keys).toHaveLength(1);
 			expect((await store.getSketch(sketchId))?.share?.links.map((link) => link.role)).toEqual([
 				'rw',
@@ -511,6 +517,19 @@ describe('Sketch Book sharing', () => {
 			expect((await store.readSketchSecrets(sketchId))[`cap:${minted.capId}`]).toBe('1'.repeat(43));
 		});
 
+		it('carries the app theme the owner has when the link is built, in the query', async () => {
+			const { link: minted } = await service().shareSketch(sketchId);
+			expect(minted.url).toBe(`${SERVER}/s/${ROOM_ID}?theme=${THEME}#${keys[0]}.${'1'.repeat(43)}`);
+
+			theme = 'github-light';
+			const relit = await service().sketchLink(sketchId, minted.capId);
+			expect(new URL(relit.url).searchParams.get('theme')).toBe('github-light');
+
+			theme = null;
+			const plain = await service().sketchLink(sketchId, minted.capId);
+			expect(plain.url).toBe(`${SERVER}/s/${ROOM_ID}#${keys[0]}.${'1'.repeat(43)}`);
+		});
+
 		it('refuses a revoked link, an unknown one, and one minted before caps were kept', async () => {
 			await service().shareSketch(sketchId);
 			await service().shareSketch(sketchId);
@@ -542,7 +561,9 @@ describe('Sketch Book sharing', () => {
 			]);
 			expect(result.createdRoom).toBe(false);
 			expect(result.link).toMatchObject({ capId: 'capid0000002', role: 'ro', label: 'Review' });
-			expect(result.link.url).toBe(sketchShareLinkUrl(SERVER, ROOM_ID, keys[0], '2'.repeat(43)));
+			expect(result.link.url).toBe(
+				sketchShareLinkUrl(SERVER, ROOM_ID, keys[0], '2'.repeat(43), THEME)
+			);
 			expect(result.record.share?.links.map((link) => [link.capId, link.revoked])).toEqual([
 				['capid0000001', true],
 				['capid0000002', false],

@@ -23,13 +23,16 @@ Base: hosted spec §5, §6, §6.1, §7 and §12 as of commit `89ff033`, plus ame
 
 ## 2. Link and crypto
 
-`https://sketch.runmaestro.ai/s/<roomId>#<key>.<cap>`
+`https://sketch.runmaestro.ai/s/<roomId>?theme=<themeId>#<key>.<cap>`
 
-| Part     | Format                                       | Who sees it                                            |
-| -------- | -------------------------------------------- | ------------------------------------------------------ |
-| `roomId` | 22-char base62                               | everyone                                               |
-| `key`    | AES-GCM 128-bit raw key, base64url, 22 chars | desktop and guests only, never the server              |
-| `cap`    | 32 random bytes, base64url                   | sent only in `hello` or an `Authorization: Cap` header |
+| Part      | Format                                       | Who sees it                                            |
+| --------- | -------------------------------------------- | ------------------------------------------------------ |
+| `roomId`  | 22-char base62                               | everyone                                               |
+| `themeId` | a key of `THEMES` in `src/shared/themes.ts`  | everyone (a display hint, not a secret)                |
+| `key`     | AES-GCM 128-bit raw key, base64url, 22 chars | desktop and guests only, never the server              |
+| `cap`     | 32 random bytes, base64url                   | sent only in `hello` or an `Authorization: Cap` header |
+
+- `?theme=` is optional and is the only query parameter. The desktop sends the owner's app theme when the link is built (`sketchShareThemeId()`: a Custom theme sends the theme it was built on; an unknown id sends nothing). The guest page uses it as the default theme when the guest has no saved pick, ignores an unknown id, and strips it from the address bar. With no `?theme=` the guest page follows the guest's OS light or dark. The key and the cap stay in the fragment, never in the query.
 
 - AES-GCM-128, WebCrypto on both sides, a fresh random 12-byte IV per encryption. Never reuse an IV under one key.
 - **X8 (amendment): associated data.** Every encryption uses AAD = UTF-8 of `"sketch/v1|" + roomId + "|" + keyEpoch + "|" + kind`, where `kind` is the plaintext type in section 3 (`delta`, `chat`, `presence`, `bot.reply`, `snapshot`, `file`). Without AAD, a guest can replay a chat ciphertext as a delta (or across rooms that share nothing but a pasted key), and the receiver decrypts it without error. The server never decrypts, so this costs it nothing.

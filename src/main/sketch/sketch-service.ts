@@ -88,6 +88,7 @@ import {
 	DEFAULT_LINK_EXPIRY_DAYS,
 	LINK_LABEL_MAX_CHARS,
 	sketchShareLinkUrl,
+	sketchShareThemeId,
 	type SketchOwnerStatus,
 } from '../../shared/sketch/server';
 import {
@@ -164,6 +165,8 @@ export interface SketchServiceDeps {
 	ownerAuth?: () => SketchOwnerAuth;
 	/** The server configured now (`sketchBook.serverUrl`, else the hosted one). */
 	serverUrl?: () => string;
+	/** The app theme a share link carries, read when the link is built; null leaves it off. */
+	themeId?: () => string | null;
 	roomApi?: SketchRoomApi;
 	/** The A1 desktop confirmation. Resolves true only on Allow. */
 	confirm?: (prompt: SketchDesktopConfirmPrompt) => Promise<boolean>;
@@ -298,6 +301,12 @@ function botDecisionPrompt(
 	}
 }
 
+/** The owner's app theme now, as a share link carries it (`sketchShareThemeId()`). */
+export function currentSketchShareThemeId(): string | null {
+	const settings = getSettingsStore();
+	return sketchShareThemeId(settings.get('activeThemeId'), settings.get('customThemeBaseId'));
+}
+
 /** The live agent with this id, as Sketch Book sees it, or `null`. */
 export function findSketchOwnerAgent(agentId: string): SketchOwnerAgent | null {
 	const session = getLiveSessions().find((candidate) => candidate.id === agentId);
@@ -335,6 +344,7 @@ export function createSketchService(deps: SketchServiceDeps = {}): SketchService
 	const renderer = deps.renderer ?? requestSketchRenderer;
 	const ownerAuth = deps.ownerAuth ?? getSketchOwnerAuth;
 	const serverUrl = deps.serverUrl ?? configuredSketchServerUrl;
+	const themeId = deps.themeId ?? currentSketchShareThemeId;
 	const roomApi = deps.roomApi ?? createSketchRoomApi();
 	const confirm = deps.confirm ?? confirmSketchActionOnDesktop;
 	const newRoomKey = deps.newRoomKey ?? generateRoomKey;
@@ -553,7 +563,7 @@ export function createSketchService(deps: SketchServiceDeps = {}): SketchService
 				role: link.role,
 				label: link.label,
 				expiresAt: minted.expiresAt,
-				url: sketchShareLinkUrl(auth.serverUrl, share.roomId, roomKey, minted.cap),
+				url: sketchShareLinkUrl(auth.serverUrl, share.roomId, roomKey, minted.cap, themeId()),
 			},
 		};
 	}
@@ -1028,7 +1038,7 @@ export function createSketchService(deps: SketchServiceDeps = {}): SketchService
 				role: link.role,
 				label: link.label,
 				expiresAt: link.expiresAt,
-				url: sketchShareLinkUrl(share.serverUrl, share.roomId, roomKey, cap),
+				url: sketchShareLinkUrl(share.serverUrl, share.roomId, roomKey, cap, themeId()),
 			};
 		},
 
