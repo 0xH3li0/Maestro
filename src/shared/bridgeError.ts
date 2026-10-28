@@ -9,6 +9,7 @@ export type BridgeErrorCode =
 
 export type BridgeSubmissionState = 'not-sent' | 'read-only' | 'unknown';
 
+/** Carries transport state and whether a failed request could have reached the host. */
 export class BridgeTransportError extends Error {
 	readonly name = 'BridgeTransportError';
 	constructor(
@@ -21,6 +22,7 @@ export class BridgeTransportError extends Error {
 	}
 }
 
+/** Recognize typed transport failures, including serialized errors from another realm. */
 export function isBridgeTransportError(error: unknown): error is BridgeTransportError {
 	return (
 		error instanceof BridgeTransportError ||

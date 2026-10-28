@@ -31,6 +31,7 @@ import { useFileExplorerStore } from '../../../renderer/stores/fileExplorerStore
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { logger } from '../../../renderer/utils/logger';
 import { isWebDesktop } from '../../../renderer/utils/runtimeContext';
+import { BridgeTransportError } from '../../../shared/bridgeError';
 
 vi.mock('../../../renderer/utils/fileExplorer', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('../../../renderer/utils/fileExplorer')>();
@@ -161,9 +162,12 @@ describe('useFileTreeManagement', () => {
 	it('retains the working tree and avoids error logs for a reconnect racing a refresh', async () => {
 		const tree: FileNode[] = [{ name: 'retained.txt', type: 'file' }];
 		const state = createSessionsState([createMockSession({ fileTree: tree })]);
-		vi.mocked(loadFileTree).mockRejectedValue(
-			new Error('Not submitted: restoring authoritative host state. Your current work is retained.')
-		);
+		vi.mocked(loadFileTree).mockImplementation(async () => {
+			(window as unknown as Record<string, unknown>).__MAESTRO_BRIDGE_STATE__ = 'restoring';
+			throw new Error(
+				'Not submitted: restoring authoritative host state. Your current work is retained.'
+			);
+		});
 		const spy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 		const { result } = renderHook(() => useFileTreeManagement(createDeps(state)));
 		await act(async () => {
@@ -173,6 +177,26 @@ describe('useFileTreeManagement', () => {
 		expect(state.getSessions()[0].fileTreeError).toBeUndefined();
 		expect(spy).not.toHaveBeenCalled();
 		spy.mockRestore();
+	});
+
+	it('surfaces a read timeout while connected instead of waiting for a reconnect event', async () => {
+		(window as unknown as Record<string, unknown>).__MAESTRO_BRIDGE_STATE__ = 'connected';
+		const state = createSessionsState([createMockSession({ fileTree: [] })]);
+		const error = new BridgeTransportError(
+			'Bridge request timed out: fs:readDir',
+			'BRIDGE_TIMEOUT',
+			'read-only',
+			'fs:readDir'
+		);
+		vi.mocked(loadFileTree).mockRejectedValue(error);
+		const { result } = renderHook(() =>
+			useFileTreeManagement(createDeps(state, { activeSession: null, activeSessionId: null }))
+		);
+		await act(async () => {
+			await result.current.refreshFileTree(state.getSessions()[0].id);
+		});
+		expect(state.getSessions()[0].fileTreeError).toContain(error.message);
+		expect(state.getSessions()[0].fileTree).toEqual([]);
 	});
 
 	it('refreshFileTree updates tree and returns changes', async () => {

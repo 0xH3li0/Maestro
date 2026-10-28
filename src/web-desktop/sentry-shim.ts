@@ -26,6 +26,7 @@ function toErrorMessage(value: unknown): string {
 	}
 }
 
+/** Throttle matching reports and consume logger failures so reporting cannot recurse. */
 function report(level: LogLevel, message: string, extra?: unknown): void {
 	const key = `${level}:${message}`;
 	const previous = recentReports.get(key);

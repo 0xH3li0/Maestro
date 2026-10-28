@@ -4,6 +4,7 @@ import {
 	WEB_BRIDGE_STATE_EVENT,
 } from '../../../shared/bridgeError';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useEventListener } from '../utils/useEventListener';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 import type { RightPanelHandle } from '../../components/RightPanel';
 import type { Session } from '../../types';
@@ -564,7 +565,7 @@ export function useFileTreeManagement(
 
 				return changes;
 			} catch (error) {
-				if (isExpectedBridgeError(error)) {
+				if (isExpectedBridgeError(error) && !isBridgeTransportReady()) {
 					pendingTransportRefreshes.current.add(sessionId);
 					return undefined;
 				}
@@ -605,16 +606,12 @@ export function useFileTreeManagement(
 		]
 	);
 
-	useEffect(() => {
-		const resume = () => {
-			if (!isBridgeTransportReady()) return;
-			const pending = [...pendingTransportRefreshes.current];
-			pendingTransportRefreshes.current.clear();
-			for (const sessionId of pending) void refreshFileTree(sessionId);
-		};
-		window.addEventListener(WEB_BRIDGE_STATE_EVENT, resume);
-		return () => window.removeEventListener(WEB_BRIDGE_STATE_EVENT, resume);
-	}, [refreshFileTree]);
+	useEventListener(WEB_BRIDGE_STATE_EVENT, () => {
+		if (!isBridgeTransportReady()) return;
+		const pending = [...pendingTransportRefreshes.current];
+		pendingTransportRefreshes.current.clear();
+		for (const sessionId of pending) void refreshFileTree(sessionId);
+	});
 
 	/**
 	 * Refresh both file tree and git state for a session.

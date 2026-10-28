@@ -22,6 +22,7 @@ import {
 	WEB_BRIDGE_STATE_EVENT,
 } from '../../../shared/bridgeError';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useEventListener } from '../utils/useEventListener';
 import type {
 	ToolType,
 	LogEntry,
@@ -242,6 +243,9 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 	// ========================================================================
 	// Slash command discovery effect
 	// ========================================================================
+	// Keep reconnects on the current effect's cancellable discovery operation.
+	const discoverCommandsRef = useRef<(() => void) | null>(null);
+	useEventListener(WEB_BRIDGE_STATE_EVENT, () => discoverCommandsRef.current?.());
 	useEffect(() => {
 		const currentSession = selectActiveSession(useSessionStore.getState());
 		if (!currentSession) return;
@@ -357,12 +361,12 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 			}
 			void discoverAgentCommands();
 		};
-		window.addEventListener(WEB_BRIDGE_STATE_EVENT, discover);
+		discoverCommandsRef.current = discover;
 		discover();
 
 		return () => {
 			cancelled = true;
-			window.removeEventListener(WEB_BRIDGE_STATE_EVENT, discover);
+			discoverCommandsRef.current = null;
 		};
 	}, [
 		activeSessionId,

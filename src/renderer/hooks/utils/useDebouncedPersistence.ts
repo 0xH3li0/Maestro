@@ -55,6 +55,7 @@ import {
 } from '../../../shared/bridgeError';
 import { canonicalJson } from '../../../shared/canonicalJson';
 import { mergeSessionPersistenceChanges } from '../../../shared/sessionPersistenceMerge';
+import { useEventListener } from './useEventListener';
 
 /**
  * Thrown by `persistInternal` when the session registry was never read back
@@ -669,6 +670,78 @@ export function useDebouncedPersistence(
 		[persistSessions]
 	);
 
+	useEventListener(SESSION_PERSISTENCE_REBASE_EVENT, (event) => {
+		if (!isPendingRef.current && !attemptedSessionsRef.current) return;
+		const baseline =
+			uncertainBaselineRef.current ??
+			attemptedSessionsRef.current ??
+			previouslyPersistedRef.current ??
+			mountedSessionsRef.current;
+		if (!baseline) return;
+		const detail = (event as CustomEvent<{ sessions: Session[] }>).detail;
+		const before = new Map(baseline.map((session) => [session.id, session]));
+		const local = new Map(sessionsRef.current.map((session) => [session.id, session]));
+		const hostIds = new Set(detail.sessions.map((session) => session.id));
+		detail.sessions = detail.sessions.flatMap((host) => {
+			const current = local.get(host.id);
+			const observed = before.get(host.id) ?? peerBaselinesRef.current.get(host.id);
+			if (!current) return before.has(host.id) ? [] : [host];
+			if (!observed) return [host];
+			const rebased = mergeSessionPersistenceChanges(
+				prepareSessionForPersistence(current),
+				host,
+				prepareSessionForPersistence(observed),
+				true,
+				true
+			);
+			// Transcript rows and runtime remain authoritative even when a local
+			// metadata edit was waiting to be saved alongside newer host events.
+			const hostTabs = new Map(host.aiTabs.map((tab) => [tab.id, tab]));
+			return [
+				{
+					...rebased,
+					aiLogs: host.aiLogs,
+					shellLogs: host.shellLogs,
+					aiTabs: rebased.aiTabs.map((tab) => ({
+						...tab,
+						logs: hostTabs.get(tab.id)?.logs ?? tab.logs,
+					})),
+				},
+			];
+		});
+		for (const session of local.values()) {
+			if (!hostIds.has(session.id) && !before.has(session.id))
+				detail.sessions.push(prepareSessionForPersistence(session));
+		}
+	});
+	useEventListener(WEB_BRIDGE_STATE_EVENT, (event) => {
+		if ((event as CustomEvent<{ state: string }>).detail?.state === 'connected') void flushNow();
+	});
+	useEventListener(SESSION_PERSISTENCE_BASELINE_EVENT, (event) => {
+		const { sessions, recovered } = (event as CustomEvent<SessionPersistenceBaseline>).detail;
+		if (recovered) {
+			recoveryGenerationRef.current++;
+			if (timerRef.current) clearTimeout(timerRef.current);
+			timerRef.current = null;
+			flushRequestedRef.current = false;
+			peerBaselinesRef.current.clear();
+			sessionsRef.current = useSessionStore.getState().sessions;
+			previouslyPersistedRef.current = sessions;
+			uncertainBaselineRef.current = null;
+			attemptedSessionsRef.current = null;
+			startupBaselineNeedsFullFlushRef.current = false;
+			// Restoration can preserve unsent edits and client workflows. The
+			// recovered host is their new baseline, not proof they were saved.
+			isPendingRef.current =
+				canonicalJson(sessionsRef.current.map(prepareSessionForPersistence)) !==
+				canonicalJson(sessions.map(prepareSessionForPersistence));
+			flushSync(() => setIsPending(isPendingRef.current));
+		}
+		for (const session of sessions) {
+			peerBaselinesRef.current.set(session.id, structuredClone(session));
+		}
+	});
+
 	// Debounced persistence via store subscribe (no App-level sessions subscription)
 	useEffect(() => {
 		const unsubscribePeerSnapshots = window.maestro.sessions.onLifecycleSync?.((payload) => {
@@ -682,80 +755,6 @@ export function useDebouncedPersistence(
 			}
 			for (const id of payload.removedIds ?? []) peerBaselinesRef.current.delete(id);
 		});
-		const rebasePending = (event: Event) => {
-			if (!isPendingRef.current && !attemptedSessionsRef.current) return;
-			const baseline =
-				uncertainBaselineRef.current ??
-				attemptedSessionsRef.current ??
-				previouslyPersistedRef.current ??
-				mountedSessionsRef.current;
-			if (!baseline) return;
-			const detail = (event as CustomEvent<{ sessions: Session[] }>).detail;
-			const before = new Map(baseline.map((session) => [session.id, session]));
-			const local = new Map(sessionsRef.current.map((session) => [session.id, session]));
-			const hostIds = new Set(detail.sessions.map((session) => session.id));
-			detail.sessions = detail.sessions.flatMap((host) => {
-				const current = local.get(host.id);
-				const observed = before.get(host.id) ?? peerBaselinesRef.current.get(host.id);
-				if (!current) return before.has(host.id) ? [] : [host];
-				if (!observed) return [host];
-				const rebased = mergeSessionPersistenceChanges(
-					prepareSessionForPersistence(current),
-					host,
-					prepareSessionForPersistence(observed),
-					true,
-					true
-				);
-				// Transcript rows and runtime remain authoritative even when a local
-				// metadata edit was waiting to be saved alongside newer host events.
-				const hostTabs = new Map(host.aiTabs.map((tab) => [tab.id, tab]));
-				return [
-					{
-						...rebased,
-						aiLogs: host.aiLogs,
-						shellLogs: host.shellLogs,
-						aiTabs: rebased.aiTabs.map((tab) => ({
-							...tab,
-							logs: hostTabs.get(tab.id)?.logs ?? tab.logs,
-						})),
-					},
-				];
-			});
-			for (const session of local.values()) {
-				if (!hostIds.has(session.id) && !before.has(session.id))
-					detail.sessions.push(prepareSessionForPersistence(session));
-			}
-		};
-		window.addEventListener(SESSION_PERSISTENCE_REBASE_EVENT, rebasePending);
-		const resumePersistence = (event: Event) => {
-			if ((event as CustomEvent<{ state: string }>).detail?.state === 'connected') void flushNow();
-		};
-		window.addEventListener(WEB_BRIDGE_STATE_EVENT, resumePersistence);
-		const rememberBootstrap = (event: Event) => {
-			const { sessions, recovered } = (event as CustomEvent<SessionPersistenceBaseline>).detail;
-			if (recovered) {
-				recoveryGenerationRef.current++;
-				if (timerRef.current) clearTimeout(timerRef.current);
-				timerRef.current = null;
-				flushRequestedRef.current = false;
-				peerBaselinesRef.current.clear();
-				sessionsRef.current = useSessionStore.getState().sessions;
-				previouslyPersistedRef.current = sessions;
-				uncertainBaselineRef.current = null;
-				attemptedSessionsRef.current = null;
-				startupBaselineNeedsFullFlushRef.current = false;
-				// Restoration can preserve unsent edits and client workflows. The
-				// recovered host is their new baseline, not proof they were saved.
-				isPendingRef.current =
-					canonicalJson(sessionsRef.current.map(prepareSessionForPersistence)) !==
-					canonicalJson(sessions.map(prepareSessionForPersistence));
-				flushSync(() => setIsPending(isPendingRef.current));
-			}
-			for (const session of sessions) {
-				peerBaselinesRef.current.set(session.id, structuredClone(session));
-			}
-		};
-		window.addEventListener(SESSION_PERSISTENCE_BASELINE_EVENT, rememberBootstrap);
 		const schedulePersist = () => {
 			if (!initialLoadComplete.current) {
 				return;
@@ -813,14 +812,11 @@ export function useDebouncedPersistence(
 		return () => {
 			unsubscribe();
 			unsubscribePeerSnapshots?.();
-			window.removeEventListener(SESSION_PERSISTENCE_BASELINE_EVENT, rememberBootstrap);
-			window.removeEventListener(SESSION_PERSISTENCE_REBASE_EVENT, rebasePending);
-			window.removeEventListener(WEB_BRIDGE_STATE_EVENT, resumePersistence);
 			if (timerRef.current) {
 				clearTimeout(timerRef.current);
 			}
 		};
-	}, [delay, initialLoadComplete, persistSessions, flushNow]);
+	}, [delay, initialLoadComplete, persistSessions]);
 
 	// Flush on unmount to prevent data loss
 	useEffect(() => {

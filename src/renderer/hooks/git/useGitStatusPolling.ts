@@ -1,5 +1,6 @@
 import { isBridgeTransportReady, WEB_BRIDGE_STATE_EVENT } from '../../../shared/bridgeError';
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useEventListener } from '../utils/useEventListener';
 import type { Session } from '../../types';
 import { gitService } from '../../services/git';
 import { updateSessionWith } from '../../stores/sessionStore';
@@ -565,14 +566,10 @@ export function useGitStatusPolling(
 		}
 	}, []);
 
-	useEffect(() => {
-		const onBridgeState = () => {
-			if (!isBridgeTransportReady()) stopPolling();
-			else if (isActiveRef.current) startPolling();
-		};
-		window.addEventListener(WEB_BRIDGE_STATE_EVENT, onBridgeState);
-		return () => window.removeEventListener(WEB_BRIDGE_STATE_EVENT, onBridgeState);
-	}, [startPolling, stopPolling]);
+	useEventListener(WEB_BRIDGE_STATE_EVENT, () => {
+		if (!isBridgeTransportReady()) stopPolling();
+		else if (isActiveRef.current) startPolling();
+	});
 
 	// Handle visibility changes
 	useEffect(() => {

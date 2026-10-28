@@ -37,6 +37,7 @@ import { migrateLegacySnoozedTabs } from '../../utils/snoozeHelpers';
 import { isMediaStreamUrl } from '../../../shared/mediaTypes';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 import { logger } from '../../utils/logger';
+import { captureException } from '../../utils/sentry';
 import {
 	readPersistedActiveSessionId,
 	restoreClientSessionView,
@@ -351,8 +352,10 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				}
 			}
 		} catch (error) {
-			if (!isExpectedBridgeError(error))
+			if (!isExpectedBridgeError(error)) {
 				logger.warn('Failed to refresh owning host runtime after reconnect', 'Sessions', error);
+				captureException(error, { tags: { operation: 'refreshWebRuntime' } });
+			}
 		}
 	}, []);
 	const refreshGroupChats = useCallback(async (signal?: AbortSignal) => {
@@ -362,13 +365,12 @@ export function useSessionRestoration(): SessionRestorationReturn {
 			const chats = await window.maestro.groupChat.list();
 			if (!signal?.aborted && generation === deferredLoadGeneration.current) setGroupChats(chats);
 		} catch (error) {
-			if (!signal?.aborted && !isExpectedBridgeError(error))
+			if (!signal?.aborted && !isExpectedBridgeError(error)) {
 				logger.warn('Failed to refresh group chats after reconnect', 'Sessions', error);
+				captureException(error, { tags: { operation: 'refreshGroupChats' } });
+			}
 		}
 	}, []);
-	useEventListener(WEB_BRIDGE_STATE_EVENT, () => {
-		if (isBridgeTransportReady()) void refreshGroupChats();
-	});
 	const loadActiveDeferredContent = useCallback(async (recovering = false): Promise<boolean> => {
 		if (!recovering && (authoritativeRecoverySignal.current || !isBridgeTransportReady()))
 			return false;
@@ -507,6 +509,14 @@ export function useSessionRestoration(): SessionRestorationReturn {
 		deferredLoadsInFlight.current.set(key, work);
 		return work;
 	}, []);
+
+	useEventListener(WEB_BRIDGE_STATE_EVENT, () => {
+		if (!isBridgeTransportReady()) return;
+		// A selection made during the final recovery reads was fenced by the
+		// authoritative signal. Ref cleanup alone does not notify the store.
+		void loadActiveDeferredContent();
+		void refreshGroupChats();
+	});
 
 	useEffect(() => {
 		if (!isWebDesktop()) return;
@@ -1016,8 +1026,10 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				await reattachLiveAiTurns();
 				await refreshWebRuntime();
 			})().catch((error) => {
-				if (!isExpectedBridgeError(error))
+				if (!isExpectedBridgeError(error)) {
 					logger.warn('Failed to reconcile host runtime', 'Sessions', error);
+					captureException(error, { tags: { operation: 'reconcileHostRuntime' } });
+				}
 			});
 			return;
 		}

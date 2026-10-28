@@ -19,6 +19,8 @@ vi.mock('../../../renderer/stores/settingsStore', async (importOriginal) => ({
 	loadAllSettings: mockLoadAllSettings,
 }));
 
+vi.mock('../../../renderer/utils/sentry', () => ({ captureException: vi.fn() }));
+
 // Mock gitService before any imports that use it
 vi.mock('../../../renderer/services/git', () => ({
 	gitService: {
@@ -38,7 +40,7 @@ import {
 	prepareSessionForPersistence,
 	useDebouncedPersistence,
 } from '../../../renderer/hooks/utils/useDebouncedPersistence';
-import { BridgeTransportError } from '../../../shared/bridgeError';
+import { BridgeTransportError, WEB_BRIDGE_STATE_EVENT } from '../../../shared/bridgeError';
 import { mergeSessionPersistenceChanges } from '../../../shared/sessionPersistenceMerge';
 import { useSessionRestoration } from '../../../renderer/hooks/session/useSessionRestoration';
 import { buildUnifiedTabs } from '../../../renderer/utils/tabHelpers';
@@ -49,6 +51,8 @@ import {
 } from '../../../renderer/stores/sessionStore';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import { gitService } from '../../../renderer/services/git';
+import * as processService from '../../../renderer/services/process';
+import { captureException } from '../../../renderer/utils/sentry';
 import type { Session } from '../../../renderer/types';
 import type { BrowserTab } from '../../../shared/browserPage';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
@@ -2046,6 +2050,81 @@ describe('Session & Group loading effect', () => {
 		}
 	});
 
+	it.each(['live turns', 'runtime'] as const)(
+		'loads a conversation selected during the final %s recovery read when connected',
+		async (pausedRead) => {
+			runtime.web = true;
+			const original = createMockSession({ id: 'selected-during-recovery' });
+			original.aiTabs = [original.aiTabs[0], { ...original.aiTabs[0], id: 'tab-2' }];
+			original.unifiedTabOrder = original.aiTabs.map(({ id }) => ({ type: 'ai' as const, id }));
+			mockGetBootstrap.mockResolvedValue([original]);
+			const getActiveProcesses = vi.fn().mockResolvedValue([]);
+			(window.maestro as any).process = { getActiveProcesses };
+			renderHook(() => useSessionRestoration());
+			await vi.waitFor(() => expect(useSessionStore.getState().sessionsLoaded).toBe(true));
+			expect(getActiveProcesses).toHaveBeenCalledTimes(1);
+			const host = { ...original, deferredContent: { tabIds: ['tab-2'] } };
+			let finishRead!: () => void;
+			let readStarted = false;
+			const paused = new Promise<void>((resolve) => {
+				finishRead = resolve;
+			});
+			mockGetBootstrap.mockResolvedValue([host]);
+			if (pausedRead === 'live turns') {
+				getActiveProcesses.mockImplementationOnce(async () => {
+					readStarted = true;
+					await paused;
+					return [];
+				});
+			} else {
+				mockGetBootstrap.mockResolvedValueOnce([host]).mockImplementationOnce(async () => {
+					readStarted = true;
+					await paused;
+					return [host];
+				});
+			}
+			const logs = [{ id: 'host-answer', timestamp: 1, source: 'stdout', text: 'fresh answer' }];
+			mockGetDeferredContent.mockResolvedValue({ logs });
+			const work: Promise<void>[] = [];
+			(window as unknown as Record<string, unknown>).__MAESTRO_BRIDGE_STATE__ = 'restoring';
+			try {
+				act(() => {
+					window.dispatchEvent(
+						new CustomEvent(WEB_BRIDGE_RECONCILE_EVENT, {
+							detail: {
+								authoritative: true,
+								signal: new AbortController().signal,
+								waitUntil: (promise: Promise<void>) => work.push(promise),
+							},
+						})
+					);
+				});
+				await vi.waitFor(() => expect(readStarted).toBe(true));
+				act(() =>
+					updateSessionWith(original.id, (session) => ({ ...session, activeTabId: 'tab-2' }))
+				);
+				expect(mockGetDeferredContent).not.toHaveBeenCalled();
+				await act(async () => {
+					finishRead();
+					await Promise.all(work);
+				});
+				expect(mockGetDeferredContent).not.toHaveBeenCalled();
+				await act(async () => {
+					(window as unknown as Record<string, unknown>).__MAESTRO_BRIDGE_STATE__ = 'connected';
+					window.dispatchEvent(new Event(WEB_BRIDGE_STATE_EVENT));
+				});
+				expect(mockGetDeferredContent).toHaveBeenCalledWith(original.id, 'tab-2', false);
+				const selected = useSessionStore.getState().sessions[0];
+				expect(selected.activeTabId).toBe('tab-2');
+				expect(selected.aiTabs[1].logs).toEqual(logs);
+				expect(selected.deferredContent).toBeUndefined();
+			} finally {
+				finishRead();
+				delete (window as unknown as Record<string, unknown>).__MAESTRO_BRIDGE_STATE__;
+			}
+		}
+	);
+
 	it('recovers sessions while group-chat inventory is unavailable and retains its current list', async () => {
 		runtime.web = true;
 		const original = createMockSession({ id: 'agent', name: 'Before reconnect' });
@@ -2087,6 +2166,47 @@ describe('Session & Group loading effect', () => {
 		expect(useSessionStore.getState().sessions[0].name).toBe('Recovered host');
 		expect(useGroupChatStore.getState().groupChats).toBe(chats);
 	});
+
+	it.each([
+		['refreshGroupChats', false],
+		['refreshGroupChats', true],
+		['refreshWebRuntime', false],
+		['refreshWebRuntime', true],
+		['reconcileHostRuntime', false],
+		['reconcileHostRuntime', true],
+	] as const)(
+		'reports unexpected %s failures while keeping transport errors quiet (%s)',
+		async (operation, expected) => {
+			runtime.web = true;
+			mockGetBootstrap.mockResolvedValue([createMockSession({ id: 'reporting-agent' })]);
+			(window.maestro as any).process = { getActiveProcesses: vi.fn().mockResolvedValue([]) };
+			renderHook(() => useSessionRestoration());
+			await vi.waitFor(() => expect(useSessionStore.getState().sessionsLoaded).toBe(true));
+			vi.mocked(captureException).mockClear();
+			const error = expected
+				? new BridgeTransportError('Read timed out', 'BRIDGE_TIMEOUT', 'read-only')
+				: new Error('Unexpected host response');
+			const liveTurnSpy =
+				operation === 'reconcileHostRuntime'
+					? vi.spyOn(processService, 'fetchLiveAiTurns').mockRejectedValueOnce(error)
+					: undefined;
+			try {
+				await act(async () => {
+					if (operation === 'refreshGroupChats') {
+						mockGroupChatList.mockRejectedValueOnce(error);
+						window.dispatchEvent(new Event(WEB_BRIDGE_STATE_EVENT));
+					} else {
+						if (operation === 'refreshWebRuntime') mockGetBootstrap.mockRejectedValueOnce(error);
+						window.dispatchEvent(new Event(WEB_BRIDGE_RECONCILE_EVENT));
+					}
+				});
+			} finally {
+				liveTurnSpy?.mockRestore();
+			}
+			if (expected) expect(captureException).not.toHaveBeenCalled();
+			else expect(captureException).toHaveBeenCalledExactlyOnceWith(error, { tags: { operation } });
+		}
+	);
 
 	it('refreshes host settings before authoritative recovery completes', async () => {
 		runtime.web = true;

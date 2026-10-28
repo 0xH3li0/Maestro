@@ -895,6 +895,7 @@ const bridge = new BridgeClient({ wsUrl: getWsUrl() });
 // Keep a bounded local diagnostic history while the host logger is unavailable.
 // Debug/info stay out of the console; real warnings retain their original level.
 const localDiagnostics = new Map<string, { count: number; lastPrinted?: number }>();
+/** Deduplicate outage diagnostics locally without making another bridge logging request. */
 function recordLocalDiagnostic(args: unknown[]): void {
 	const [level, message, context, data] = args;
 	const key = `${String(level)}:${String(context ?? '')}:${String(message)}:${data instanceof Error ? data.message : ''}`;
