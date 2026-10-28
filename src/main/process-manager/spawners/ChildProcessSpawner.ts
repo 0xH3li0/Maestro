@@ -643,6 +643,7 @@ export class ChildProcessSpawner {
 			// desktop turns too, including auth/MCP stalls after startup. Other
 			// providers and interactive terminal shells keep their own lifecycle.
 			let supervisionFailed = false;
+			let supervisionFailure: string | undefined;
 			const supervision =
 				toolType === 'codex' && (isBatchMode || stdinText !== undefined)
 					? superviseAgentProcess(childProcess, {
@@ -662,25 +663,10 @@ export class ChildProcessSpawner {
 										},
 										'terminate'
 									);
-								try {
-									emitAgentErrorAfterOutput(
-										this.emitter,
-										this.bufferManager,
-										sessionId,
-										managedProcess,
-										{
-											type: 'agent_crashed',
-											message: reason,
-											recoverable: true,
-											agentId: toolType,
-											sessionId,
-											timestamp: Date.now(),
-										},
-										{ flushStreamedText: true }
-									);
-								} catch (error) {
-									void captureException(error);
-								}
+								// Record failure now, but let termination drain its last bytes.
+								// Suppress generic exit classification without suppressing text.
+								supervisionFailure = reason;
+								managedProcess.errorEmitted = true;
 							},
 							onForcedStop: forceCompletion,
 						})
@@ -760,6 +746,34 @@ export class ChildProcessSpawner {
 				// `signal` is what tells a kill from a clean exit once `code || 0` has
 				// turned the killed process's null code into 0. `stdinError` says the
 				// prompt never fully reached the agent.
+				// ExitHandler parses the final unterminated line and flushes data
+				// before exit. Publish our host failure first among exit observers,
+				// after that drain, so late output cannot hide or overtake the error.
+				const onSupervisedExit = (sid: string): void => {
+					if (sid !== sessionId || isSuperseded()) return;
+					this.emitter.off('exit', onSupervisedExit);
+					if (!supervisionFailure) return;
+					try {
+						emitAgentErrorAfterOutput(
+							this.emitter,
+							this.bufferManager,
+							sessionId,
+							managedProcess,
+							{
+								type: 'agent_crashed',
+								message: supervisionFailure,
+								recoverable: true,
+								agentId: toolType,
+								sessionId,
+								timestamp: Date.now(),
+							},
+							{ flushStreamedText: true }
+						);
+					} catch (error) {
+						void captureException(error);
+					}
+				};
+				if (supervisionFailure) this.emitter.prependListener('exit', onSupervisedExit);
 				return this.exitHandler
 					.handleExit(sessionId, exit.exitCode || 0, managedProcess, exit.signal, exit.stdinError)
 					.catch((err) => {
@@ -777,7 +791,8 @@ export class ChildProcessSpawner {
 							this.processes.delete(sessionId);
 							this.emitter.emit('exit', sessionId, exit.exitCode || 0);
 						}
-					});
+					})
+					.finally(() => this.emitter.off('exit', onSupervisedExit));
 			});
 
 			// The run layer settles on `close`, which waits on every holder of the

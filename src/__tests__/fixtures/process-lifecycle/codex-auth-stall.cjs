@@ -6,7 +6,17 @@ const phase = process.argv.find((arg) => arg.startsWith('--fixture-phase='))?.sp
 const pidFile = process.argv
 	.find((arg) => arg.startsWith('--fixture-pids='))
 	?.slice('--fixture-pids='.length);
-if (phase === 'resistant') process.on('SIGTERM', () => {});
+if (phase === 'resistant') process.on('SIGTERM', () => console.log('STOPPING'));
+if (phase === 'late-output' || phase === 'after-model-late-output')
+	process.on('SIGTERM', () => {
+		process.stdout.write(
+			JSON.stringify({
+				type: 'item.completed',
+				item: { id: 'late', type: 'agent_message', text: 'Last answer' },
+			})
+		);
+		process.exit(0);
+	});
 if (phase === 'success') {
 	console.log(
 		JSON.stringify({
@@ -22,7 +32,7 @@ const mcp = spawn(process.execPath, ['-e', "setInterval(() => {}, 1000); console
 mcp.stdout.once('data', () => {
 	if (pidFile) writeFileSync(pidFile, JSON.stringify({ agent: process.pid, mcp: mcp.pid }));
 	console.log('MCP_READY:' + mcp.pid);
-	if (phase !== 'startup' && phase !== 'resistant')
+	if (phase !== 'startup' && phase !== 'resistant' && phase !== 'late-output')
 		console.log(
 			JSON.stringify({
 				type: 'item.completed',

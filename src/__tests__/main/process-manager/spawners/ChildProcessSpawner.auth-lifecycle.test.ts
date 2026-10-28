@@ -56,7 +56,11 @@ describe.skipIf(process.platform !== 'linux')('real desktop Codex auth/MCP lifec
 			emitter,
 			new DataBufferManager(processes, emitter)
 		);
-		const failed = new Promise<void>((resolve) => emitter.once('agent-error', () => resolve()));
+		const failed = new Promise<void>((resolve) =>
+			emitter.on('raw-stdout', (_id, text: string) => {
+				if (text.includes('STOPPING')) resolve();
+			})
+		);
 		const config = {
 			sessionId: 'resistant-fixture',
 			toolType: 'codex',
@@ -89,7 +93,13 @@ describe.skipIf(process.platform !== 'linux')('real desktop Codex auth/MCP lifec
 		expect(successor.childProcess?.exitCode).toBeNull();
 		expect(successor.childProcess?.signalCode).toBeNull();
 	});
-	it.each(['startup', 'after-model', 'mcp-tool'] as const)(
+	it.each([
+		'startup',
+		'after-model',
+		'mcp-tool',
+		'late-output',
+		'after-model-late-output',
+	] as const)(
 		'settles %s blockage, forwards an error and releases its own MCP child',
 		async (phase) => {
 			const unrelated = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
@@ -152,7 +162,7 @@ describe.skipIf(process.platform !== 'linux')('real desktop Codex auth/MCP lifec
 			const managed = processes.get('auth-fixture')!;
 			owned.push(managed);
 			await ready;
-			if (phase !== 'startup') {
+			if (phase === 'after-model' || phase === 'mcp-tool' || phase === 'after-model-late-output') {
 				await new Promise((resolve) => setTimeout(resolve, phase === 'mcp-tool' ? 1_500 : 900));
 				expect(
 					processes.has('auth-fixture'),
@@ -174,10 +184,18 @@ describe.skipIf(process.platform !== 'linux')('real desktop Codex auth/MCP lifec
 			expect(errors).toHaveLength(1);
 			expect(consultEnd?.error).toBe(errors[0].message);
 			expect(consultEnd?.exitCode).toBe(1);
-			expect(consultEnd?.readText()).toBe(phase === 'startup' ? '' : 'Starting work');
+			expect(consultEnd?.readText()).toBe(
+				phase === 'startup'
+					? ''
+					: phase === 'late-output'
+						? 'Last answer'
+						: phase === 'after-model-late-output'
+							? 'Last answer'
+							: 'Starting work'
+			);
 			expect(deliveryOrder).toEqual(phase === 'startup' ? ['error'] : ['data', 'error']);
 			expect(errors[0].message).toMatch(
-				phase === 'startup'
+				phase === 'startup' || phase === 'late-output'
 					? /Startup or authentication/
 					: phase === 'mcp-tool'
 						? /tool or wait budget/
@@ -216,6 +234,7 @@ describe.skipIf(process.platform !== 'linux')('real desktop Codex auth/MCP lifec
 			).toBe(true);
 			owned.push(processes.get('auth-fixture')!);
 			await nextExit;
+			await vi.waitFor(() => expect(emitter.listenerCount('exit')).toBe(0));
 			expect(processes.has('auth-fixture')).toBe(false);
 			expect(errors).toHaveLength(1);
 		}

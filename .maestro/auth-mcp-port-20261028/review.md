@@ -61,3 +61,13 @@ Final independently reviewed source subtree: `c85f9c1dd0b6e66b98cc6c6a3caa1d315f
 Both independent reviewers verified published head `c1e62a750073f36f2cdd4f753c0d3844b3e3b11f` and exact source subtree `c85f9c1dd0b6e66b98cc6c6a3caa1d315fc3a4b5`: zero Standards/Spec findings. Greptile thread was answered with this SHA and red/green evidence, then resolved.
 
 CodeRabbit's complete review body and both inline comments were read after its delayed publication. No outside-diff/nitpick findings appeared. It requested tab indentation in checks.json and check-logs/source-diff.json. checks.json was already formatted in c1e62a7500; source-diff.json is now formatted without changing its parsed JSON value. Both pass explicit Prettier checks. This follow-up is evidence-only: source tree remains identical to the independently reviewed published source. Final-head CI must still be observed after its push.
+
+## Late-output drain correction
+
+CodeRabbit [4405568024](https://github.com/RunMaestro/Maestro/pull/1944#discussion_r4405568024) found that the timeout error still preceded output written during SIGTERM. Valid, reproduced with a final unterminated JSON envelope: expected data,error, observed error,data (`delivery-drain-red.log`).
+
+The callback now records the host failure without marking the result emitted. Canonical ExitHandler parses/drains the final envelope and flushes output. A temporary, generation-filtered prepended exit observer then emits the host error before consult exit observers. It removes itself before delivery and in finally, including failed/superseded exit handling. No ExitHandler contract or extra implementation file was changed. Forced completion follows the same path.
+
+Regression covers both an initially empty answer and an already-present partial answer followed by final SIGTERM text, final failed consult result, data,error ordering, next-turn reuse and no remaining exit listeners. The resistant predecessor fixture now signals STOPPING when SIGTERM actually arrives, keeping the supersession race regression synchronized with pending termination. Canonical final-envelope behavior selects the final answer rather than concatenating earlier prose; the assertion uses Last answer in both cases.
+
+Final eight focused suites: **487 tests passed**, exit 0 (`delivery-drain-green.log`). Scoped ESLint and Prettier pass. Both independent reviewers accepted this three-file correction, with zero open Standards/Spec findings. Final reviewed source subtree supersedes earlier trees: `6932c0aff9345a29cff19784dc882fd1cf09a4ff`. Exact published head is resolved from the commit containing this update, and final CI must be observed anew. Earlier Windows jobs remain superseded evidence, never final acceptance.

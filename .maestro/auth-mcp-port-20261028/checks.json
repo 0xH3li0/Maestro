@@ -93,5 +93,25 @@
 			"result": "shared read-only dependencies lack papaparse/parsimmon/luxon/smol-toml and types; unchanged dependency errors only",
 			"logs": ["check-logs/delivery-ts-main.log", "check-logs/delivery-ts-cli.log"]
 		}
-	]
+	],
+	"delivery_drain_checks": [
+		{
+			"command": "same eight focused suites as review_checks[0]",
+			"exit": 0,
+			"tests": 487,
+			"log": "check-logs/delivery-drain-green.log"
+		},
+		{
+			"command": "desktop auth lifecycle suite -t late-output before correction",
+			"exit": 1,
+			"result": "expected data,error; observed error,data",
+			"log": "check-logs/delivery-drain-red.log"
+		},
+		{
+			"command": "scoped ESLint and Prettier",
+			"exit": 0,
+			"logs": ["check-logs/delivery-drain-eslint.log", "check-logs/delivery-drain-prettier.log"]
+		}
+	],
+	"delivery_source_tree": "6932c0aff9345a29cff19784dc882fd1cf09a4ff"
 }
