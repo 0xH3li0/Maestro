@@ -18,7 +18,7 @@ It is a **front end for the agents you already have**, not a second assistant. I
 
 1. Open **Settings** (`Cmd+,` / `Ctrl+,`) and go to the **Plugins** tab.
 2. Find the **A Cappella** card and enable it. A confirmation sheet lists what the feature reads before anything is switched on.
-3. Select the card to open its detail pane. The **Settings** sub-tab holds every voice panel: Voice Setup, Voice Providers, Voice Controls, Voice and Speed, Paired Devices, and Models.
+3. Select the card to open its detail pane. The **Settings** sub-tab holds Microphone, Voice setup, Voice Controls, Voice and Speed, and Paired Devices. Manage voice model files in **Settings > Models > Library > Speech**.
 
 Enabling the feature only makes those panels reachable. **Nothing is downloaded and no device is opened until you ask for it**: models arrive when you press Download, and the microphone opens at your first real session.
 
@@ -26,7 +26,17 @@ Enabling the feature only makes those panels reachable. **Nothing is downloaded 
 
 ## Where your audio goes
 
-This is the only question that really matters when you configure a voice assistant, so Maestro computes the answer from your actual selection rather than writing it into help text. The sentence at the top of **Voice Providers** and **Voice and Speed** is derived from the providers you picked, and it updates the moment you change a slot.
+The privacy statement in **Voice setup** is computed from the active providers and updates when you change them. **Voice and Speed** also shows where reply text goes for the active speech engine, including OpenAI Realtime when Cloud is selected.
+
+Choose a preset in **Voice setup**:
+
+| Preset                                                    | Providers                                                                                                        |
+| --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| **On this Mac** (**On this computer** on other platforms) | Local Parakeet transcription, built-in routing, and the system voice. Clears the Voice routing model assignment. |
+| **Cloud**                                                 | OpenAI Realtime handles speech and replies in an OpenAI voice. Microphone audio goes to OpenAI.                  |
+| **Custom**                                                | Pick Transcription, Brain, and Voice independently, including ElevenLabs and VoiceStudio.                        |
+
+Cloud preserves your custom provider choices so you can return to them with Custom. Existing mixed configurations open as Custom without rewriting settings. The local preset restores the default providers; it keeps voice speed, volume, and unrelated model assignments.
 
 There are three independent slots plus one alternative pipeline shape:
 
@@ -59,11 +69,11 @@ Each slot is configured and validated on its own. A missing speech model does no
 
 **The defaults need one download and no key.** Speech recognition is Parakeet on this machine: fast, English-only, and it gets names, casing, and punctuation right. Whisper stays in the list as a smaller, less accurate alternative. Replies are spoken by the voice already built into your computer (`say` on macOS, the Windows speech API, `espeak-ng` on Linux). Routing is the built-in keyword router: it sends an utterance to the agent you named, or to the agent you are talking to, and reads the first sentences of the reply back as written. Switch the Brain to a hosted model when you want it to understand a request rather than match a name.
 
-**One OpenAI key runs a whole hosted trio.** Switching every slot to hosted picks OpenAI for all three, so you do not need a second account to hear replies. ElevenLabs stays in the Text-to-Speech list for anyone who prefers its voices.
+**One OpenAI key runs the Cloud preset.** To combine hosted transcription or routing with ElevenLabs, VoiceStudio, or another voice, choose Custom.
 
 **Realtime is a pipeline shape, not a fourth slot.** Choosing it replaces all three slots with one speech-to-speech API: the lowest latency available, in exchange for your audio going to OpenAI and the assistant speaking in that provider's voice.
 
-Hosted providers need an API key, entered in **Voice Providers**. Keys are stored per service and validated when you add them.
+Hosted providers need an API key, entered in **Voice setup** beside the provider that needs it. Keys are stored per service and validated when you add them.
 
 ### Choosing a voice
 
@@ -73,7 +83,7 @@ Hosted providers need an API key, entered in **Voice Providers**. Keys are store
 
 Configure VoiceStudio under **Settings > Models > Sources**. Set the local service URL, speech engine, and sampling seed, then use **Check connection** and **Save source**. The default URL is `http://127.0.0.1:3900`; only loopback addresses are accepted. Maestro connects to an existing VoiceStudio service and does not start it.
 
-Choose **VoiceStudio** as Text-to-Speech in **Voice Providers**, then select a profile in **Voice Output**. **Refresh voices** reloads the profiles. A profile name must be unique; Maestro stores the name so it survives profile exports and imports. If the service or selected profile is unavailable, the session reports the problem instead of switching voices. Source changes made during a voice session apply after it ends.
+Choose **Custom** in **Voice setup**, select **VoiceStudio** for Voice, then select a profile in **Voice Output**. **Refresh voices** reloads the profiles. A profile name must be unique; Maestro stores the name so it survives profile exports and imports. If the service or selected profile is unavailable, the session reports the problem instead of switching voices. Source changes made during a voice session apply after it ends.
 
 ### Recognition vocabulary
 
@@ -90,7 +100,7 @@ Agent names and tab titles provide recognition hints automatically. Custom vocab
 	OpenAI-compatible endpoint). Add the server in **Settings > Models > Sources**, and its models appear
 	in the **Conductor Brain** picker. Picking one assigns it to the Local Models **Voice routing**
 	task, so the picker and that task always show the same choice. Your transcripts are then sent to
-	that server, and the line at the top of Voice Providers names it. See
+	that server, and the privacy statement in Voice setup names it. See
 	[Voice routing](./local-models#voice-routing).
 </Note>
 

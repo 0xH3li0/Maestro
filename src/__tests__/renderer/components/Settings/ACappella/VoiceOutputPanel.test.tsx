@@ -52,6 +52,24 @@ describe('VoiceOutputPanel', () => {
 		expect(await screen.findByText(/ElevenLabs/)).toBeInTheDocument();
 	});
 
+	it('refreshes the selected voice provider when the guided setup changes', async () => {
+		vi.mocked(window.maestro.settings.get).mockResolvedValue({
+			providers: { tts: 'elevenlabs-tts' },
+		});
+		const { rerender } = render(
+			<VoiceOutputPanel theme={mockTheme} enabled selectionVersion={0} />
+		);
+		await screen.findByText(/Text is sent to ElevenLabs/);
+		vi.mocked(voice().listVoices).mockClear();
+		vi.mocked(window.maestro.settings.get).mockResolvedValue({
+			pipeline: 'realtime',
+			providers: { tts: 'elevenlabs-tts' },
+		});
+		rerender(<VoiceOutputPanel theme={mockTheme} enabled selectionVersion={1} />);
+		expect(await screen.findByText('Audio is sent to OpenAI.')).toBeInTheDocument();
+		await waitFor(() => expect(voice().listVoices).toHaveBeenCalled());
+	});
+
 	it('auditions a voice that has not been selected', async () => {
 		render(<VoiceOutputPanel theme={mockTheme} enabled />);
 

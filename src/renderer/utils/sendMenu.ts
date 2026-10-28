@@ -159,7 +159,10 @@ export function buildSendMenuModel(
 	const activeTab = session.aiTabs?.find((tab) => tab.id === session.activeTabId);
 	const activeTabWorking = activeTab?.state === 'busy';
 	const steerProvider = resolveTurnProvider(activeTab, session);
-	const steerSupport = getSteerSupport(projectTabProvider(session, activeTab, steerProvider).agent);
+	const steerSupport: SteerSupport =
+		activeTabWorking && steerProvider === 'codex' && activeTab?.turnCodexTransport === 'app-server'
+			? { kind: 'supported' }
+			: getSteerSupport(projectTabProvider(session, activeTab, steerProvider).agent);
 
 	const force: SendMenuRow = activeTabWorking
 		? {

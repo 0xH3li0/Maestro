@@ -482,6 +482,7 @@ interface MaestroAPI {
 				cwd: string;
 				isTerminal: boolean;
 				isBatchMode: boolean;
+				codexTransport?: import('../shared/codexTransport').CodexTransport;
 				startTime?: number;
 				command?: string;
 				args?: string[];
@@ -548,6 +549,12 @@ interface MaestroAPI {
 		/** The later, transcript-observed outcome of a steer that `steer()` reported `delivered`. */
 		onSteeringVerdict: (
 			callback: (sessionId: string, verdict: SteeringResultFrame) => void
+		) => () => void;
+		onCodexTransport: (
+			callback: (
+				sessionId: string,
+				transport: import('../shared/codexTransport').CodexTransport
+			) => void
 		) => () => void;
 		onThinkingChunk: (callback: (sessionId: string, content: string) => void) => () => void;
 		onToolExecution: (

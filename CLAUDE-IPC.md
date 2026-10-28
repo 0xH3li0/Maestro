@@ -26,6 +26,13 @@ no prompt bodies, tool inputs, or authentication tokens. The owning renderer
 projects this status into agent runtime; browser clients receive that runtime
 through the existing transcript synchronization and private bootstrap snapshots.
 
+`process.onCodexTransport(callback)` reports `(processKey, 'app-server' | 'exec')`
+at spawn and after an app-server fallback. `process.getActiveProcesses()` includes
+the actual `codexTransport` for running Codex processes. Steering uses this runtime
+evidence, never the agent's transport preference. The renderer clears saved
+`AITab.turnCodexTransport` before restoring active processes and on exit; live
+transport and exit events take precedence over an older snapshot.
+
 ## Agent & Provider Sessions
 
 - `agents` - Detect, get, config, refresh, custom paths, getCapabilities

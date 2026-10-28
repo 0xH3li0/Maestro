@@ -22,7 +22,7 @@
  * listener both run outside the click that started the steer.
  */
 
-import type { LogEntry, PendingSteer, QueuedItem, Session } from '../types';
+import type { AITab, LogEntry, PendingSteer, QueuedItem, Session } from '../types';
 import type {
 	QueueSteerResult,
 	SteerBubbleState,
@@ -36,6 +36,31 @@ import { resolveTurnProvider } from '../utils/providerTabSessions';
 import { resolveQueuedItemTarget } from '../utils/tabHelpers';
 import { generateId } from '../utils/ids';
 import { describeSteerBlocked, getSteerEligibility } from '../utils/executionQueue';
+import type { CodexTransport } from '../../shared/codexTransport';
+import { mapAgentAiTabs } from '../../shared/maestro-lib/translation/session';
+import { parseSessionId } from '../utils/sessionIdParser';
+
+/** Track main's actual transport on the tab whose running process can be steered. */
+export function applyCodexTransport(
+	processKey: string,
+	transport: CodexTransport | undefined
+): void {
+	const { actualSessionId, tabId } = parseSessionId(processKey);
+	// Forced parallel processes share a tab but are not the queue's steering target.
+	if (!tabId || processKey !== `${actualSessionId}-ai-${tabId}`) return;
+	updateSessionWith(actualSessionId, (session) => {
+		const tab =
+			session.aiTabs.find((tab) => tab.id === tabId) ??
+			session.orphanedThinkingTabs?.find((tab) => tab.id === tabId);
+		if (!tab || tab.turnCodexTransport === transport) return session;
+		return {
+			...session,
+			...mapAgentAiTabs(session, (tab: AITab) =>
+				tab.id === tabId ? { ...tab, turnCodexTransport: transport } : tab
+			),
+		};
+	});
+}
 
 /**
  * Steers whose socket answer has not come back yet, keyed `sessionId:itemId`. The

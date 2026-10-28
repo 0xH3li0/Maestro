@@ -986,6 +986,8 @@ export interface AITab {
 	 */
 	turnProvider?: ToolType;
 	turnSessionId?: string;
+	/** Actual running Codex transport from main, including per-turn exec fallbacks. */
+	turnCodexTransport?: CodexTransport;
 	turnRunOnTarget?: RunOnTarget;
 	turnRouting?: import('../../shared/modelTiers').TierRouting;
 	/**

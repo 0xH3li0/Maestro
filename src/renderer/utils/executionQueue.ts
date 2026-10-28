@@ -28,7 +28,6 @@ import {
 	startsWithTuiCommandPrefix,
 	steeringTextTooLong,
 } from '../../shared/chatSteering';
-import { resolveCodexTransport } from '../../shared/codexTransport';
 import { isSessionRemote } from './sessionHelpers';
 import {
 	getBusyTabs,
@@ -835,13 +834,9 @@ export function getSteerEligibility(
 	const runningClaudeMode = session.claudeInteractive?.mode;
 	session = projectTabProvider(session, runningTab, resolveTurnProvider(runningTab, session)).agent;
 	if (session.toolType === 'codex') {
-		// A Codex turn is steerable only on the opt-in app-server transport, which
-		// accepts `turn/steer` while a turn runs, locally or over SSH (the protocol
-		// rides the ssh client's stdio). `codex exec` (the default) accepts nothing
-		// once the turn has started. An app-server agent can still run a given turn
-		// on exec (images, an unsupported arg); main answers that steer `refused`
-		// with `not-running`, so the routing is not re-derived here.
-		if (resolveCodexTransport(session) !== 'app-server') {
+		// The preference can fall back to exec for images, unsupported args or
+		// setup failures. Only main's actual running transport proves steerability.
+		if (runningTab?.turnCodexTransport !== 'app-server') {
 			return { canSteer: false, blockedReason: 'codex-exec' };
 		}
 	} else if (isSessionRemote(session)) {
@@ -952,7 +947,7 @@ const STEER_BLOCKED_DETAILS: Record<SteerBlockedReason, string> = {
 	'provider-mismatch':
 		'This message was queued for another provider and must wait for its own turn.',
 	'codex-exec':
-		'This Codex agent runs on the exec transport. Set Codex Transport to app server to steer it.',
+		'This Codex turn has no confirmed app-server transport. Image turns and other exec fallbacks must finish before queued messages run.',
 	'api-token-source':
 		'This turn is running on the API token source, which takes no input until it ends.',
 	'nothing-to-type': 'The message has no text to steer with.',

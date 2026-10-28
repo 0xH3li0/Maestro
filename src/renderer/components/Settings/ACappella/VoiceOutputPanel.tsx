@@ -26,6 +26,7 @@ import { Play, RefreshCw, RotateCcw, Sliders } from 'lucide-react';
 
 import {
 	summariseVoiceEgress,
+	OPENAI_REALTIME_PROVIDER_ID,
 	VOICE_STUDIO_TTS_PROVIDER_ID,
 } from '../../../../shared/acappella/provider-catalog';
 import type { BackgroundAnnouncementSetting } from '../../../../shared/acappella/announcements';
@@ -56,6 +57,7 @@ export interface VoiceOutputPanelProps {
 	theme: Theme;
 	/** Mirror of the A Cappella Encore flag. */
 	enabled: boolean;
+	selectionVersion?: number;
 }
 
 // The line a Preview speaks lives in shared, because `maestro-cli voice
@@ -82,8 +84,8 @@ const GENDER_LABELS: Record<string, string> = {
 	unknown: 'Unknown',
 };
 
-export function VoiceOutputPanel({ theme, enabled }: VoiceOutputPanelProps) {
-	const selection = useVoiceProviderSelection(enabled);
+export function VoiceOutputPanel({ theme, enabled, selectionVersion }: VoiceOutputPanelProps) {
+	const selection = useVoiceProviderSelection(enabled, selectionVersion);
 	const controls = useVoiceControls(enabled);
 	const ui = useVoiceUiStore();
 
@@ -94,7 +96,8 @@ export function VoiceOutputPanel({ theme, enabled }: VoiceOutputPanelProps) {
 	const [voicesLoading, setVoicesLoading] = useState(false);
 	const [voiceListError, setVoiceListError] = useState<string | null>(null);
 
-	const ttsProviderId = selection.providerIds.tts;
+	const ttsProviderId =
+		selection.pipeline === 'realtime' ? OPENAI_REALTIME_PROVIDER_ID : selection.providerIds.tts;
 
 	useEffect(() => {
 		setFilters({ gender: 'all', language: 'all', region: 'all' });
@@ -144,7 +147,7 @@ export function VoiceOutputPanel({ theme, enabled }: VoiceOutputPanelProps) {
 		setPreviewNote(spoke ? null : 'That voice could not be previewed.');
 	}, []);
 
-	const egress = summariseVoiceEgress([selection.providerIds.tts]);
+	const egress = summariseVoiceEgress([ttsProviderId]);
 	const voiceOptions = voices.map((voice) => {
 		let language = 'unknown';
 		let region = 'unknown';

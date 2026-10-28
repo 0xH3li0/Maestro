@@ -855,7 +855,13 @@ describe('getSteerEligibility', () => {
 		return createMockSession({
 			id: 's1',
 			toolType: 'claude-code',
-			aiTabs: [createMockAITab({ id: 'tab-1', state: 'busy' })],
+			aiTabs: [
+				createMockAITab({
+					id: 'tab-1',
+					state: 'busy',
+					turnCodexTransport: overrides.codexTransport,
+				}),
+			],
 			activeTabId: 'tab-1',
 			claudeInteractive: { mode: 'interactive', modeReason: 'auto' },
 			...overrides,
@@ -950,6 +956,29 @@ describe('getSteerEligibility', () => {
 		const eligibility = getSteerEligibility(session, item);
 		expect(eligibility).toEqual({ canSteer: true });
 		expect(shouldOfferSteer(eligibility)).toBe(true);
+	});
+
+	it.each(['exec', undefined] as const)(
+		'hides Steer when app-server was requested but the actual transport is %s',
+		(turnCodexTransport) => {
+			const session = steerableSession({
+				toolType: 'codex',
+				codexTransport: 'app-server',
+				aiTabs: [createMockAITab({ id: 'tab-1', state: 'busy', turnCodexTransport })],
+			});
+			const eligibility = getSteerEligibility(session, item);
+			expect(eligibility).toEqual({ canSteer: false, blockedReason: 'codex-exec' });
+			expect(shouldOfferSteer(eligibility)).toBe(false);
+		}
+	);
+
+	it('keeps the running transport when the preference changes mid-turn', () => {
+		const session = steerableSession({
+			toolType: 'codex',
+			codexTransport: 'exec',
+			aiTabs: [createMockAITab({ id: 'tab-1', state: 'busy', turnCodexTransport: 'app-server' })],
+		});
+		expect(getSteerEligibility(session, item).canSteer).toBe(true);
 	});
 
 	it('refuses a Codex agent on exec with codex-exec', () => {
@@ -1251,7 +1280,7 @@ describe('describeSteerBlocked', () => {
 	});
 
 	it('names the remedy where there is one', () => {
-		expect(describeSteerBlocked('codex-exec')).toContain('app server');
+		expect(describeSteerBlocked('codex-exec')).toContain('exec fallbacks');
 		expect(describeSteerBlocked('too-long')).toContain('8 KB');
 	});
 

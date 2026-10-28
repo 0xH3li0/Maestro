@@ -2923,6 +2923,19 @@ describe('process IPC handlers', () => {
 	});
 
 	describe('process:getActiveProcesses', () => {
+		it('reports the actual Codex transport without exposing the app-server handle', async () => {
+			mockProcessManager.getAll.mockReturnValue([
+				{ sessionId: 'app-ai-tab', toolType: 'codex', codexAppServer: { request: vi.fn() } },
+				{ sessionId: 'exec-ai-tab', toolType: 'codex' },
+			]);
+			const result = await handlers.get('process:getActiveProcesses')!({} as any, {
+				includeChildProcesses: false,
+			});
+			expect(result[0]).toMatchObject({ sessionId: 'app-ai-tab', codexTransport: 'app-server' });
+			expect(result[1]).toMatchObject({ sessionId: 'exec-ai-tab', codexTransport: 'exec' });
+			expect(result[0]).not.toHaveProperty('codexAppServer');
+		});
+
 		it('should return list of running processes', async () => {
 			const mockProcesses = [
 				{

@@ -63,6 +63,10 @@ describe('searchableSettings', () => {
 			['hey jarvis', 'encore-a-cappella-wake-word'],
 			['detection light', 'encore-a-cappella-wake-word'],
 			['manage voice models', 'encore-a-cappella-models'],
+			['on this mac', 'encore-a-cappella-pipeline'],
+			['voice setup preset', 'encore-a-cappella-pipeline'],
+			['custom', 'encore-a-cappella-voice-providers'],
+			['voicestudio', 'encore-a-cappella-voice-providers'],
 		])('finds voice controls for %s', (query, id) => {
 			expect(searchSettings(query).some((setting) => setting.id === id)).toBe(true);
 		});

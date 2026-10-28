@@ -169,6 +169,27 @@ describe('getSteerSupport', () => {
 });
 
 describe('buildSendMenuModel', () => {
+	it('blocks an image turn on exec even when the agent prefers app-server', () => {
+		const session = workingSession({
+			toolType: 'codex',
+			codexTransport: 'app-server',
+			aiTabs: [createMockAITab({ id: 'tab-1', state: 'busy', turnCodexTransport: 'exec' })],
+		});
+		expect(rowFor(session, 'steer')).toMatchObject({
+			enabled: false,
+			reason: expect.stringContaining('exec fallbacks'),
+		});
+	});
+
+	it('keeps steering available when the preference changes during an app-server turn', () => {
+		const session = workingSession({
+			toolType: 'codex',
+			codexTransport: 'exec',
+			aiTabs: [createMockAITab({ id: 'tab-1', state: 'busy', turnCodexTransport: 'app-server' })],
+		});
+		expect(rowFor(session, 'steer').enabled).toBe(true);
+	});
+
 	it('offers Steer, not Force Send, when the active tab is working', () => {
 		const session = workingSession();
 		expect(rowFor(session, 'steer').enabled).toBe(true);
@@ -209,7 +230,7 @@ describe('buildSendMenuModel', () => {
 	it('ghosts Steer with the harness reason on an unsteerable agent', () => {
 		const row = rowFor(workingSession({ toolType: 'codex' }), 'steer');
 		expect(row.enabled).toBe(false);
-		expect(row.reason).toMatch(/exec transport/);
+		expect(row.reason).toMatch(/exec fallbacks/);
 	});
 
 	it('ghosts Steer with the draft reason when the draft cannot be steered', () => {
