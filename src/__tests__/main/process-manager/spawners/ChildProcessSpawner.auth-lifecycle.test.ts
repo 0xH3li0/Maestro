@@ -7,7 +7,18 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ChildProcessSpawner } from '../../../../main/process-manager/spawners/ChildProcessSpawner';
 import { DataBufferManager } from '../../../../main/process-manager/handlers/DataBufferManager';
 import type { ManagedProcess } from '../../../../main/process-manager/types';
+import { createDesktopConsultRunner } from '../../../../main/cross-agent/consult-runner';
+import type { ProcessManager } from '../../../../main/process-manager';
+import type { ConsultEnd } from '../../../../shared/maestro-lib/agents/consult';
+import type { GroupChatSpawn } from '../../../../shared/maestro-lib/groupchat/types';
 import { stopProcess } from '../../../../shared/maestro-lib/control/termination';
+
+vi.mock('../../../../main/group-chat/spawnGroupChatAgent', () => ({
+	spawnGroupChatAgent: vi.fn().mockResolvedValue({ success: true, pid: 123 }),
+}));
+vi.mock('../../../../main/group-chat/spawn-config', () => ({
+	toSpawnGroupChatAgentConfig: () => ({}),
+}));
 
 vi.mock('../../../../main/utils/logger', () => ({
 	logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -94,6 +105,18 @@ describe.skipIf(process.platform !== 'linux')('real desktop Codex auth/MCP lifec
 				emitter,
 				new DataBufferManager(processes, emitter)
 			);
+			const runner = createDesktopConsultRunner(emitter as ProcessManager, null);
+			let consultEnd: ConsultEnd | undefined;
+			const deliveryOrder: string[] = [];
+			emitter.on('data', () => deliveryOrder.push('data'));
+			emitter.on('agent-error', () => deliveryOrder.push('error'));
+			await runner.start({ processId: 'auth-fixture', providerId: 'codex' } as GroupChatSpawn, {
+				onActivity: vi.fn(),
+				onSessionId: vi.fn(),
+				onEnd: (end) => {
+					consultEnd = end;
+				},
+			});
 			let mcpPid = 0;
 			const ready = new Promise<void>((resolve) =>
 				emitter.on('raw-stdout', (_id, text: string) => {
@@ -149,6 +172,10 @@ describe.skipIf(process.platform !== 'linux')('real desktop Codex auth/MCP lifec
 				1
 			);
 			expect(errors).toHaveLength(1);
+			expect(consultEnd?.error).toBe(errors[0].message);
+			expect(consultEnd?.exitCode).toBe(1);
+			expect(consultEnd?.readText()).toBe(phase === 'startup' ? '' : 'Starting work');
+			expect(deliveryOrder).toEqual(phase === 'startup' ? ['error'] : ['data', 'error']);
 			expect(errors[0].message).toMatch(
 				phase === 'startup'
 					? /Startup or authentication/

@@ -24,6 +24,7 @@ import { stripNulBytesFromArgs } from '../utils/argvNulBytes';
 import { isPowerShellShell } from '../utils/shellEscape';
 import { planSpawnShell } from '../utils/windowsSpawnShell';
 import { argsResumeSession } from '../utils/resumeArgs';
+import { emitAgentErrorAfterOutput } from '../utils/agentErrorEmit';
 import { armStdioCloseWatchdog } from '../utils/stdioCloseWatchdog';
 import {
 	newRemotePidFilePath,
@@ -651,8 +652,6 @@ export class ChildProcessSpawner {
 							onStop: (reason) => {
 								supervisionFailed = true;
 								if (isSuperseded()) return;
-								managedProcess.errorEmitted = true;
-								managedProcess.resultEmitted = true;
 								if (sshRemotePidFile)
 									signalRemoteAgent(
 										{
@@ -664,14 +663,21 @@ export class ChildProcessSpawner {
 										'terminate'
 									);
 								try {
-									this.emitter.emit('agent-error', sessionId, {
-										type: 'agent_crashed',
-										message: reason,
-										recoverable: true,
-										agentId: toolType,
+									emitAgentErrorAfterOutput(
+										this.emitter,
+										this.bufferManager,
 										sessionId,
-										timestamp: Date.now(),
-									});
+										managedProcess,
+										{
+											type: 'agent_crashed',
+											message: reason,
+											recoverable: true,
+											agentId: toolType,
+											sessionId,
+											timestamp: Date.now(),
+										},
+										{ flushStreamedText: true }
+									);
 								} catch (error) {
 									void captureException(error);
 								}

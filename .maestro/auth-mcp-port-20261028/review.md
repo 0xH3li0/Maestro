@@ -43,3 +43,15 @@ Regression at `src/__tests__/main/process-manager/spawners/ChildProcessSpawner.a
 ## Task boundary and handoff
 
 REVIEW alone is completed. DELIVERY remains unchecked and owns fresh rc comparison, upstream PR creation, review comments and final CI acceptance. Commit this review correction and artifacts, push only this fix branch to origin with the existing invocation-scoped guard-preserving procedure. Original hook files and config remain unchanged. Final open findings: Standards 0, Spec 0.
+
+## DELIVERY independent refresh
+
+Published implementation head `a396cb466d7bba992a204cc380a95d85f6a8d079` was independently reviewed again by ephemeral Standards and Spec reviewers using the same two-axis skill. Both reported zero open findings on subtree `47a5dec601c17dad3dcfbde85cae97bd603aaeff`.
+
+Greptile then reported P1 [timeouts discard partial answers](https://github.com/RunMaestro/Maestro/pull/1944#discussion_r4405363137). **Valid and fixed:** the timeout callback marked `resultEmitted` before flushing `streamedText`. Desktop consult therefore received an empty partial answer. Replaced the direct emission with existing `emitAgentErrorAfterOutput` and `flushStreamedText: true`, preserving data-before-error ordering and canonical emission bookkeeping.
+
+The real desktop lifecycle regression now also connects `createDesktopConsultRunner`, preserving partial `Starting work` for post-model/MCP stalls while retaining the error and failed exit. Before the correction it failed with empty text (`delivery-partial-red.log`); after correction all eight suites and 485 tests passed (`delivery-partial-green.log`). Both independent reviewers separately re-read this correction and canonical helper/exit handling, accepted it, and reported zero new Standards/Spec findings. No independent reviewer edited code.
+
+The delivery commit records the final source subtree below. Its metadata cannot contain its own commit hash; resolve the exact published delivery head with `git rev-parse HEAD` and compare it to GitHub `headRefOid`. Source subtree identity binds the review across evidence-only changes. Final CI and full comment/thread readback are completion gates after publication, not inferred from an earlier head.
+
+Final independently reviewed source subtree: `c85f9c1dd0b6e66b98cc6c6a3caa1d315fc3a4b5`. Both reviewers accepted the partial-output correction before publication.

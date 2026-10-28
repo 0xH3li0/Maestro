@@ -1,0 +1,41 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vitest.config.mts:135:22). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vitest.config.mts:135:22). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vitest.config.mts:135:22). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v4.1.11 /home/chris/code/worktrees/fix/auth-mcp-supervision-rc-20261028
+
+ ❯ |node| src/__tests__/main/process-manager/spawners/ChildProcessSpawner.auth-lifecycle.test.ts (4 tests | 1 failed | 3 skipped) 1470ms
+     × settles after-model blockage, forwards an error and releases its own MCP child 1468ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |node| src/__tests__/main/process-manager/spawners/ChildProcessSpawner.auth-lifecycle.test.ts > real desktop Codex auth/MCP lifecycle > settles after-model blockage, forwards an error and releases its own MCP child
+AssertionError: expected '' to be 'Starting work' // Object.is equality
+
+- Expected
++ Received
+
+- Starting work
+
+ ❯ src/__tests__/main/process-manager/spawners/ChildProcessSpawner.auth-lifecycle.test.ts:178:35
+    176|    expect(consultEnd?.error).toBe(errors[0].message);
+    177|    expect(consultEnd?.exitCode).toBe(1);
+    178|    expect(consultEnd?.readText()).toBe(phase === 'startup' ? '' : 'Sta…
+       |                                   ^
+    179|    expect(deliveryOrder).toEqual(phase === 'startup' ? ['error'] : ['d…
+    180|    expect(errors[0].message).toMatch(
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 3 skipped (4)
+   Start at  20:51:08
+   Duration  3.00s (transform 992ms, setup 0ms, import 1.33s, tests 1.47s, environment 0ms)
+

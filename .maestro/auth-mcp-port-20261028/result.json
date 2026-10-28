@@ -1,0 +1,42 @@
+{
+	"pr_url": "https://github.com/RunMaestro/Maestro/pull/1944",
+	"branch": "fix/auth-mcp-supervision-rc-20261028",
+	"head": {
+		"delivery_commit": "the commit containing this result.json; resolve git rev-parse HEAD after checkout",
+		"previous_published_head": "a396cb466d7bba992a204cc380a95d85f6a8d079",
+		"source_tree": "c85f9c1dd0b6e66b98cc6c6a3caa1d315fc3a4b5"
+	},
+	"upstream_basis": "1fe7a03b072f63a0f0ced53b1f5eb1b8f8f3fe06",
+	"review_disposition": {
+		"standards_open": 0,
+		"spec_open": 0,
+		"greptile_4405363137": "fixed with red/green partial-output regression; reply/resolve only after published fix",
+		"human_reviews_at_capture": []
+	},
+	"ci": {
+		"checks_url": "https://github.com/RunMaestro/Maestro/pull/1944/checks",
+		"initial_run": "https://github.com/RunMaestro/Maestro/actions/runs/40757234743",
+		"acceptance": "Auto Run task is checked only after all upstream checks on the exact delivery head succeed; inspect headRefOid and statusCheckRollup. Earlier-head green checks are insufficient."
+	},
+	"local_checks": {
+		"focused_tests": 485,
+		"suites": 8,
+		"format": "passed",
+		"lint": "passed; repository ignores test/fixture files",
+		"main_cli_types": "blocked by missing shared dependencies, upstream clean CI typecheck passed on initial product head",
+		"full_suite": "intentionally omitted",
+		"validate_push": "intentionally omitted"
+	},
+	"publication": {
+		"target": "origin HEAD:refs/heads/fix/auth-mcp-supervision-rc-20261028",
+		"unpublished_changes_policy": "verify clean status and local/remote head equality after push",
+		"auto_merge": false,
+		"merge": "Chris only"
+	},
+	"model": {
+		"pid": 237509,
+		"model": "gpt-6.1-sol",
+		"effort": "medium"
+	},
+	"images_analyzed": 0
+}
