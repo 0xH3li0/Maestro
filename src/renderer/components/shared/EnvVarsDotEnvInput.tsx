@@ -117,7 +117,9 @@ export function EnvVarsDotEnvInput({
 					ref={textareaRef}
 					value={text}
 					onChange={(e) => handleChange(e.target.value)}
-					onBlur={onBlur}
+					// Drop the FocusEvent: hosts' blur handlers take optional arguments, and
+					// a forwarded event was once saved as a setting value (MAESTRO-11C).
+					onBlur={() => onBlur?.()}
 					rows={rows}
 					spellCheck={false}
 					autoCapitalize="off"

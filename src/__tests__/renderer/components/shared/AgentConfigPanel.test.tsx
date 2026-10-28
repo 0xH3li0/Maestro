@@ -990,6 +990,8 @@ describe('AgentConfigPanel - detected installation chooser', () => {
 			fireEvent.blur(textarea());
 
 			expect(onEnvVarsBlur).toHaveBeenCalledTimes(1);
+			// No FocusEvent forwarded: a stray event arg was once saved as a value (MAESTRO-11C).
+			expect(onEnvVarsBlur).toHaveBeenCalledWith();
 		});
 
 		it('keeps the read-only built-in variables on screen', () => {
