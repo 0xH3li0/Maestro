@@ -28,10 +28,15 @@ import type {
 } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useAgentStore, type ProcessQueuedItemDeps } from '../../stores/agentStore';
-import { markTabRunningQueuedItem, resolveQueuedItemTarget } from '../../utils/tabHelpers';
+import {
+	isQueuedItemTargetBusy,
+	markTabRunningQueuedItem,
+	resolveQueuedItemTarget,
+} from '../../utils/tabHelpers';
 import {
 	hasRunnableQueueItem,
 	nextRunnableQueueItem,
+	spawnCollisionCooldownMs,
 	takeNextRunnableQueueItem,
 } from '../../utils/executionQueue';
 import {
@@ -176,6 +181,13 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 			const firstItem = nextRunnableQueueItem(session.executionQueue);
 			if (!firstItem) return false;
 
+			// The last dispatch of this item was refused because its tab's previous
+			// process still owned the key. A refused dispatch restores exactly the
+			// state this poll fires on, so without a wait it re-dispatches into the
+			// same refusal on every render. The real exit (or Stop, or Force Send)
+			// dispatches without this wait; the poll looks back once it has passed.
+			if (spawnCollisionCooldownMs(firstItem.id) > 0) return false;
+
 			// Agent Resilience owns the queue while a retry counts down. The exit path
 			// already holds it (chooseNextQueuedItem returns 'wait'), which leaves the
 			// agent idle with items still queued - exactly the shape this recovery
@@ -228,10 +240,7 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 					// Resolved-target lookup rather than `getQueueBusyContext`: that helper
 					// keys off `item.tabId` alone, which misses both the active-tab
 					// fallback and orphan tabs that `resolveQueuedItemTarget` handles.
-					const targetTab =
-						s.aiTabs.find((t) => t.id === target.tabId) ??
-						s.orphanedThinkingTabs?.find((t) => t.id === target.tabId);
-					if (targetTab?.state === 'busy') return s;
+					if (isQueuedItemTargetBusy(s, firstItem)) return s;
 
 					const updatedAiTabs = s.aiTabs.map((tab) =>
 						tab.id === target.tabId ? markTabRunningQueuedItem(tab, firstItem, s) : tab

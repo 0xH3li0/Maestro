@@ -38,8 +38,13 @@ import { resilienceEnabled } from '../../shared/agentConstants';
 import { parseQuotaLimitDetail, type QuotaLimitDetail } from '../../shared/quotaLimitDetail';
 import { generateId } from '../utils/ids';
 import { captureQueuedTurnSettings } from '../utils/providerTabSessions';
-import { applyReplayDispatch, type ReplayBlockedReason } from '../utils/executionQueue';
+import {
+	applyReplayDispatch,
+	applyResendRunning,
+	type ReplayBlockedReason,
+} from '../utils/executionQueue';
 import { settleTabThinkingState } from '../utils/tabHelpers';
+import { dropRecoveredOutageNotices } from '../utils/logEntries';
 import { logger } from '../utils/logger';
 import { useSessionStore, selectSessionById, updateSessionWith } from './sessionStore';
 import { notifyToast } from './notificationStore';
@@ -830,13 +835,21 @@ async function fireRetry(key: string): Promise<void> {
 			return;
 		}
 		// Take the held copy out of the queue in the same beat as the resend, so
-		// the prompt exists in exactly one place at a time. Done BEFORE the await:
-		// the dispatch marks the tab busy, and a queue drain that read the item
-		// while it was in flight would send it twice.
+		// the prompt exists in exactly one place at a time, and mark the tab
+		// running. Both BEFORE the await: a queue drain that read the item while
+		// it was in flight would send it twice, and `processQueuedItem` marks
+		// nothing busy itself. Skipping the busy half left every resend a ghost
+		// turn - the provider working, the tab reading idle, no Thinking pill, and
+		// the failed attempt's last words on screen as if they were the answer.
+		// Every way the dispatch can come back without a process (no tab, a
+		// throw) settles this state again: `reportUndeliverableRetry` and
+		// `processQueuedItem`'s own catch.
 		releaseHeldItemFromQueue(entry.sessionId, snapshot.item.id);
+		const resend = replayItem(entry, snapshot.item);
+		updateSessionWith(entry.sessionId, (s) => applyResendRunning(s, resend) ?? s);
 		const dispatched = await useAgentStore
 			.getState()
-			.processQueuedItem(entry.sessionId, replayItem(entry, snapshot.item), snapshot.deps);
+			.processQueuedItem(entry.sessionId, resend, snapshot.deps);
 		if (!dispatched) reportUndeliverableRetry(entry, snapshot.item);
 	} catch (error) {
 		// The resend never reached the provider (a spawn refusal, a bad config, a
@@ -1189,6 +1202,34 @@ function recoverInFlightRetry(sessionId: string, tabId: string, reason: string):
 	resolveOutage(entry.outageId, 'recovered');
 	removeEntry(key);
 	clearTabAgentError(sessionId, tabId, entry.lastMessage);
+	dropRecoveredFailureText(sessionId, tabId, entry.outageId);
+}
+
+/**
+ * Take the provider's "you've hit your limit" bubble out of the transcript once
+ * the outage it reported has recovered. The green card above it already says
+ * the limit was hit and cleared; leaving the banner as the bottom-most message
+ * reads as the quota still being gone.
+ */
+function dropRecoveredFailureText(sessionId: string, tabId: string, outageId: string): void {
+	const outage = useRetryStore.getState().outages[outageId];
+	if (outage?.status !== 'recovered' || outage.resolvedAt === undefined) return;
+	const scope = {
+		outageId,
+		lastMessage: outage.lastMessage,
+		resolvedAt: outage.resolvedAt,
+	};
+	updateSessionWith(sessionId, (s) => {
+		let changed = false;
+		const aiTabs = s.aiTabs.map((t) => {
+			if (t.id !== tabId) return t;
+			const logs = dropRecoveredOutageNotices(t.logs, scope);
+			if (logs === t.logs) return t;
+			changed = true;
+			return { ...t, logs };
+		});
+		return changed ? { ...s, aiTabs } : s;
+	});
 }
 
 /**

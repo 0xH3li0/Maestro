@@ -20,8 +20,11 @@ import { useToastAvoidZoneStore } from '../../../renderer/hooks/ui/useToastAvoid
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import type { Toast } from '../../../renderer/stores/notificationStore';
 import { mockTheme } from '../../helpers/mockTheme';
+import { createMockSession } from '../../helpers/mockSession';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { usePhoneLayout } from '../../../renderer/hooks/ui/useViewportBreakpoint';
 import { useMediaPlaybackStore } from '../../../renderer/stores/mediaPlaybackStore';
+import { useUIStore } from '../../../renderer/stores/uiStore';
 
 vi.mock('../../../renderer/hooks/ui/useViewportBreakpoint', async (importOriginal) => ({
 	...(await importOriginal<typeof import('../../../renderer/hooks/ui/useViewportBreakpoint')>()),
@@ -46,7 +49,9 @@ function setStoreToasts(toasts: Toast[]) {
 describe('Toast', () => {
 	beforeEach(() => {
 		vi.useFakeTimers();
+		useSessionStore.setState(useSessionStore.getInitialState(), true);
 		useNotificationStore.setState({
+			history: [],
 			toasts: [],
 			config: {
 				defaultDuration: 20,
@@ -303,6 +308,35 @@ describe('Toast', () => {
 		});
 	});
 
+	it.each(['open-terminal', 'open-browser', 'jump-session'] as const)(
+		'acknowledges a clicked toast even when its %s target tab has closed',
+		(kind) => {
+			useSessionStore.setState({
+				sessions: [
+					createMockSession({ id: 'source', terminalTabs: [], browserTabs: [], aiTabs: [] }),
+				],
+			});
+			const clickAction =
+				kind === 'open-terminal'
+					? { kind, sessionId: 'source', tabRef: 'closed' }
+					: { kind, sessionId: 'source', tabId: 'closed' };
+			const toast = createMockToast({
+				title: 'Closed destination',
+				duration: 0,
+				dismissible: true,
+				clickAction,
+			});
+			useNotificationStore.setState({ toasts: [toast], history: [{ ...toast, read: false }] });
+			render(<ToastContainer theme={mockTheme} onSessionClick={vi.fn(() => true)} />);
+			fireEvent.click(screen.getByText('Closed destination'));
+			expect(useNotificationStore.getState().history.find((n) => n.id === toast.id)?.read).toBe(
+				true
+			);
+			act(() => vi.advanceTimersByTime(300));
+			expect(useNotificationStore.getState().toasts.some((n) => n.id === toast.id)).toBe(false);
+		}
+	);
+
 	describe('clickAction', () => {
 		it('jump-session: dispatches onSessionClick with the action sessionId/tabId', () => {
 			const onSessionClick = vi.fn();
@@ -340,6 +374,7 @@ describe('Toast', () => {
 
 		it('open-file: dispatches the maestro:openFileTab CustomEvent', () => {
 			const dispatchSpy = vi.spyOn(window, 'dispatchEvent');
+			useSessionStore.setState({ sessions: [createMockSession({ id: 'sess-9' })] });
 			setStoreToasts([
 				createMockToast({
 					clickAction: { kind: 'open-file', sessionId: 'sess-9', path: '/tmp/foo.ts' },
@@ -493,6 +528,20 @@ describe('Toast', () => {
 			expect(window.maestro.shell.openExternal).toHaveBeenCalledWith(
 				'https://github.com/org/repo/pull/1'
 			);
+		});
+
+		it('marks the inline link read without invoking the body action', () => {
+			const onClick = vi.fn();
+			const toast = createMockToast({
+				actionUrl: 'https://example.com',
+				actionLabel: 'Open link',
+				onClick,
+			});
+			useNotificationStore.setState({ toasts: [toast], history: [{ ...toast, read: false }] });
+			render(<ToastContainer theme={mockTheme} />);
+			fireEvent.click(screen.getByText('Open link'));
+			expect(useNotificationStore.getState().history[0].read).toBe(true);
+			expect(onClick).not.toHaveBeenCalled();
 		});
 
 		it('does not render action link when actionUrl is not provided', () => {
@@ -660,6 +709,7 @@ describe('Toast', () => {
 			offsetWidthSpy.mockRestore();
 			useToastAvoidZoneStore.setState({ zones: {} });
 			useSettingsStore.setState({ toastPosition: 'bottom-right' });
+			useUIStore.setState({ rightPanelOpen: true });
 		});
 
 		const composerZone = (right: number) => ({
@@ -695,6 +745,7 @@ describe('Toast', () => {
 
 		it('ignores the composer in a top corner', () => {
 			useSettingsStore.setState({ toastPosition: 'top-right' });
+			useUIStore.setState({ rightPanelOpen: false });
 			useToastAvoidZoneStore.setState({ zones: composerZone(window.innerWidth) });
 			setStoreToasts([createMockToast()]);
 			render(<ToastContainer theme={mockTheme} />);
@@ -746,6 +797,85 @@ describe('Toast', () => {
 			const toastOuter = document.body.querySelector('.relative.overflow-hidden');
 			expect(toastOuter).toHaveStyle({ transform: 'translateX(-100%)' });
 		});
+	});
+});
+
+describe('ToastContainer clear of the Right Bar tab strip (#1628)', () => {
+	beforeEach(() => {
+		useNotificationStore.setState({ toasts: [createMockToast()] });
+		useSettingsStore.setState({ toastPosition: 'bottom-right' });
+		useUIStore.setState({ rightPanelOpen: true });
+	});
+
+	afterEach(() => {
+		useToastAvoidZoneStore.setState({ zones: {} });
+		useSettingsStore.setState({ toastPosition: 'bottom-right' });
+		useUIStore.setState({ rightPanelOpen: true });
+	});
+
+	it('caps a bottom stack below the title bar and tab strip and scrolls the overflow', () => {
+		render(<ToastContainer theme={mockTheme} />);
+		const stack = screen.getByTestId('toast-stack');
+		// 8px offset + 112px band - 16px of scroller padding (border-box cap).
+		expect(stack.style.maxHeight).toBe('calc(100vh - 104px)');
+		expect(stack.style.overflowY).toBe('auto');
+		expect(stack.style.overflowX).toBe('hidden');
+	});
+
+	it('shrinks the cap by however far the stack is lifted', () => {
+		useToastAvoidZoneStore.setState({
+			zones: {
+				composer: {
+					left: 0,
+					top: window.innerHeight - 120,
+					right: window.innerWidth,
+					bottom: window.innerHeight,
+				},
+			},
+		});
+		render(<ToastContainer theme={mockTheme} />);
+		const stack = screen.getByTestId('toast-stack');
+		expect(stack.style.bottom).toBe('128px');
+		expect(stack.style.maxHeight).toBe('calc(100vh - 224px)');
+	});
+
+	it('starts a top-right stack below the tab strip while the Right Bar is open', () => {
+		useSettingsStore.setState({ toastPosition: 'top-right' });
+		render(<ToastContainer theme={mockTheme} />);
+		expect(screen.getByTestId('toast-stack').style.top).toBe('112px');
+	});
+
+	it('keeps a top-right stack under the title bar when the Right Bar is closed', () => {
+		useSettingsStore.setState({ toastPosition: 'top-right' });
+		useUIStore.setState({ rightPanelOpen: false });
+		render(<ToastContainer theme={mockTheme} />);
+		expect(screen.getByTestId('toast-stack').style.top).toBe('48px');
+	});
+
+	it('keeps a top-left stack under the title bar, away from the Right Bar', () => {
+		useSettingsStore.setState({ toastPosition: 'top-left' });
+		render(<ToastContainer theme={mockTheme} />);
+		expect(screen.getByTestId('toast-stack').style.top).toBe('48px');
+	});
+
+	it('scrolls a bottom stack to the newest toast when one arrives', () => {
+		const scrollHeightSpy = vi
+			.spyOn(HTMLElement.prototype, 'scrollHeight', 'get')
+			.mockReturnValue(900);
+		const scrollTopSpy = vi.spyOn(Element.prototype, 'scrollTop', 'set');
+		try {
+			render(<ToastContainer theme={mockTheme} />);
+			scrollTopSpy.mockClear();
+			act(() => {
+				useNotificationStore.setState({
+					toasts: [createMockToast(), createMockToast({ id: 'toast-2', title: 'Newest' })],
+				});
+			});
+			expect(scrollTopSpy).toHaveBeenCalledWith(900);
+		} finally {
+			scrollHeightSpy.mockRestore();
+			scrollTopSpy.mockRestore();
+		}
 	});
 });
 

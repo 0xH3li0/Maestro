@@ -22,6 +22,8 @@ vi.mock('../../../../main/utils/logger', () => ({
 }));
 
 vi.mock('../../../../main/parsers/error-patterns', () => ({
+	getErrorPatterns: vi.fn(() => ({})),
+	matchErrorPattern: vi.fn(() => null),
 	matchSshErrorPattern: vi.fn(() => null),
 }));
 
@@ -70,6 +72,7 @@ vi.mock('../../../../main/utils/remote-fs', () => ({
 // ── Imports (after mocks) ──────────────────────────────────────────────────
 
 import { ExitHandler } from '../../../../main/process-manager/handlers/ExitHandler';
+import { CodexOutputParser } from '../../../../main/parsers/codex-output-parser';
 import {
 	nextSpawnGeneration,
 	resetSpawnGenerationsForTest,
@@ -159,6 +162,94 @@ describe('ExitHandler', () => {
 	});
 
 	describe('stream-json jsonBuffer processing at exit', () => {
+		it.each([
+			{ streamedText: '', resultEmitted: false },
+			{ streamedText: 'The final answer.', resultEmitted: false },
+			{ streamedText: 'The final answer.', resultEmitted: true },
+		])(
+			'emits a trailing warning without changing answer handling: %j',
+			async ({ streamedText, resultEmitted }) => {
+				const proc = createMockProcess({
+					isStreamJsonMode: true,
+					toolType: 'codex',
+					jsonBuffer: JSON.stringify({
+						type: 'item.completed',
+						item: { type: 'error', message: 'Ignored setting' },
+					}),
+					outputParser: new CodexOutputParser(),
+					streamedText,
+					resultEmitted,
+				});
+				processes.set('test-session', proc);
+				const stderrSpy = vi.fn();
+				const dataSpy = vi.fn();
+				const thinkingSpy = vi.fn();
+				const errorSpy = vi.fn();
+				emitter.on('stderr', stderrSpy);
+				emitter.on('data', dataSpy);
+				emitter.on('thinking-chunk', thinkingSpy);
+				emitter.on('agent-error', errorSpy);
+
+				await exitHandler.handleExit('test-session', 0);
+
+				expect(stderrSpy).toHaveBeenCalledExactlyOnceWith(
+					'test-session',
+					'Codex warning: Ignored setting\n'
+				);
+				if (streamedText && !resultEmitted) {
+					expect(dataSpy).toHaveBeenCalledExactlyOnceWith('test-session', streamedText);
+				} else {
+					expect(dataSpy).not.toHaveBeenCalled();
+				}
+				expect(thinkingSpy).not.toHaveBeenCalled();
+				expect(errorSpy).not.toHaveBeenCalled();
+				expect(proc.errorEmitted).toBe(false);
+				expect(proc.resultEmitted).toBe(Boolean(streamedText));
+				expect(proc.streamedText).toBe(streamedText);
+				expect(proc.stderrBuffer).toBe('');
+				expect(proc.stdoutBuffer).toBe('');
+				expect(proc.jsonBuffer).toBe('');
+			}
+		);
+
+		it('still reports a nonzero exit after displaying a trailing warning', async () => {
+			const parser = new CodexOutputParser();
+			const detectExitSpy = vi.spyOn(parser, 'detectErrorFromExit');
+			const proc = createMockProcess({
+				isStreamJsonMode: true,
+				toolType: 'codex',
+				jsonBuffer: JSON.stringify({
+					type: 'item.completed',
+					item: { type: 'error', message: 'Optional integration is unavailable' },
+				}),
+				stderrBuffer: 'Underlying process diagnostic',
+				outputParser: parser,
+			});
+			processes.set('test-session', proc);
+			const stderrSpy = vi.fn();
+			const errorSpy = vi.fn();
+			const dataSpy = vi.fn();
+			emitter.on('stderr', stderrSpy);
+			emitter.on('agent-error', errorSpy);
+			emitter.on('data', dataSpy);
+
+			await exitHandler.handleExit('test-session', 1);
+
+			expect(stderrSpy).toHaveBeenCalledExactlyOnceWith(
+				'test-session',
+				'Codex warning: Optional integration is unavailable\n'
+			);
+			expect(detectExitSpy).toHaveBeenCalledWith(1, 'Underlying process diagnostic', '');
+			expect(errorSpy).toHaveBeenCalledExactlyOnceWith(
+				'test-session',
+				expect.objectContaining({ type: 'agent_crashed', message: 'Agent exited with code 1' })
+			);
+			expect(dataSpy).not.toHaveBeenCalled();
+			expect(proc.errorEmitted).toBe(true);
+			expect(proc.resultEmitted).toBe(false);
+			expect(proc.stderrBuffer).toBe('Underlying process diagnostic');
+		});
+
 		it('should process remaining jsonBuffer content as a result message', async () => {
 			const resultJson = '{"type":"result","result":"Auth Bug Fix","session_id":"abc"}';
 			const mockParser = createMockOutputParser({
@@ -670,6 +761,29 @@ describe('ExitHandler', () => {
 			expect(proc.provisionalError).toBeUndefined();
 		});
 
+		// Output that reaches the renderer after an error reads as recovery and
+		// deletes the error card, so the partial answer has to go out first.
+		it('emits the partial answer before the held notice', async () => {
+			const proc = createMockProcess({
+				isStreamJsonMode: true,
+				outputParser: createMockOutputParser(),
+				provisionalError: heldError,
+				streamedText: 'partial answer',
+			});
+			processes.set('test-session', proc);
+
+			const order: string[] = [];
+			emitter.on('data', (_sid: string, data: string) => order.push(`data:${data}`));
+			emitter.on('agent-error', (_sid: string, error: AgentError) =>
+				order.push(`agent-error:${error.message}`)
+			);
+			emitter.on('exit', () => order.push('exit'));
+
+			await exitHandler.handleExit('test-session', 0);
+
+			expect(order).toEqual(['data:partial answer', 'agent-error:server_error', 'exit']);
+		});
+
 		it('drops a held notice when the user interrupted the turn', async () => {
 			const proc = createMockProcess({
 				isStreamJsonMode: true,
@@ -880,6 +994,37 @@ describe('ExitHandler', () => {
 			await exitHandler.handleExit('test-session', 0);
 
 			expect(dataEvents).toContain('Partial response text');
+		});
+
+		// The fallback text is batched for 50ms while the exit error is not, so
+		// without a flush the error overtook it and the text then erased the error.
+		it('emits the fallback text before an error detected from the exit code', async () => {
+			const exitError: AgentError = {
+				type: 'agent_crashed',
+				message: 'Agent exited with code 3',
+				recoverable: true,
+				agentId: 'claude-code',
+				timestamp: 1,
+			};
+			const proc = createMockProcess({
+				isStreamJsonMode: true,
+				resultEmitted: false,
+				streamedText: 'Partial response text',
+				outputParser: createMockOutputParser({
+					detectErrorFromExit: vi.fn(() => exitError),
+				}),
+			});
+			processes.set('test-session', proc);
+
+			const order: string[] = [];
+			emitter.on('data', (_sid: string, data: string) => order.push(`data:${data}`));
+			emitter.on('agent-error', (_sid: string, error: AgentError) =>
+				order.push(`agent-error:${error.message}`)
+			);
+
+			await exitHandler.handleExit('test-session', 3);
+
+			expect(order).toEqual(['data:Partial response text', 'agent-error:Agent exited with code 3']);
 		});
 
 		it('should not emit streamedText when result was already emitted', async () => {

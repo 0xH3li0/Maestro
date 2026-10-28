@@ -10,8 +10,10 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import fs from 'fs/promises';
+import path from 'path';
 import { ClaudeSessionStorage } from '../../../main/storage/claude-session-storage';
 import { captureException } from '../../../main/utils/sentry';
+import { listDirWithStatsRemote } from '../../../main/utils/remote-fs';
 import type { SshRemoteConfig } from '../../../shared/types';
 import type Store from 'electron-store';
 import type { ClaudeSessionOriginsData } from '../../../main/storage/claude-session-storage';
@@ -58,6 +60,18 @@ vi.mock('fs/promises', () => {
 	};
 	return { default: fsMock, ...fsMock };
 });
+
+// Transcript reads stream; feed them from the readFile stub above.
+vi.mock('../../../main/utils/jsonl-stream', async () =>
+	(await import('../../helpers/mockJsonlStream')).jsonlStreamFromReadFileMock()
+);
+
+// Account dirs the storage falls back to when a transcript is not in the default
+// account. Empty unless a test names some.
+const mockAccountDirs = vi.fn(async (): Promise<string[]> => []);
+vi.mock('../../../main/agents/provider-account-dirs', () => ({
+	getProviderAccountDirs: () => mockAccountDirs(),
+}));
 
 // Mock remote-fs utilities
 vi.mock('../../../main/utils/remote-fs', () => ({
@@ -371,6 +385,36 @@ describe('ClaudeSessionStorage', () => {
 		});
 	});
 
+	it.each([
+		[undefined, '~/.claude/projects'],
+		['~/.claude-work/', '~/.claude-work/projects'],
+		['$HOME/claude-work', '$HOME/claude-work/projects'],
+		['/srv/account with spaces', '/srv/account with spaces/projects'],
+	])(
+		'lists the remote account directory %s without local expansion',
+		async (configDir, projectsDir) => {
+			const sshConfig: SshRemoteConfig = {
+				id: 'remote',
+				name: 'Remote',
+				host: 'example.test',
+				port: 22,
+				username: 'test',
+				privateKeyPath: '',
+				enabled: true,
+				useSshConfig: false,
+			};
+			vi.mocked(listDirWithStatsRemote).mockResolvedValue({ success: true, data: [] });
+
+			expect(await storage.listSessions('/remote/project', sshConfig, configDir)).toEqual([]);
+			expect(listDirWithStatsRemote).toHaveBeenCalledWith(
+				`${projectsDir}/-remote-project`,
+				sshConfig,
+				{ nameSuffix: '.jsonl' }
+			);
+			expect(fs.readdir).not.toHaveBeenCalled();
+		}
+	);
+
 	describe('Edge Cases', () => {
 		it('should handle special characters in project path', () => {
 			storage.registerSessionOrigin('/path/with spaces/and-dashes', 'session-1', 'user');
@@ -430,6 +474,25 @@ describe('ClaudeSessionStorage', () => {
 			storage.registerSessionOrigin('/project', 'session-1', 'user');
 
 			expect(mockStore.set).toHaveBeenCalledWith('origins', expect.any(Object));
+		});
+	});
+
+	describe('readSessionMessages - account lookup', () => {
+		it("reads a transcript from another account's dir when the default has none", async () => {
+			const workDir = path.join(path.sep, 'home', '.claude-work');
+			const expected = path.join(workDir, 'projects', '-project', 'session-9.jsonl');
+			mockAccountDirs.mockResolvedValueOnce([path.join(path.sep, 'home', '.claude'), workDir]);
+			vi.mocked(fs.access).mockImplementation(async (file) => {
+				if (String(file) !== expected) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+			});
+			vi.mocked(fs.readFile).mockResolvedValue(
+				JSON.stringify({ type: 'user', message: { content: 'hi' } }) as never
+			);
+
+			const result = await storage.readSessionMessages('/project', 'session-9');
+
+			expect(fs.readFile).toHaveBeenCalledWith(expected, 'utf-8');
+			expect(result.messages).toHaveLength(1);
 		});
 	});
 

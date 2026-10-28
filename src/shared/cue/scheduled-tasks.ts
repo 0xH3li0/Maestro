@@ -16,7 +16,7 @@
 
 import type { CueAction, CueScheduleDay } from './contracts';
 import { CUE_SCHEDULE_DAYS } from './contracts';
-import type { CueTurnSettings } from './turn-settings';
+import type { CueTurnSettings, CueTurnSettingsPatch } from './turn-settings';
 
 /** Cue events that make a subscription a scheduled task. */
 export const SCHEDULED_TASK_EVENTS = ['time.once', 'time.scheduled', 'time.heartbeat'] as const;
@@ -115,6 +115,9 @@ export interface ScheduledTaskUpdateInput {
 	label?: string;
 	enabled?: boolean;
 	notify?: { message: string; sticky?: boolean };
+	/** Change the prompt run's model choice. The one field here that CAN be
+	 *  cleared: a `null` axis falls back to the agent's own model or effort. */
+	turnSettings?: CueTurnSettingsPatch;
 }
 
 /** Map a scheduled-task event to its recurrence kind. */

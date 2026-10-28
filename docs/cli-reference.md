@@ -482,9 +482,18 @@ Stop a group chat's moderator and participants
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
 
+## `maestro-cli group-chat archive <chat>`
+
+Archive a group chat (stops its moderator and participants); --restore brings it back
+
+| Option      | Description                    | Default |
+| ----------- | ------------------------------ | ------- |
+| `--restore` | Unarchive the chat instead     | -       |
+| `--json`    | Output as JSON (for scripting) | -       |
+
 ## `maestro-cli open-file <file-path>`
 
-Open a file as a preview tab in the Maestro desktop app (audio and video play in the floating media player instead; an http(s) URL to an MP4 or audio file streams in the player)
+Open a file as a preview tab in the Maestro desktop app (audio and video play in the floating media player instead; an http(s) URL to an MP4 or audio file streams in the player; a folder is revealed in the Files panel)
 
 | Option             | Description                                                                                   | Default |
 | ------------------ | --------------------------------------------------------------------------------------------- | ------- |
@@ -706,6 +715,43 @@ Point an agent at a different Auto Run folder (relative paths resolve against th
 | `-a, --agent <id>` | Target agent ID                | -       |
 | `--json`           | Output as JSON (for scripting) | -       |
 
+## `maestro-cli steer-auto-run`
+
+Course-correct a running Auto Run without stopping it
+
+## `maestro-cli steer-auto-run send <note>`
+
+Send a steering note; it is delivered at the start of the next task
+
+| Option             | Description                                                       | Default |
+| ------------------ | ----------------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent whose Auto Run to steer                                     | -       |
+| `--background`     | Queue it without flashing the "Steering note queued" confirmation | -       |
+| `--focus`          | Show the confirmation flash (the default)                         | -       |
+| `--json`           | Output the stored note as JSON                                    | -       |
+
+## `maestro-cli steer-auto-run list`
+
+Show the notes still waiting, and each delivered note with its task reply
+
+| Option             | Description                                                       | Default |
+| ------------------ | ----------------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent whose steering notes to read                                | -       |
+| `--background`     | Accepted and ignored: reading the notes changes nothing on screen | -       |
+| `--focus`          | Accepted and ignored: reading the notes changes nothing on screen | -       |
+| `--json`           | Output as JSON, including each full reply                         | -       |
+
+## `maestro-cli steer-auto-run cancel <note-id>`
+
+Take back a note no task has read yet (accepts a unique id prefix)
+
+| Option             | Description                                              | Default |
+| ------------------ | -------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent that holds the note                                | -       |
+| `--background`     | Accepted and ignored: cancelling a note raises no notice | -       |
+| `--focus`          | Accepted and ignored: cancelling a note raises no notice | -       |
+| `--json`           | Output the cancelled note as JSON                        | -       |
+
 ## `maestro-cli marketplace`
 
 Browse and import Playbook Exchange playbooks (the modal: `open marketplace`)
@@ -769,6 +815,20 @@ List all Cue subscriptions across agents
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
 
+## `maestro-cli cue model <subscription-name>`
+
+Show or set the model tier, exact model, and effort a Cue subscription runs at (no setting flag = show)
+
+| Option                     | Description                                               | Default |
+| -------------------------- | --------------------------------------------------------- | ------- |
+| `-a, --agent <id-or-name>` | Scope to one agent (required when the name exists on two) | -       |
+| `--tier <level>`           | Model tier: low, medium, high (mapped per provider)       | -       |
+| `--model <id>`             | Exact model id (instead of --tier)                        | -       |
+| `--effort <level>`         | Effort: low, medium, high (mapped per provider)           | -       |
+| `--clear-model`            | Remove the tier / model and use the agent's own model     | -       |
+| `--clear-effort`           | Remove the effort and use the agent's own effort          | -       |
+| `--json`                   | Output as JSON (for scripting)                            | -       |
+
 ## `maestro-cli cue enable <subscription>`
 
 Turn a Cue subscription on (name, or the full id from `cue list --json`)
@@ -823,6 +883,9 @@ Create a scheduled task (or --list / --cancel / --reschedule / --pause)
 | `-l, --label <text>`       | Human-readable label (defaults to truncated prompt)                                                   | -       |
 | `--pipeline <name>`        | Pipeline name (default: Tasks)                                                                        | -       |
 | `--grace-minutes <n>`      | Override the default 360-minute grace window                                                          | -       |
+| `--tier <level>`           | Model tier for the prompt run: low, medium, high (mapped per provider)                                | -       |
+| `--model <id>`             | Exact model id for the prompt run (instead of --tier)                                                 | -       |
+| `--effort <level>`         | Effort for the prompt run: low, medium, high (mapped per provider)                                    | -       |
 | `--keep-on-failure`        | Keep the subscription on a failed/timed-out run (default: self-destructs on both success and failure) | -       |
 | `--json`                   | Output as JSON (for scripting)                                                                        | -       |
 
@@ -1528,6 +1591,43 @@ Set custom theme colors (key=value, e.g. accent=#ff0000) and/or re-base
 | `-a, --activate`  | Switch to the Custom theme after applying                  | -       |
 | `--json`          | Output as JSON (for scripting)                             | -       |
 
+## `maestro-cli live`
+
+Turn the web interface and its Cloudflare tunnel on or off
+
+## `maestro-cli live status`
+
+Show whether the web interface is on, its URL, and the tunnel state
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli live on`
+
+Start the web interface on the local network. Rotates the URL token unless Persistent Web Link is on.
+
+| Option     | Description                                                          | Default |
+| ---------- | -------------------------------------------------------------------- | ------- |
+| `--tunnel` | Also start a Cloudflare tunnel for remote access (needs cloudflared) | -       |
+| `--json`   | Output as JSON (for scripting)                                       | -       |
+
+## `maestro-cli live off`
+
+Stop the tunnel and the web interface (maestro-cli keeps working)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli live tunnel <state>`
+
+Start (on) or stop (off) the Cloudflare tunnel. "on" needs the web interface on.
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
 ## `maestro-cli encore`
 
 List and toggle experimental Encore features
@@ -1564,13 +1664,14 @@ Pianola manager agent: watch tabs, auto-answer or escalate per your rules
 
 Watch a desktop tab and act on awaiting-input prompts per your rules
 
-| Option                 | Description                                                     | Default |
-| ---------------------- | --------------------------------------------------------------- | ------- |
-| `--agent <agent-id>`   | Agent id to dispatch answers to (defaults to the tab owner)     | -       |
-| `--interval <seconds>` | Polling interval in seconds (default 5)                         | -       |
-| `--dry-run`            | Classify and record decisions but never send a message          | -       |
-| `--once`               | Run a single iteration instead of looping                       | -       |
-| `--json`               | Reserved for scripting; affects the disabled-feature error only | -       |
+| Option                 | Description                                                                     | Default |
+| ---------------------- | ------------------------------------------------------------------------------- | ------- |
+| `--agent <agent-id>`   | Agent id to dispatch answers to (defaults to the tab owner)                     | -       |
+| `--interval <seconds>` | Polling interval in seconds (default 5)                                         | -       |
+| `--idle-hours <hours>` | Stop watching after this many hours with no tab activity (default 6, 0 = never) | -       |
+| `--dry-run`            | Classify and record decisions but never send a message                          | -       |
+| `--once`               | Run a single iteration instead of looping                                       | -       |
+| `--json`               | Reserved for scripting; affects the disabled-feature error only                 | -       |
 
 ## `maestro-cli pianola rules`
 
@@ -1690,11 +1791,12 @@ Register desktop-supervised watchers and orchestrations (survive crashes/restart
 
 Register a supervised tab watcher the desktop keeps alive
 
-| Option                 | Description                                | Default |
-| ---------------------- | ------------------------------------------ | ------- |
-| `--agent <agent-id>`   | Agent id to dispatch answers to (required) | -       |
-| `--interval <seconds>` | Polling interval in seconds (default 5)    | -       |
-| `--json`               | Output as JSON (for scripting)             | -       |
+| Option                 | Description                                                                          | Default |
+| ---------------------- | ------------------------------------------------------------------------------------ | ------- |
+| `--agent <agent-id>`   | Agent id to dispatch answers to (required)                                           | -       |
+| `--interval <seconds>` | Polling interval in seconds (default 5)                                              | -       |
+| `--idle-hours <hours>` | Retire the watcher after this many hours with no tab activity (default 6, 0 = never) | -       |
+| `--json`               | Output as JSON (for scripting)                                                       | -       |
 
 ## `maestro-cli pianola supervise orchestrate <planId>`
 
@@ -1796,6 +1898,99 @@ Show a toast notification (queued, click X or icon to dismiss)
 | `--open-browser-tab <id>` | On click, focus this existing in-app browser tab (the id `open-browser` printed; requires --agent)                                                                                                                             | -       |
 | `--open-url <url>`        | On click, open this URL in the system browser (opens outside Maestro; use --open-browser for an in-app tab)                                                                                                                    | -       |
 | `--json`                  | Output as JSON (for scripting)                                                                                                                                                                                                 | -       |
+
+## `maestro-cli notify inbox`
+
+Read and manage the desktop notification center history
+
+## `maestro-cli notify inbox list`
+
+List retained notifications with stable IDs
+
+| Option     | Description              | Default |
+| ---------- | ------------------------ | ------- |
+| `--unread` | Only list unread entries | -       |
+| `--json`   | Output as JSON           | -       |
+
+## `maestro-cli notify inbox open`
+
+Open the notification center
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli notify inbox close`
+
+Close the notification center
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli notify inbox read-all`
+
+Mark every history entry read
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli notify inbox clear`
+
+Clear retained history
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli notify inbox collapse`
+
+Collapse expanded notification details
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli notify inbox dismiss [id]`
+
+Dismiss one notification or all visible toasts and mark their entries read
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli notify inbox read <id>`
+
+Mark one notification read
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli notify inbox activate <id>`
+
+Run a notification body action
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli notify inbox link <id>`
+
+Open a notification inline link
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli notify inbox detail <id>`
+
+Expand full notification details in the inbox (requires notificationCenterDetails)
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
 
 ## `maestro-cli notify flash <message>`
 
@@ -2042,6 +2237,14 @@ List the provider accounts the Feedback chat can run as, in the order it tries t
 | `--clear`     | Forget the remembered account and pick automatically again                | -       |
 | `--json`      | Output as JSON (for scripting)                                            | -       |
 
+## `maestro-cli feedback diagnose`
+
+Read the live app state the Feedback chat starts from: agents that are busy, errored, limit-paused, retrying, or running Auto Run, plus recent warnings and errors (redacted, read-only)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
 ## `maestro-cli feedback search <query>`
 
 Search RunMaestro/Maestro for issues matching a description
@@ -2084,6 +2287,26 @@ Show aggregated Usage Dashboard metrics for a time range
 | --------------------- | ---------------------------------------------------------------- | ------- |
 | `-r, --range <range>` | Time range: day, week, month, quarter, year, all (default: week) | -       |
 | `--json`              | Output the full aggregation object as JSON                       | -       |
+
+## `maestro-cli stats-tokens`
+
+Show token usage, cost, and tokens per second (average and peak) per provider and model
+
+| Option                | Description                                                      | Default |
+| --------------------- | ---------------------------------------------------------------- | ------- |
+| `-r, --range <range>` | Time range: day, week, month, quarter, year, all (default: week) | -       |
+| `--refresh`           | Re-read changed transcripts instead of the app's cached result   | -       |
+| `--json`              | Output the full token usage object as JSON                       | -       |
+
+## `maestro-cli stats-indexing`
+
+Show progress of a usage-data scan (a one-time re-read after an upgrade, or a first index)
+
+| Option                | Description                                                   | Default |
+| --------------------- | ------------------------------------------------------------- | ------- |
+| `--wait`              | Block until no scan is running, printing progress each second | -       |
+| `--timeout <seconds>` | With --wait, give up after this many seconds (exit code 1)    | -       |
+| `--json`              | Output as JSON                                                | -       |
 
 ## `maestro-cli stats-query <sql>`
 

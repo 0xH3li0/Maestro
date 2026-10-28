@@ -63,6 +63,16 @@ export const CUE_MODAL_TABS: UiSurfaceTab[] = [
 
 export const UI_SURFACES: UiSurface[] = [
 	{
+		id: 'notification-center',
+		shortcutId: 'openNotificationCenter',
+		label: 'Notification Center',
+		aliases: ['inbox'],
+		modal: 'notificationCenter',
+		description: 'Persistent notification history and unread entries.',
+		commandPalette: 'Open Notification Center',
+		click: 'the bell in the Main Panel header',
+	},
+	{
 		id: 'concerto',
 		label: 'Concerto',
 		aliases: ['concerto-stage', 'stage', 'movement'],
@@ -192,7 +202,8 @@ export const UI_SURFACES: UiSurface[] = [
 		label: 'Memory Viewer',
 		aliases: ['memory'],
 		modal: 'memoryViewer',
-		description: "The active agent's CLAUDE.md / AGENTS.md memory files.",
+		description:
+			"The active agent's persistent memory files (Claude Code per project, Codex per account).",
 		shortcutId: 'openMemoryViewer',
 		commandPalette: 'Memory',
 	},

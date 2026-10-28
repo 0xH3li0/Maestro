@@ -26,6 +26,8 @@ import { WebServer } from './web-server';
 import { AgentDetector } from './agents';
 import { createAgentConfigLookup } from './agents/agent-config-lookup';
 import { shouldDropSentryEvent } from '../shared/sentryFilters';
+import { sentryUserForInstallation } from '../shared/sentryContext';
+import { v8OomFingerprint } from '../shared/sentryGrouping';
 import { getBuildProvenance } from './utils/build-provenance';
 import {
 	initGlobalHotkey,
@@ -140,7 +142,12 @@ import { initializeStatsDB, closeStatsDB } from './stats';
 import { createSshRemoteStoreAdapter } from './utils/ssh-remote-resolver';
 import { stopSessionCleanup } from './group-chat/group-chat-moderator';
 import { initializePrompts, getPrompt, savePrompt } from './prompt-manager';
-import { captureException } from './utils/sentry';
+import {
+	captureException,
+	attachSentryScopeTags,
+	noteSentryAgentInventory,
+	noteSentryWorkReasons,
+} from './utils/sentry';
 import {
 	resolveToFilePath,
 	configureImageStore,
@@ -152,7 +159,7 @@ import { createConcertoHtmlResponse } from './concerto-html';
 import { MEDIA_SCHEME } from '../shared/mediaTypes';
 import { handleMediaStreamRequest } from './media/media-stream';
 import { closeAllParquetFiles } from './parquet/parquet-file';
-import { DEMO_MODE, DEMO_DATA_PATH } from './constants';
+import { DEMO_MODE, DEMO_DATA_PATH, resolveSharedDataPath } from './constants';
 // initAutoUpdater is now used by window-manager.ts (Phase 4 refactoring)
 import { checkWslEnvironment } from './utils/wslDetector';
 import { setupDeepLinkHandling, flushPendingDeepLink } from './deep-links';
@@ -162,6 +169,7 @@ import { wireProcessListeners } from './process-listeners-wiring';
 import { createSafeSend, isWebContentsAvailable } from './utils/safe-send';
 import { capabilitySnapshots, createSnapshotBroadcaster } from './agents/capability-snapshot';
 import { createWebServerFactory } from './web-server/web-server-factory';
+import { configureLiveMode } from './web-server/live-mode';
 import type { DebugPackageDependencies } from './debug-package';
 // Phase 4 refactoring - app lifecycle
 import {
@@ -260,8 +268,9 @@ const IMAGE_SCHEME = 'maestro-image';
 }
 
 // Capture the production data path before any modification
-// Used for stores that should be shared between dev and prod (e.g., agent configs)
-const productionDataPath = app.getPath('userData');
+// Used for stores that should be shared between dev and prod (e.g., agent configs).
+// A demo profile shares nothing: see resolveSharedDataPath.
+const productionDataPath = resolveSharedDataPath(app.getPath('userData'));
 
 // Demo mode: use a separate data directory for fresh demos
 if (DEMO_MODE) {
@@ -371,9 +380,32 @@ if (crashReportingEnabled && !isDevelopment && !buildProvenance.sentryDsn) {
 if (crashReportingEnabled && !isDevelopment && buildProvenance.sentryDsn) {
 	const sentryDsn = buildProvenance.sentryDsn;
 	import('@sentry/electron/main')
-		.then(({ init, setTag, IPCMode }) => {
+		.then(({ init, setTags, IPCMode }) => {
+			const version = app.getVersion();
 			init({
 				dsn: sentryDsn,
+				// Identify the install (a random GUID, never anything about the person)
+				// on the scope from the first event, rather than tagging it after init.
+				// `user.id` is what Sentry's Users column, "users affected" alert
+				// conditions, and crash-free-user rates count; without it every issue
+				// read "Users 0". The tags ride `initialScope` for the same reason: an
+				// event captured before the post-init `setTag` calls ran used to miss
+				// them, and a minidump found on the next launch reads this persisted
+				// scope.
+				initialScope: {
+					user: sentryUserForInstallation(installationId),
+					tags: {
+						installationId,
+						// Release channel (rc vs stable): RC builds use a -RC suffix
+						// (e.g., 0.16.1-RC), stable builds use plain semver.
+						channel: version.includes('-RC') ? 'rc' : 'stable',
+						// Distinguish our own release builds from a fork that supplied its
+						// own DSN. Only official builds should ever reach the
+						// smash-labs/maestro project, so an `unofficial` event there means
+						// the provenance gate has a hole in it.
+						build: buildProvenance.official ? 'official' : 'unofficial',
+					},
+				},
 				// Set release version for better debugging
 				release: app.getVersion(),
 				// Use Classic IPC mode to avoid "sentry-ipc:// URL scheme not supported" errors
@@ -400,19 +432,20 @@ if (crashReportingEnabled && !isDevelopment && buildProvenance.sentryDsn) {
 						delete event.user.ip_address;
 						delete event.user.email;
 					}
+					// One issue per process type for V8 OOMs, not one per failing
+					// allocation site. See src/shared/sentryGrouping.ts. The tag lets one
+					// search find every OOM across those per-process issues.
+					const oomFingerprint = v8OomFingerprint(event);
+					if (oomFingerprint) {
+						event.fingerprint = oomFingerprint;
+						event.tags = { ...event.tags, 'native.crash': 'v8-oom' };
+					}
 					return event;
 				},
 			});
-			// Add installation ID to Sentry for error correlation across installations
-			setTag('installationId', installationId);
-			// Tag release channel (rc vs stable) based on version string
-			// RC builds use -RC suffix (e.g., 0.16.1-RC), stable builds use plain semver
-			const version = app.getVersion();
-			setTag('channel', version.includes('-RC') ? 'rc' : 'stable');
-			// Distinguish our own release builds from a fork that supplied its own DSN.
-			// Only official builds should ever reach the smash-labs/maestro project, so an
-			// `unofficial` event there means the provenance gate has a hole in it.
-			setTag('build', buildProvenance.official ? 'official' : 'unofficial');
+			// Auto Run / agent context recorded before Sentry finished loading, and
+			// every change after it (see setSentryScopeTags).
+			attachSentryScopeTags({ setTags });
 
 			// Start memory monitoring for crash diagnostics (MAESTRO-5A/4Y)
 			// Records breadcrumbs with memory state every minute, warns above 1GB heap
@@ -423,6 +456,18 @@ if (crashReportingEnabled && !isDevelopment && buildProvenance.sentryDsn) {
 				.catch((err) => {
 					logger.warn('Failed to start memory monitoring', 'Startup', { error: String(err) });
 				});
+			// Tag the scope with the main heap so a main-process OOM minidump says
+			// how much it was carrying when it died (#1862). Agent and Auto Run
+			// counts are written on change instead (see setSentryScopeTags).
+			import('./utils/heap-guard')
+				.then(({ startCrashContextSampling }) => {
+					startCrashContextSampling();
+				})
+				.catch((err) => {
+					logger.warn('Failed to start crash context sampling', 'Startup', {
+						error: String(err),
+					});
+				});
 		})
 		.catch((err) => {
 			logger.warn('Failed to initialize Sentry', 'Startup', { error: String(err) });
@@ -432,6 +477,17 @@ if (crashReportingEnabled && !isDevelopment && buildProvenance.sentryDsn) {
 // Create local references to stores for use throughout this module
 // These are convenience variables - the actual stores are managed by ./stores module
 const sessionsStore = getSessionsStore();
+
+// Crash-report context: which agent types are configured and what background
+// work is in flight. Both are only counts and agent TYPE ids (never names,
+// paths, or prompts) and are pushed to the Sentry scope only when they change,
+// so an event costs nothing extra. The inventory is refreshed by the sessions
+// persistence handlers; the work context follows the power manager's block
+// reasons, which every Auto Run, agent turn, Cue run, and group chat round
+// registers whether or not sleep prevention is enabled.
+noteSentryAgentInventory(sessionsStore.get('sessions', []));
+noteSentryWorkReasons(powerManager.getStatus().reasons);
+powerManager.onReasonsChanged(noteSentryWorkReasons);
 const groupsStore = getGroupsStore();
 const agentConfigsStore = getAgentConfigsStore();
 const agentCapabilitiesStore = getAgentCapabilitiesStore();
@@ -901,7 +957,11 @@ app
 		// Load logger settings first
 		const logLevel = store.get('logLevel', 'info');
 		logger.setLogLevel(logLevel);
-		const maxLogBuffer = store.get('maxLogBuffer', 1000);
+		// Same fallback as the history cap. The renderer reads this value back
+		// through `logger:getMaxLogBuffer` and shows it as the setting, so a
+		// different fallback here made a fresh install display one limit
+		// (1,000) while history was actually trimmed at another.
+		const maxLogBuffer = store.get('maxLogBuffer', MAX_ENTRIES_PER_SESSION);
 		logger.setMaxLogBuffer(maxLogBuffer);
 
 		logger.info('Maestro application starting', 'Startup', {
@@ -1012,6 +1072,9 @@ app
 			createWebServer,
 			settingsStore: store,
 		};
+		// `maestro-cli live` reaches the server slot through the WS handlers,
+		// which run inside a WebServer and have no other route to it.
+		configureLiveMode(cliServerDeps);
 		await ensureCliServer(cliServerDeps);
 
 		// dispatch --notify-on-complete. Wired here because it needs the same
@@ -1365,16 +1428,21 @@ app
 
 				const agentConfigValues = getAgentConfigForAgent(storedSession.toolType);
 
-				// Resolve the agent's binary path using the agent detector.
-				// Without this, Cue falls back to the bare command name (e.g., 'claude')
-				// which fails with ENOENT when spawn() can't find it on PATH.
-				let resolvedAgentPath = agentConfigValues.customPath as string | undefined;
-				if (!resolvedAgentPath && agentDetector) {
-					const detectedAgent = await agentDetector.getAgent(storedSession.toolType);
-					if (detectedAgent?.available && detectedAgent.path) {
-						resolvedAgentPath = detectedAgent.path;
-					}
-				}
+				// Resolve the agent's binary the way a tab spawn does: the agent's
+				// own custom path, then the provider's, then the detector's. Without
+				// the last rung Cue falls back to the bare command name (e.g.
+				// 'claude'), which fails with ENOENT when spawn() can't find it on PATH.
+				const { resolveCueAgentBinary } = await import('./cue/cue-agent-binary');
+				const resolvedAgentPath = await resolveCueAgentBinary({
+					sessionCustomPath: storedSession.customPath,
+					providerCustomPath: agentConfigValues.customPath as string | undefined,
+					sshEnabled: !!storedSession.sessionSshRemoteConfig?.enabled,
+					getDetectedPath: async () => {
+						const detectedAgent = await agentDetector?.getAgent(storedSession.toolType);
+						return detectedAgent?.available ? detectedAgent.path : undefined;
+					},
+					onWarn: (message) => logger.warn(message, 'Cue', { sessionId: storedSession.id }),
+				});
 
 				// The subscription's tier / model / effort outranks the agent's own
 				// config for this run only. A tier or effort the provider cannot
@@ -1402,6 +1470,7 @@ app
 						cwd: projectRoot,
 						projectRoot,
 						autoRunFolderPath: storedSession.autoRunFolderPath,
+						newSessionMessage: storedSession.newSessionMessage,
 					},
 					subscription: {
 						name: subscriptionName,
@@ -1833,6 +1902,9 @@ app
 			);
 		const setPluginSessionsRaw = (sessions: Array<Record<string, unknown>>): void => {
 			sessionsStore.set('sessions', sessions as never);
+			// Plugin create/delete changes the agent list without going through the
+			// sessions persistence handlers, so refresh the crash-report inventory here.
+			noteSentryAgentInventory(sessions);
 		};
 		const pluginTabsList = (sessionId?: string): PluginTabMetadata[] => {
 			const out: PluginTabMetadata[] = [];

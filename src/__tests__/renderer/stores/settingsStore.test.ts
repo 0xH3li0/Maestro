@@ -116,12 +116,18 @@ function resetStore() {
 		toastPosition: 'bottom-right',
 		terminalWidth: 100,
 		logLevel: 'info',
-		maxLogBuffer: 5000,
+		maxLogBuffer: 10000,
 		maxOutputLines: Infinity,
 		osNotificationsEnabled: true,
 		audioFeedbackEnabled: false,
 		audioFeedbackCommand: 'say',
 		toastDuration: 20,
+		toastDurationBeforeOff: 20,
+		notificationCenterLarge: false,
+		notificationCenterDetails: false,
+		notificationCenterKeyboardNavigation: false,
+		notificationHistoryQueuedReplies: false,
+		notificationHistoryAutoRunTasks: false,
 		idleNotificationEnabled: false,
 		idleNotificationCommand: 'say Maestro is idle',
 		checkForUpdatesOnStartup: true,
@@ -159,6 +165,7 @@ function resetStore() {
 		sshRemoteIgnorePatterns: ['.git', '*cache*'],
 		sshRemoteHonorGitignore: true,
 		automaticTabNamingEnabled: true,
+		shortenLongTabNames: false,
 		fileTabAutoRefreshEnabled: false,
 		suppressWindowsWarning: false,
 		directorNotesSettings: { provider: 'claude-code', defaultLookbackDays: 7 },
@@ -173,6 +180,26 @@ function resetStore() {
 }
 
 describe('settingsStore', () => {
+	it.each([
+		['notificationCenterLarge', 'setNotificationCenterLarge'],
+		['notificationCenterDetails', 'setNotificationCenterDetails'],
+		['notificationCenterKeyboardNavigation', 'setNotificationCenterKeyboardNavigation'],
+		['notificationHistoryQueuedReplies', 'setNotificationHistoryQueuedReplies'],
+		['notificationHistoryAutoRunTasks', 'setNotificationHistoryAutoRunTasks'],
+	] as const)('keeps %s opt-in and persists and restores it', async (key, setter) => {
+		expect(SETTINGS_METADATA[key].default).toBe(false);
+		expect(useSettingsStore.getInitialState()[key]).toBe(false);
+		useSettingsStore.getState()[setter](true);
+		expect(window.maestro.settings.set).toHaveBeenCalledWith(key, true);
+		useSettingsStore.setState({ [key]: false });
+		vi.mocked(window.maestro.settings.getAll).mockResolvedValue({ [key]: true });
+		await loadAllSettings();
+		expect(useSettingsStore.getState()[key]).toBe(true);
+		vi.mocked(window.maestro.settings.getAll).mockResolvedValue({ [key]: false });
+		await loadAllSettings();
+		expect(useSettingsStore.getState()[key]).toBe(false);
+	});
+
 	beforeEach(() => {
 		resetStore();
 
@@ -247,7 +274,7 @@ describe('settingsStore', () => {
 			expect(state.toastPosition).toBe('bottom-right');
 			expect(state.terminalWidth).toBe(100);
 			expect(state.logLevel).toBe('info');
-			expect(state.maxLogBuffer).toBe(5000);
+			expect(state.maxLogBuffer).toBe(10000);
 			expect(state.maxOutputLines).toBe(Infinity);
 			expect(state.osNotificationsEnabled).toBe(true);
 			expect(state.audioFeedbackEnabled).toBe(false);
@@ -289,6 +316,7 @@ describe('settingsStore', () => {
 			expect(state.sshRemoteIgnorePatterns).toEqual(['.git', '*cache*']);
 			expect(state.sshRemoteHonorGitignore).toBe(true);
 			expect(state.automaticTabNamingEnabled).toBe(true);
+			expect(state.shortenLongTabNames).toBe(false);
 			expect(state.fileTabAutoRefreshEnabled).toBe(false);
 			expect(state.suppressWindowsWarning).toBe(false);
 			expect(state.directorNotesSettings).toEqual({
@@ -663,6 +691,42 @@ describe('settingsStore', () => {
 				expect(useSettingsStore.getState().toastDuration).toBe(10);
 				expect(window.maestro.settings.set).toHaveBeenCalledWith('toastDuration', 10);
 			});
+
+			it('setToastDuration remembers the duration it switches off from', () => {
+				useSettingsStore.getState().setToastDuration(5);
+				useSettingsStore.getState().setToastDuration(-1);
+				expect(useSettingsStore.getState().toastDurationBeforeOff).toBe(5);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('toastDurationBeforeOff', 5);
+			});
+
+			it('setToastDuration keeps the remembered duration when already off', () => {
+				useSettingsStore.getState().setToastDuration(5);
+				useSettingsStore.getState().setToastDuration(-1);
+				useSettingsStore.getState().setToastDuration(-1);
+				expect(useSettingsStore.getState().toastDurationBeforeOff).toBe(5);
+			});
+
+			it('setToastsEnabled(false) turns toasts off', () => {
+				useSettingsStore.getState().setToastDuration(10);
+				useSettingsStore.getState().setToastsEnabled(false);
+				expect(useSettingsStore.getState().toastDuration).toBe(-1);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('toastDuration', -1);
+			});
+
+			it('setToastsEnabled(true) restores the previous duration, including Never', () => {
+				useSettingsStore.getState().setToastDuration(0);
+				useSettingsStore.getState().setToastsEnabled(false);
+				useSettingsStore.getState().setToastsEnabled(true);
+				expect(useSettingsStore.getState().toastDuration).toBe(0);
+			});
+
+			it('setToastsEnabled is a no-op when already in the requested state', () => {
+				useSettingsStore.getState().setToastDuration(30);
+				vi.mocked(window.maestro.settings.set).mockClear();
+				useSettingsStore.getState().setToastsEnabled(true);
+				expect(useSettingsStore.getState().toastDuration).toBe(30);
+				expect(window.maestro.settings.set).not.toHaveBeenCalled();
+			});
 		});
 
 		describe('Updates', () => {
@@ -911,6 +975,12 @@ describe('settingsStore', () => {
 					'automaticTabNamingEnabled',
 					false
 				);
+			});
+
+			it('setShortenLongTabNames updates state and persists', () => {
+				useSettingsStore.getState().setShortenLongTabNames(true);
+				expect(useSettingsStore.getState().shortenLongTabNames).toBe(true);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('shortenLongTabNames', true);
 			});
 
 			it('setFileTabAutoRefreshEnabled updates state and persists', () => {
@@ -1162,9 +1232,9 @@ describe('settingsStore', () => {
 		});
 
 		it('setMaxLogBuffer updates state and calls logger.setMaxLogBuffer', async () => {
-			await useSettingsStore.getState().setMaxLogBuffer(10000);
-			expect(useSettingsStore.getState().maxLogBuffer).toBe(10000);
-			expect(window.maestro.logger.setMaxLogBuffer).toHaveBeenCalledWith(10000);
+			await useSettingsStore.getState().setMaxLogBuffer(25000);
+			expect(useSettingsStore.getState().maxLogBuffer).toBe(25000);
+			expect(window.maestro.logger.setMaxLogBuffer).toHaveBeenCalledWith(25000);
 		});
 
 		it('setPreventSleepEnabled updates state, persists, and calls power.setEnabled', async () => {
@@ -2682,6 +2752,34 @@ describe('settingsStore', () => {
 			expect(shortcuts.focusActiveTab.keys).toEqual(['Alt', 'Meta', 'ArrowUp']);
 			// The freed combo now belongs to cross-tab message search.
 			expect(shortcuts.searchAllTabs.keys).toEqual(['Alt', 'Meta', 'f']);
+		});
+
+		it('does not re-persist a map the migration leaves unchanged (settings:set ping-pong)', async () => {
+			// nextUnreadTab at its own default used to match a stale remap onto the
+			// reserved Cmd+Shift+Down, which the guard reverted: the output equalled
+			// the input but the flag stayed raised, so every load wrote and notified
+			// the peer window, which did the same. A no-op migration must not write.
+			vi.mocked(window.maestro.settings.set).mockClear();
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				shortcuts: {
+					nextUnreadTab: {
+						id: 'nextUnreadTab',
+						label: 'Next Unread / Draft Tab',
+						keys: ['Alt', 'Meta', 'ArrowDown'],
+					},
+				},
+			});
+
+			await loadAllSettings();
+
+			expect(
+				vi.mocked(window.maestro.settings.set).mock.calls.filter(([k]) => k === 'shortcuts')
+			).toHaveLength(0);
+			expect(useSettingsStore.getState().shortcuts.nextUnreadTab.keys).toEqual([
+				'Alt',
+				'Meta',
+				'ArrowDown',
+			]);
 		});
 
 		it('strips a persisted Cmd+Shift+Down binding and restores the bundled default', async () => {

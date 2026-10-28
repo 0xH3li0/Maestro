@@ -5,6 +5,7 @@ import type { Theme } from '../../types';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import { getTabKindColor } from './tabBarUtils';
+import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 // Single source of truth for the popover width. Used both for the overflow
 // math in handleClick (to decide whether to right-align near the viewport
@@ -148,12 +149,11 @@ export const NewTabPopover = memo(function NewTabPopover({
 					<div
 						ref={popoverRef}
 						tabIndex={0}
-						className="fixed z-50 rounded-lg shadow-xl overflow-hidden outline-none"
+						className="fixed z-50 rounded-lg overflow-hidden outline-none"
 						style={{
 							top: popoverPos.top,
 							left: popoverPos.left,
-							backgroundColor: theme.colors.bgSidebar,
-							border: `1px solid ${theme.colors.border}`,
+							...elevatedSurfaceStyle(theme),
 							minWidth: POPOVER_MIN_WIDTH,
 						}}
 						onKeyDown={(e) => {

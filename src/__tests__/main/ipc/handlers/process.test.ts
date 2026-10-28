@@ -23,6 +23,7 @@ import { getDefaultShell } from '../../../../main/stores/defaults';
 import { stripThinkingFromTranscript } from '../../../../main/agents/claude-transcript-sanitizer';
 import { checkCustomPath } from '../../../../main/agents/path-prober';
 import { getChildProcesses } from '../../../../main/process-manager/utils/childProcessInfo';
+import { probeClaudeSlashCommandsCached } from '../../../../main/agents/claude-slash-command-probe';
 import {
 	primeOmpModelCatalog,
 	computeOmpCatalogKey,
@@ -282,6 +283,11 @@ vi.mock('../../../../main/agents/probeRemoteMaestroP', () => ({
 	ensureRemoteMaestroPProbed: vi.fn().mockResolvedValue(undefined),
 }));
 
+// The slash-command probe would run a real claude; tests assert on the call.
+vi.mock('../../../../main/agents/claude-slash-command-probe', () => ({
+	probeClaudeSlashCommandsCached: vi.fn().mockResolvedValue(null),
+}));
+
 // Mock the prompt manager so the copilot-preamble injection has deterministic
 // content without bootstrapping the real prompt cache. Per-test overrides use
 // mockReturnValueOnce / mockImplementation.
@@ -337,7 +343,7 @@ describe('process IPC handlers', () => {
 			interrupt: vi.fn(),
 			kill: vi.fn(),
 			resize: vi.fn(),
-			getAll: vi.fn(),
+			getAll: vi.fn().mockReturnValue([]),
 			get: vi.fn(),
 			runCommand: vi.fn(),
 			spawnTerminalTab: vi.fn(),
@@ -1093,6 +1099,164 @@ describe('process IPC handlers', () => {
 					})
 				);
 				expect(spawnCall.customEnvVars?.NODE_PATH).toBeUndefined();
+			});
+
+			// An agent that only ran `claude --print` never saw claude's trust prompt,
+			// so after a switch to TUI every turn failed with exit 7 (#1872).
+			it.each([
+				['accepts', '/projects/app', '1'],
+				['does not accept', '/Users/me', undefined],
+			])("%s claude's folder trust when the TUI spawn cwd is %s", async (_label, cwd, expected) => {
+				const maestroPPath = path.join(process.cwd(), 'src', 'maestro-p', 'index.ts');
+				mockAgentDetector.getAgent.mockResolvedValue(claudeCodeAgent);
+				mockProcessManager.spawn.mockReturnValue({ pid: 4246, success: true });
+				mockSessionsStore.get.mockImplementation((key: string, defaultValue: unknown) => {
+					if (key === 'sessions') {
+						return [
+							{
+								id: 'session-tui',
+								cwd: '/projects/app',
+								enableMaestroP: true,
+								maestroPMode: 'interactive',
+								maestroPPath,
+							},
+						];
+					}
+					return defaultValue;
+				});
+
+				const handler = handlers.get('process:spawn');
+				await handler!({} as any, {
+					sessionId: 'session-tui-ai-tab-1',
+					toolType: 'claude-code',
+					cwd,
+					command: '/usr/local/bin/claude',
+					args: claudeCodeAgent.args,
+					prompt: 'hi',
+				});
+
+				const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+				expect(spawnCall.args[0]).toBe(maestroPPath);
+				expect(spawnCall.customEnvVars?.MAESTRO_P_ACCEPT_WORKSPACE_TRUST).toBe(expected);
+			});
+
+			// Agents persist on a debounce, so a just-created agent's first turn can
+			// spawn before its record lands. TUI resolves from the payload there, and
+			// trust has to follow or the turn exits 7 in the folder just picked.
+			it("accepts claude's folder trust for an agent whose record has not landed yet", async () => {
+				const maestroPPath = path.join(process.cwd(), 'src', 'maestro-p', 'index.ts');
+				mockAgentDetector.getAgent.mockResolvedValue(claudeCodeAgent);
+				mockProcessManager.spawn.mockReturnValue({ pid: 4247, success: true });
+				mockSessionsStore.get.mockImplementation((key: string, defaultValue: unknown) =>
+					key === 'sessions' ? [] : defaultValue
+				);
+
+				const handler = handlers.get('process:spawn');
+				await handler!({} as any, {
+					sessionId: 'session-new-ai-tab-1',
+					toolType: 'claude-code',
+					cwd: '/projects/new-app',
+					command: '/usr/local/bin/claude',
+					args: claudeCodeAgent.args,
+					prompt: 'hi',
+					enableMaestroP: true,
+					maestroPMode: 'interactive',
+					maestroPPath,
+				});
+
+				const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+				expect(spawnCall.args[0]).toBe(maestroPPath);
+				expect(spawnCall.customEnvVars?.MAESTRO_P_ACCEPT_WORKSPACE_TRUST).toBe('1');
+			});
+
+			// Auto Run (and goal iterations) spawn as `{agentId}-batch-{ts}` and send no
+			// token fields inline, so the TUI setting has to resolve from the id alone.
+			it('runs an Auto Run batch spawn through maestro-p with its idle budget', async () => {
+				const maestroPPath = path.join(process.cwd(), 'src', 'maestro-p', 'index.ts');
+				mockAgentDetector.getAgent.mockResolvedValue(claudeCodeAgent);
+				mockProcessManager.spawn.mockReturnValue({ pid: 4245, success: true });
+				mockSessionsStore.get.mockImplementation((key: string, defaultValue: unknown) => {
+					if (key === 'sessions') {
+						return [
+							{
+								id: 'session-tui',
+								enableMaestroP: true,
+								maestroPMode: 'interactive',
+								maestroPPath,
+							},
+						];
+					}
+					return defaultValue;
+				});
+
+				const handler = handlers.get('process:spawn');
+				await handler!({} as any, {
+					sessionId: 'session-tui-batch-1760000000000',
+					toolType: 'claude-code',
+					cwd: '/test',
+					command: '/usr/local/bin/claude',
+					args: claudeCodeAgent.args,
+					prompt: 'task',
+					maestroPMaxWaitSeconds: 14400,
+				});
+
+				const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+				expect(spawnCall.command).toBe(process.execPath);
+				expect(spawnCall.args[0]).toBe(maestroPPath);
+				const maxWaitAt = spawnCall.args.indexOf('--max-wait');
+				expect(maxWaitAt).toBeGreaterThan(-1);
+				expect(spawnCall.args[maxWaitAt + 1]).toBe('14400');
+			});
+
+			// The TUI announces no slash commands, so a maestro-p turn probes for
+			// them and sends them on the channel a `--print` init event uses.
+			it('sends the probed slash commands for a local maestro-p spawn', async () => {
+				const maestroPPath = path.join(process.cwd(), 'src', 'maestro-p', 'index.ts');
+				mockAgentDetector.getAgent.mockResolvedValue(claudeCodeAgent);
+				mockProcessManager.spawn.mockReturnValue({ pid: 4244, success: true });
+				mockSessionsStore.get.mockImplementation((key: string, defaultValue: unknown) => {
+					if (key === 'sessions') {
+						return [
+							{
+								id: 'session-tui',
+								enableMaestroP: true,
+								maestroPMode: 'interactive',
+								maestroPPath,
+							},
+						];
+					}
+					return defaultValue;
+				});
+				vi.mocked(probeClaudeSlashCommandsCached).mockResolvedValueOnce(['/help', '/compact']);
+				const safeSendSpy = vi.fn();
+				deps = { ...deps, safeSend: safeSendSpy };
+				handlers.clear();
+				vi.mocked(ipcMain.handle).mockImplementation((channel, h) => {
+					handlers.set(channel, h);
+				});
+				registerProcessHandlers(deps);
+
+				await handlers.get('process:spawn')!({} as any, {
+					sessionId: 'session-tui-ai-tab-1',
+					toolType: 'claude-code',
+					cwd: '/test',
+					command: '/usr/local/bin/claude',
+					args: claudeCodeAgent.args,
+					prompt: 'hi',
+				});
+				await vi.waitFor(() =>
+					expect(safeSendSpy).toHaveBeenCalledWith(
+						'process:slash-commands',
+						'session-tui-ai-tab-1',
+						['/help', '/compact']
+					)
+				);
+
+				const [binPath, cwd, env] = vi.mocked(probeClaudeSlashCommandsCached).mock.calls[0];
+				expect(binPath).toBe('/usr/local/bin/claude');
+				expect(cwd).toBe('/test');
+				// The probe runs claude itself, never maestro-p driving claude.
+				expect(env.MAESTRO_CLAUDE_BIN).toBeUndefined();
 			});
 
 			it('adds packaged NODE_PATH while preserving Electron Node mode env', async () => {

@@ -365,7 +365,7 @@ export type PianolaSupervisedKind = 'watch' | 'orchestrate';
  * One persisted background target the desktop supervisor manages. A 'watch'
  * target babysits a tab and needs both tabId and agentId; an 'orchestrate'
  * target drives a saved plan to completion and needs planId. The optional
- * intervalSeconds / concurrency tune the spawned CLI command.
+ * intervalSeconds / concurrency / idleHours tune the spawned CLI command.
  */
 export interface PianolaSupervisedTarget {
 	id: string;
@@ -377,6 +377,8 @@ export interface PianolaSupervisedTarget {
 	planId?: string;
 	intervalSeconds?: number;
 	concurrency?: number;
+	/** Watch only: hours idle before the watcher retires itself (0 = never). */
+	idleHours?: number;
 }
 
 /** Persisted supervisor registry file: a JSON object wrapping the target array. */
@@ -425,6 +427,12 @@ export function validatePianolaSupervisedTarget(raw: unknown): PianolaSupervised
 	if (raw.concurrency !== undefined) {
 		if (typeof raw.concurrency !== 'number' || !Number.isFinite(raw.concurrency)) return null;
 		target.concurrency = raw.concurrency;
+	}
+	if (raw.idleHours !== undefined) {
+		if (typeof raw.idleHours !== 'number' || !Number.isFinite(raw.idleHours) || raw.idleHours < 0) {
+			return null;
+		}
+		target.idleHours = raw.idleHours;
 	}
 
 	// Drop targets that lack the fields their kind needs to spawn a valid command.

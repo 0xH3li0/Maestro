@@ -98,6 +98,8 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				theme={theme}
 				crossAgentMentionsWritable={settings.crossAgentMentionsWritable}
 				setCrossAgentMentionsWritable={settings.setCrossAgentMentionsWritable}
+				crossAgentHandoffsWritable={settings.crossAgentHandoffsWritable}
+				setCrossAgentHandoffsWritable={settings.setCrossAgentHandoffsWritable}
 			/>
 			<AutoRunInactivitySection
 				theme={theme}
@@ -135,6 +137,8 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				theme={theme}
 				automaticTabNamingEnabled={settings.automaticTabNamingEnabled}
 				setAutomaticTabNamingEnabled={settings.setAutomaticTabNamingEnabled}
+				shortenLongTabNames={settings.shortenLongTabNames}
+				setShortenLongTabNames={settings.setShortenLongTabNames}
 				newTabPlacement={settings.newTabPlacement}
 				setNewTabPlacement={settings.setNewTabPlacement}
 				newBrowserTabPlacement={settings.newBrowserTabPlacement}

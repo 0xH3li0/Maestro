@@ -1372,6 +1372,8 @@ flashCopiedToClipboard(value, 'Session ID Copied'); // custom title
 
 **Always** prefer `flashCopiedToClipboard` for clipboard-success acks so wording, color, and duration stay consistent across the app.
 
+Clipboard acknowledgments and their dismissal are application-owned. Do not keep modal-local copied state or reset timers: the modal can close while a clipboard write or its feedback is pending. Let the shared Center Flash store own the feedback lifetime.
+
 ### Firing a flash (external - `maestro-cli`)
 
 ```bash
@@ -1786,7 +1788,13 @@ Presets:
   container. Pass `frontmatter={false}` for GFM-only surfaces.
   Also draws Auto Run marker pills (`autorunMarkers`, on for this preset only) -
   see [Auto Run Marker Pills](#auto-run-marker-pills) below.
-- **`wizard-bubble`** / **`release-notes`** - minimal, tightly-styled presets.
+- **`release-notes`** - minimal, tightly-styled preset.
+
+Both wizard conversations render agent replies through the **chat** preset via
+`<WizardMarkdown>` (`Wizard/shared/WizardMarkdown.tsx`). A wizard is where users
+ask for mockups, flows, and data models, so it draws everything chat draws
+(Mermaid, inline SVG, images, KaTeX). A reduced `wizard-bubble` preset used to
+strip that down to plain GFM; do not bring one back.
 
 Shared internals (do NOT re-implement): plugin selection lives in
 `Markdown/plugins.ts` (`buildMarkdownPlugins`), text preprocessing in

@@ -11,7 +11,8 @@ import {
 	writeDoc,
 } from './agent-spawner';
 import { captureCliRun } from './agent-run-capture';
-import { addHistoryEntry, readGroups, readHistory } from './storage';
+import { addHistoryEntry, readGroups, readHistory, readSettings } from './storage';
+import { autoRunMaestroPMaxWaitSeconds } from '../../shared/claudeTokenMode';
 import {
 	aggregateAutoRunHistoryTotals,
 	mergeFinalSummaryTotals,
@@ -89,9 +90,10 @@ export async function* runPlaybook(
 		ignoreModelHints = false,
 	} = options;
 	const batchStartTime = Date.now();
-	// Bottom of both ladders for every synopsis turn in this run. Resolved once:
-	// it depends only on the provider, which cannot change mid-run.
-	const cheapSynopsis = cheapTurnSettings(session.toolType);
+	// Bottom of both ladders for every synopsis turn in this run. Read per use
+	// rather than once: a provider can refuse the effort value mid-run, after
+	// which the ladder stops handing it out (see shared/effortRejection.ts).
+	const cheapSynopsis = () => cheapTurnSettings(session.toolType);
 
 	// Get git branch and group name for template variable substitution
 	const gitBranch = getGitBranch(session.cwd);
@@ -155,8 +157,10 @@ export async function* runPlaybook(
 		// per-document stable for callers/mocks.
 		let initialTotalTasks = 0;
 		let preExistingHalt: { document: string; halt: HaltMarker } | null = null;
+		const missingDocuments: string[] = [];
 		for (const doc of playbook.documents) {
-			const { taskCount, content } = readDocAndCountTasks(folderPath, doc.filename);
+			const { taskCount, content, missingPath } = readDocAndCountTasks(folderPath, doc.filename);
+			if (missingPath) missingDocuments.push(missingPath);
 			if (debug) {
 				yield {
 					type: 'debug',
@@ -180,6 +184,22 @@ export async function* runPlaybook(
 				category: 'scan',
 				message: `Total unchecked tasks: ${initialTotalTasks}`,
 			};
+		}
+
+		// A missing document is a broken playbook, not one with nothing left to
+		// do. Counting it as zero tasks once reported "No unchecked tasks" for a
+		// playbook whose every document path was wrong.
+		if (missingDocuments.length > 0) {
+			unregisterCliActivity(session.id);
+			yield {
+				type: 'error',
+				timestamp: Date.now(),
+				message:
+					`${missingDocuments.length} of ${playbook.documents.length} playbook document${playbook.documents.length !== 1 ? 's' : ''} not found ` +
+					`(names are relative to the Auto Run folder, without .md): ${missingDocuments.join(', ')}`,
+				code: 'DOCUMENT_NOT_FOUND',
+			};
+			return;
 		}
 
 		if (initialTotalTasks === 0) {
@@ -658,6 +678,13 @@ export async function* runPlaybook(
 								enableMaestroP: session.enableMaestroP,
 								maestroPMode: session.maestroPMode,
 								maestroPPath: session.maestroPPath,
+								// The task runs in the agent's own cwd (#1872).
+								acceptWorkspaceTrust: true,
+								// A TUI task gets Auto Run's idle budget, not maestro-p's 300s.
+								maestroPMaxWaitSeconds: autoRunMaestroPMaxWaitSeconds({
+									autoRunInactivityTimeoutMin: readSettings().autoRunInactivityTimeoutMin,
+									autoRunMaxTaskDurationMin: readSettings().autoRunMaxTaskDurationMin,
+								}),
 							}),
 						(r) => (r.success ? 0 : 1)
 					);
@@ -738,8 +765,8 @@ export async function* runPlaybook(
 										// (codex, opencode): there is nothing to downgrade TO, so the
 										// synopsis inherits, and it must inherit the same value the task
 										// ran under - the run override, not just the session's.
-										customModel: cheapSynopsis.model ?? runModel ?? session.customModel,
-										customEffort: cheapSynopsis.effort ?? runEffort ?? session.customEffort,
+										customModel: cheapSynopsis().model ?? runModel ?? session.customModel,
+										customEffort: cheapSynopsis().effort ?? runEffort ?? session.customEffort,
 										customArgs: session.customArgs,
 										additionalDirectories: session.additionalDirectories,
 										customEnvVars: session.customEnvVars,
@@ -749,6 +776,7 @@ export async function* runPlaybook(
 										enableMaestroP: session.enableMaestroP,
 										maestroPMode: session.maestroPMode,
 										maestroPPath: session.maestroPPath,
+										acceptWorkspaceTrust: true,
 									}
 								),
 							(r) => (r.success ? 0 : 1)

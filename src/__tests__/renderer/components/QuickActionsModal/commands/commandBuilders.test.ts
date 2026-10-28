@@ -28,6 +28,7 @@ import { buildSupportCommands } from '../../../../../renderer/components/QuickAc
 import { createGroupFromTabRefs } from '../../../../../renderer/utils/panelLayout';
 import { createMockAITab } from '../../../../helpers/mockTab';
 import { useModalStore } from '../../../../../renderer/stores/modalStore';
+import { useSessionStore } from '../../../../../renderer/stores/sessionStore';
 
 const noop = () => {};
 const setSessions = vi.fn();
@@ -114,6 +115,41 @@ describe('QuickActions command builders', () => {
 		).toMatchObject({ label: 'Atlas', isRunningAgent: true, isInBatch: true });
 
 		expect(
+			buildAgentSwitcherCommands({
+				sessions: [session],
+				activeBatchSessionIds: ['s1'],
+				batchRunStates: {
+					s1: {
+						totalTasksAcrossAllDocs: 3,
+						completedTasksAcrossAllDocs: 1,
+						totalTasks: 0,
+						completedTasks: 0,
+					},
+				},
+				setActiveSessionId: vi.fn(),
+				revealJumpTarget: vi.fn(),
+			})[0].autoRunProgress
+		).toEqual({ percent: 33, goalMode: false });
+
+		// A paused run is not in the active list, so it gets no progress either.
+		expect(
+			buildAgentSwitcherCommands({
+				sessions: [session],
+				activeBatchSessionIds: [],
+				batchRunStates: {
+					s1: {
+						totalTasksAcrossAllDocs: 3,
+						completedTasksAcrossAllDocs: 1,
+						totalTasks: 0,
+						completedTasks: 0,
+					},
+				},
+				setActiveSessionId: vi.fn(),
+				revealJumpTarget: vi.fn(),
+			})[0].autoRunProgress
+		).toBeUndefined();
+
+		expect(
 			buildGroupChatJumpCommands({
 				groupChats: [{ id: 'chat1', name: 'Squad', participants: ['s1', 's2'] } as any],
 				onOpenGroupChat: vi.fn(),
@@ -136,6 +172,46 @@ describe('QuickActions command builders', () => {
 			'toggleGroupChatModeratorOnly',
 			'deleteGroupChat',
 		]);
+	});
+
+	it('jumps a running agent to its busy tab, reopening one closed mid-turn', () => {
+		const session = createMockSession({
+			id: 's1',
+			name: 'Atlas',
+			state: 'busy',
+			aiTabs: [createMockAITab({ id: 'tab-1' })],
+			activeTabId: 'tab-1',
+			unifiedTabOrder: [{ type: 'ai', id: 'tab-1' }],
+			orphanedThinkingTabs: [createMockAITab({ id: 'orphan-1', name: 'Deploy', state: 'busy' })],
+		});
+		useSessionStore.setState({ sessions: [session] } as any);
+		const setActiveSessionId = vi.fn();
+		const revealJumpTarget = vi.fn();
+
+		const [command] = buildAgentSwitcherCommands({
+			sessions: [session],
+			activeBatchSessionIds: [],
+			setActiveSessionId,
+			revealJumpTarget,
+		});
+		expect(command.runningInfo?.busyTabName).toBe('Deploy');
+
+		command.action();
+
+		const updated = useSessionStore.getState().sessions[0];
+		expect(setActiveSessionId).toHaveBeenCalledWith('s1');
+		expect(updated.activeTabId).toBe('orphan-1');
+		expect(updated.aiTabs.map((t) => t.id)).toEqual(['tab-1', 'orphan-1']);
+		expect(updated.orphanedThinkingTabs).toBeUndefined();
+
+		// The main-mode "Jump to:" entry lands on the same tab.
+		useSessionStore.setState({ sessions: [session] } as any);
+		buildSessionJumpCommands({
+			sessions: [session],
+			setActiveSessionId,
+			revealJumpTarget,
+		})[0].action();
+		expect(useSessionStore.getState().sessions[0].activeTabId).toBe('orphan-1');
 	});
 
 	it('lists only running group chats in the agent switcher, bucketed live', () => {
@@ -634,6 +710,43 @@ describe('QuickActions command builders', () => {
 				setQuickActionOpen: close,
 			}).map((a) => a.id);
 			expect(ids).toEqual(['renameTabGroup', 'breakApartTabGroup']);
+		});
+
+		it('emits Close Tab Group when a close handler is wired, gated by a confirm', () => {
+			const { session, group } = groupSession('match');
+			const onCloseTabGroup = vi.fn();
+			const closeCommand = buildTabGroupCommands({
+				activeSession: session,
+				setQuickActionOpen: close,
+				onCloseTabGroup,
+			}).find((a) => a.id === 'closeTabGroup');
+			expect(closeCommand?.subtext).toBe('Close "My Group" and the 2 tabs in it');
+
+			closeCommand?.action();
+			expect(onCloseTabGroup).not.toHaveBeenCalled();
+			const confirm = useModalStore.getState().modals.get('confirm')?.data as {
+				onConfirm: () => void;
+				destructive?: boolean;
+			};
+			expect(confirm.destructive).toBe(true);
+			confirm.onConfirm();
+			expect(onCloseTabGroup).toHaveBeenCalledWith(group.id);
+			useModalStore.getState().closeModal('confirm');
+		});
+
+		it('shows the live Rename Tab Group binding on the rename entry', () => {
+			const { session } = groupSession('match');
+			const shortcut = {
+				id: 'renameTabGroup',
+				label: 'Rename Tab Group',
+				keys: ['Meta', 'Alt', 'g'],
+			};
+			const rename = buildTabGroupCommands({
+				activeSession: session,
+				setQuickActionOpen: close,
+				renameTabGroupShortcut: shortcut,
+			}).find((a) => a.id === 'renameTabGroup');
+			expect(rename?.shortcut).toBe(shortcut);
 		});
 	});
 });

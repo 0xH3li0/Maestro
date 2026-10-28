@@ -47,6 +47,21 @@ vi.mock('../../main/utils/pricing', () => {
 	};
 });
 
+// Session usage now goes through the shared subagent-aware helper. Delegate to
+// the mocked pricing above so the cost assertions keep one formula, and report
+// no subagents (that module is covered by shared/claudeSessionUsage.test.ts).
+vi.mock('../../shared/claudeSessionUsage', async () => {
+	const { computeClaudeUsageCost } = await import('../../main/utils/pricing');
+	const price = (content: string, subagents: readonly string[] = []) =>
+		computeClaudeUsageCost(subagents.length ? [content, ...subagents].join('\n') : content);
+	return {
+		readClaudeSubagentTranscripts: vi.fn(async () => []),
+		readClaudeSubagentTranscriptsSync: vi.fn(() => []),
+		computeClaudeUsageWithSubagents: vi.fn(price),
+		computeClaudeSessionUsage: vi.fn(async (_filePath: string, content: string) => price(content)),
+	};
+});
+
 vi.mock('../../main/utils/statsCache', () => ({
 	encodeClaudeProjectPath: vi.fn((p: string) => p.replace(/[^a-zA-Z0-9]/g, '-')),
 }));
@@ -77,6 +92,11 @@ vi.mock('fs/promises', () => ({
 		writeFile: vi.fn(),
 	},
 }));
+
+// Transcript reads stream; feed them from the readFile stub above.
+vi.mock('../../main/utils/jsonl-stream', async () =>
+	(await import('../helpers/mockJsonlStream')).jsonlStreamFromReadFileMock()
+);
 
 // listSessions now serves unchanged transcripts from the on-disk parse cache,
 // which resolves its location through electron's userData path.
@@ -420,6 +440,43 @@ describe('ClaudeSessionStorage', () => {
 			// Last timestamp comes from result entry: 10:10:00
 			// Duration = 10 minutes = 600 seconds
 			expect(sessions[0].durationSeconds).toBe(600);
+		});
+
+		it('should time each API call into hourly token speed buckets', async () => {
+			const content = jsonl(userMsg('Start', '2025-06-01T10:00:00Z'), {
+				type: 'assistant',
+				timestamp: '2025-06-01T10:00:20Z',
+				requestId: 'req-1',
+				message: {
+					id: 'msg-1',
+					role: 'assistant',
+					model: 'claude-opus-4-8',
+					content: 'Done',
+					usage: { input_tokens: 40, output_tokens: 400, cache_read_input_tokens: 1000 },
+				},
+			});
+
+			vi.mocked(fs.access).mockResolvedValue(undefined);
+			vi.mocked(fs.readdir).mockResolvedValue(['sess-speed.jsonl'] as unknown as Awaited<
+				ReturnType<typeof fs.readdir>
+			>);
+			vi.mocked(fs.stat).mockResolvedValue({
+				size: 900,
+				mtimeMs: DEFAULT_STATS.mtimeMs,
+				mtime: new Date(DEFAULT_STATS.mtimeMs),
+			} as unknown as Awaited<ReturnType<typeof fs.stat>>);
+			vi.mocked(fs.readFile).mockResolvedValue(content);
+
+			const sessions = await storage.listSessions('/test/project');
+			expect(sessions[0].speed).toEqual([
+				expect.objectContaining({
+					model: 'claude-opus-4-8',
+					calls: 1,
+					durationMs: 20_000,
+					inputTokens: 1040,
+					outputTokens: 400,
+				}),
+			]);
 		});
 
 		it('should truncate firstMessage to FIRST_MESSAGE_PREVIEW_LENGTH (200)', async () => {
@@ -1243,6 +1300,49 @@ describe('ClaudeSessionStorage', () => {
 			// Only the user message should survive
 			expect(result.messages).toHaveLength(1);
 			expect(result.messages[0].type).toBe('user');
+		});
+
+		// Valid JSON whose shape breaks the conversion: the content filter reads
+		// `b.type` off a null block. One such record must be skipped, not fail the
+		// read and lock the user out of the rest of the conversation.
+		const withDamagedRecord = () =>
+			[
+				JSON.stringify(userMsg('before')),
+				JSON.stringify({ type: 'user', message: { role: 'user', content: [null] } }),
+				JSON.stringify(assistantMsg('after')),
+			].join('\n');
+
+		it('skips a damaged record and keeps the rest of a local transcript', async () => {
+			vi.mocked(fs.readFile).mockResolvedValue(withDamagedRecord());
+
+			const result = await storage.readSessionMessages('/test/project', 'sess-1');
+			expect(result.messages.map((m) => m.content)).toEqual(['before', 'after']);
+			expect(result.total).toBe(2);
+		});
+
+		it('skips a damaged record and keeps the rest of a remote transcript', async () => {
+			const remoteFs = await import('../../main/utils/remote-fs');
+			vi.mocked(remoteFs.readFileRemote).mockResolvedValue({
+				success: true,
+				data: withDamagedRecord(),
+			});
+			const sshConfig = {
+				id: 'r1',
+				name: 'r1',
+				host: 'h',
+				port: 22,
+				username: 'u',
+				privateKeyPath: '~/.ssh/id_ed25519',
+				enabled: true,
+			} as const;
+
+			const result = await storage.readSessionMessages(
+				'/remote/project',
+				'sess-1',
+				undefined,
+				sshConfig
+			);
+			expect(result.messages.map((m) => m.content)).toEqual(['before', 'after']);
 		});
 	});
 

@@ -84,6 +84,8 @@ When a window does run dry, [Agent Resilience](/agent-resilience) takes the turn
 
 The TUI Wrapper and Dynamic modes are powered by **maestro-p**, a small standalone helper that drives Claude Code's interactive TUI and hands Maestro the same output `claude -p` would. It ships bundled with the desktop app, so local agents work out of the box.
 
+Like `claude -p`, maestro-p never stops on a permission prompt: it runs Claude with permissions bypassed, unless the agent is in read-only (plan) mode. A Task subagent's tool calls show up under the Task card as they run, and each turn reports its cost and per-model usage from Claude's own tracker.
+
 <Note>
 For [SSH remote agents](/ssh-remote-execution), maestro-p must be installed on the **remote host's** PATH, since the TUI runs there rather than on your machine. If it is missing, Maestro disables the TUI Wrapper and Dynamic options and falls back to `claude -p`. Install it from the [maestro-p install page](https://runmaestro.ai/maestro-p/), then click **Re-check** in the agent's Claude Token Source panel.
 </Note>
@@ -108,6 +110,26 @@ For [SSH remote agents](/ssh-remote-execution), maestro-p must be installed on t
 - Because Maestro drives Codex through `codex exec`, the CLI never expands the slash itself. Maestro substitutes the command's file contents before sending, so the agent receives the fully expanded prompt.
 - Codex's **built-in** [slash commands](https://developers.openai.com/codex/cli/slash-commands) (`/compact`, `/diff`, `/model`, etc.) are still unavailable: they are implemented inside the interactive TUI and have no on-disk prompt to expand.
 - Codex commands on an SSH remote agent are not discovered yet, since the skills live on the remote host.
+
+### Nonfatal notices
+
+Codex can report configuration notices as item-level `error` events without
+failing the turn. In standard desktop agent chats, Maestro displays these as
+separate **STDERR** diagnostics even when **Thinking** is off. They are not
+assistant answers and do not trigger failure or reasoning-effort retries.
+Top-level errors and `turn.failed` events still use normal error handling.
+
+These examples show a synthetic warning followed by a successful answer, with
+Thinking off, in dark and light themes:
+
+<Tabs>
+  <Tab title="Dark">
+    ![Codex warning separate from the successful answer in Dracula](./screenshots/codex-nonfatal-notice.dracula.png)
+  </Tab>
+  <Tab title="Light">
+    ![Codex warning separate from the successful answer in Catppuccin Latte](./screenshots/codex-nonfatal-notice.catppuccin-latte.png)
+  </Tab>
+</Tabs>
 
 ## OpenCode
 

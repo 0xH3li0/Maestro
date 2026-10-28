@@ -135,6 +135,34 @@ describe('buildCrossAgentPrompt', () => {
 		expect(prompt).toContain('**Result from the source agent:**\ndone');
 	});
 
+	it('never calls a hand-off a consultation, in either write mode', () => {
+		// The consult grant ("one-shot READ-ONLY consultation", "change files in the
+		// user's directory") contradicts a hand-off, which acts in its OWN workspace.
+		const handoff = request({
+			sourceCwd: '/work/l30d',
+			userPrompt: 'feed it to @Kensho',
+			handoffAnswer: 'findings',
+		});
+
+		const writable = buildCrossAgentPrompt(handoff, true);
+		expect(writable).not.toMatch(/consult/i);
+		expect(writable).toContain('you may READ files there for context');
+		expect(writable).toContain('MODIFY files in your own workspace');
+		expect(writable).toContain("Do not modify the source agent's files");
+
+		const readOnly = buildCrossAgentPrompt(handoff, false);
+		expect(readOnly).not.toMatch(/consult/i);
+		expect(readOnly).toContain('This hand-off is READ-ONLY');
+		expect(readOnly).toContain('Cross-Agent Mentions > Hand-offs');
+	});
+
+	it('omits the source-directory line for a hand-off with no cwd', () => {
+		const prompt = buildCrossAgentPrompt(request({ handoffAnswer: 'x' }), true);
+
+		expect(prompt).not.toContain('The source agent worked in');
+		expect(prompt).toContain('MODIFY files in your own workspace');
+	});
+
 	it('omits the transcript block entirely when there is nothing to forward', () => {
 		const prompt = buildCrossAgentPrompt(request({ transcript: [], userPrompt: 'Just this' }));
 		expect(prompt).toContain('You are being consulted');
@@ -429,6 +457,37 @@ describe('startCrossAgentRequest dispatch lifecycle', () => {
 		for (const evt of ['data', 'thinking-chunk', 'tool-execution', 'usage', 'exit']) {
 			expect(processManager.listenerCount(evt)).toBe(0);
 		}
+	});
+
+	// The consult runs in the target's own cwd, which a TUI target may trust (#1872).
+	it("lets a TUI target accept claude's folder trust for its own cwd", async () => {
+		const { dispatch } = harness();
+		await dispatch();
+
+		const config = vi.mocked(spawnGroupChatAgent).mock.calls[0][0];
+		expect(config.cwd).toBe('/proj');
+		expect(config.acceptWorkspaceTrust).toBe(true);
+	});
+
+	it('names the untrusted folder when maestro-p exits 7, not "no visible output"', async () => {
+		const { chunks, dispatch, emitExit } = harness();
+		await dispatch();
+
+		emitExit(7);
+
+		expect(chunks[0].error).toContain('has not trusted the folder /proj');
+		expect(chunks[0].error).not.toContain('no visible output');
+	});
+
+	it('keeps the generic message for exit 7 from a non-Claude target', async () => {
+		const { chunks, dispatch, emitExit } = harness({
+			getTargetSession: () => ({ ...targetSession(), toolType: 'codex' }),
+		});
+		await dispatch();
+
+		emitExit(7);
+
+		expect(chunks[0].error).toContain('produced no visible output (exit code 7)');
 	});
 
 	it('kills the target and flushes partial output once it goes silent', async () => {

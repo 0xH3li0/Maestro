@@ -106,6 +106,9 @@ describe('useRemoteIntegration', () => {
 	let onRemoteSnoozeCommandHandler:
 		| ((request: Record<string, unknown>, responseChannel: string) => void)
 		| undefined;
+	let onRemoteAutoRunSteeringCommandHandler:
+		| ((request: Record<string, unknown>, responseChannel: string) => void)
+		| undefined;
 	let onRemoteToggleBookmarkHandler: ((sessionId: string) => void) | undefined;
 	let onRequestMovementDesignerInspectionHandler:
 		| ((id: string, expectedRevision: number, responseChannel: string) => void)
@@ -210,6 +213,11 @@ describe('useRemoteIntegration', () => {
 			return () => {};
 		}),
 		sendRemoteSnoozeCommandResponse: vi.fn(),
+		onRemoteAutoRunSteeringCommand: vi.fn().mockImplementation((handler) => {
+			onRemoteAutoRunSteeringCommandHandler = handler;
+			return () => {};
+		}),
+		sendRemoteAutoRunSteeringCommandResponse: vi.fn(),
 		onRemoteToggleBookmark: vi.fn().mockImplementation((handler) => {
 			onRemoteToggleBookmarkHandler = handler;
 			return () => {};
@@ -382,6 +390,8 @@ describe('useRemoteIntegration', () => {
 		sendRemoteGetGroupChatStateResponse: vi.fn(),
 		onRemoteStopGroupChat: vi.fn().mockReturnValue(() => {}),
 		sendRemoteStopGroupChatResponse: vi.fn(),
+		onRemoteArchiveGroupChat: vi.fn().mockReturnValue(() => {}),
+		sendRemoteArchiveGroupChatResponse: vi.fn(),
 		onRemoteSendGroupChatMessage: vi.fn().mockReturnValue(() => {}),
 		sendRemoteSendGroupChatMessageResponse: vi.fn(),
 		onRemoteTriggerCueSubscription: vi.fn().mockImplementation(() => {
@@ -1858,6 +1868,50 @@ describe('useRemoteIntegration', () => {
 		});
 	});
 
+	describe('remote Auto Run steering command', () => {
+		// The CLI process on the far end blocks on this reply, so the listener has
+		// to answer on the response channel for every outcome.
+		const sent = () =>
+			window.maestro.process.sendRemoteAutoRunSteeringCommandResponse as ReturnType<typeof vi.fn>;
+
+		it('answers a steering verb on its response channel', () => {
+			const deps = createDeps({ sessions: [createMockSession({ id: 'session-1' })] });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteAutoRunSteeringCommandHandler?.(
+					{ action: 'list', sessionId: 'session-1' },
+					'steer-response'
+				);
+			});
+
+			expect(sent()).toHaveBeenCalledWith(
+				'steer-response',
+				expect.objectContaining({ success: true, steerable: false, pending: [], deliveries: [] })
+			);
+		});
+
+		it('reports a refusal rather than leaving the caller waiting', () => {
+			const deps = createDeps({ sessions: [createMockSession({ id: 'session-1' })] });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				// No Auto Run is active, so there is no next task to hand a note to.
+				onRemoteAutoRunSteeringCommandHandler?.(
+					{ action: 'send', sessionId: 'session-1', text: 'steer left' },
+					'steer-response'
+				);
+			});
+
+			expect(sent()).toHaveBeenCalledWith(
+				'steer-response',
+				expect.objectContaining({ success: false })
+			);
+		});
+	});
+
 	describe('remote rename tab', () => {
 		it('renames tab and persists to agent session before reporting success', async () => {
 			const tab = createMockTab({ id: 'tab-1', agentSessionId: 'agent-session-1' });
@@ -2545,6 +2599,31 @@ describe('useRemoteIntegration', () => {
 	});
 
 	describe('remote notify toast', () => {
+		it('keeps CLI milliseconds unchanged and expires a five-second toast after five seconds', () => {
+			vi.useFakeTimers();
+			try {
+				renderHook(() => useRemoteIntegration(createDeps()));
+				act(() => {
+					onRemoteNotifyToastHandler?.({
+						title: 'Timeout test',
+						message: 'Hello',
+						color: 'theme',
+						duration: 5000,
+					});
+				});
+				const toast = useNotificationStore.getState().toasts[0];
+				expect(toast.duration).toBe(5000);
+				act(() => {
+					vi.advanceTimersByTime(5000);
+				});
+				expect(
+					useNotificationStore.getState().toasts.find((n) => n.id === toast.id)
+				).toBeUndefined();
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
 		// Regression: the renderer used to fall back to `session.activeTabId` when
 		// the IPC payload omitted `tabId`. That caused every agent-scoped toast
 		// (e.g. cron-fired notifications) to be stamped with whatever AI tab was
@@ -3174,7 +3253,7 @@ describe('useRemoteIntegration', () => {
 	});
 
 	describe('group chat bridge', () => {
-		it('subscribes to all five group chat requests and unsubscribes on unmount', () => {
+		it('subscribes to all six group chat requests and unsubscribes on unmount', () => {
 			const unsubscribe = vi.fn();
 			const listeners = [
 				mockProcess.onRemoteGetGroupChats,
@@ -3182,6 +3261,7 @@ describe('useRemoteIntegration', () => {
 				mockProcess.onRemoteGetGroupChatState,
 				mockProcess.onRemoteStopGroupChat,
 				mockProcess.onRemoteSendGroupChatMessage,
+				mockProcess.onRemoteArchiveGroupChat,
 			];
 			for (const listener of listeners) listener.mockReturnValue(unsubscribe);
 
@@ -3189,7 +3269,7 @@ describe('useRemoteIntegration', () => {
 			for (const listener of listeners) expect(listener).toHaveBeenCalledTimes(1);
 
 			unmount();
-			expect(unsubscribe).toHaveBeenCalledTimes(5);
+			expect(unsubscribe).toHaveBeenCalledTimes(6);
 		});
 	});
 

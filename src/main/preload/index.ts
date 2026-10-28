@@ -70,6 +70,7 @@ import { createCoworkingApi } from './coworking';
 import { createBrowserSessionApi } from './browserSession';
 import { createWindowsApi } from './windows';
 import { createImagesApi } from './images';
+import { createCodexVisualizationApi } from './codexVisualization';
 import { MAESTRO_CLI_PATH_ARG_PREFIX } from '../../shared/maestro-cli';
 
 /**
@@ -264,7 +265,7 @@ contextBridge.exposeInMainWorld('maestro', {
 	maestroCli: createMaestroCliApi(),
 	// Core Prompts API (view, edit, reset system prompts)
 	prompts: createPromptsApi(),
-	// Per-project Memory API (Claude Code memory viewer)
+	// Agent memory API (Memory Viewer: Claude Code per project, Codex per account)
 	memory: createMemoryApi(),
 	// Context Timeline capture log (backfills the per-agent turn history)
 	contextTimeline: createContextTimelineApi(),
@@ -280,6 +281,9 @@ contextBridge.exposeInMainWorld('maestro', {
 
 	// Session Images API (resolve maestro-image:// refs back to data URLs)
 	images: createImagesApi(),
+
+	// Codex `visualize` content references rendered inline
+	codexVisualization: createCodexVisualizationApi(),
 });
 
 // Re-export factory functions for external consumers (e.g., tests)
@@ -387,6 +391,8 @@ export {
 	createWindowsApi,
 	// Session Images
 	createImagesApi,
+	// Codex visualizations
+	createCodexVisualizationApi,
 };
 
 // Re-export types for TypeScript consumers
@@ -675,3 +681,7 @@ export type {
 	// From images
 	ImagesApi,
 } from './images';
+export type {
+	// From codexVisualization
+	CodexVisualizationApi,
+} from './codexVisualization';

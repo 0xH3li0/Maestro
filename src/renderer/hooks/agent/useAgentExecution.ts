@@ -1,10 +1,15 @@
 import { useCallback, useRef } from 'react';
-import { getClaudeTokenSourceFields } from '../../../shared/claudeTokenMode';
+import {
+	autoRunMaestroPMaxWaitSeconds,
+	getClaudeTokenSourceFields,
+} from '../../../shared/claudeTokenMode';
 import type { Session, SessionState, UsageStats, QueuedItem, ToolType } from '../../types';
 import {
 	getActiveTab,
 	markTabRunningQueuedItem,
 	resolveQueuedItemTarget,
+	isQueuedItemTargetBusy,
+	getBusyTabs,
 } from '../../utils/tabHelpers';
 import { filterYoloArgs } from '../../utils/agentArgs';
 import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
@@ -24,6 +29,7 @@ import { isFailedSynopsisResponse } from '../../../shared/synopsis';
 import { stripAnsiCodes } from '../../../shared/stringUtils';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { logger } from '../../utils/logger';
+import { armEffortFallback, settleEffortFallback } from '../../services/effortRejection';
 
 /**
  * Result from agent spawn operations.
@@ -195,6 +201,11 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 	const spawnAgentWithPromptRef = useRef<((prompt: string) => Promise<AgentSpawnResult>) | null>(
 		null
 	);
+	// spawnAgentForSession re-runs itself once when the provider refuses the
+	// effort override it sent; a callback cannot name itself in its own deps.
+	const spawnAgentForSessionRef = useRef<UseAgentExecutionReturn['spawnAgentForSession'] | null>(
+		null
+	);
 
 	// Track active synopsis session IDs for cancellation
 	// Map: maestroSessionId -> Set of active synopsis process session IDs
@@ -295,7 +306,19 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							clearInterval(inactivityTimer);
 							inactivityTimer = null;
 						}
+						// Disarm on every way out (watchdog kill, failed spawn), not just a
+						// clean exit, so a late error for this id is never swallowed.
+						settleEffortFallback(targetSessionId);
 					};
+
+					// An effort override here came off Maestro's static ladder (a document
+					// hint) or the run's own picker, and a provider can retire a value
+					// without notice. Arming tells the error listener to step aside for a
+					// refusal of it, and the exit handler below runs the task once more at
+					// the agent's own effort instead of parking the whole Auto Run.
+					if (options?.effortOverride) {
+						armEffortFallback(targetSessionId);
+					}
 
 					const resolveOnce = (result: AgentSpawnResult) => {
 						if (settled) return;
@@ -337,6 +360,27 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 					cleanupFns.push(
 						window.maestro.process.onExit((sid: string, code: number | null | undefined) => {
 							if (sid === targetSessionId) {
+								// The provider refused the effort override: the turn never ran.
+								// Hand this promise to a second attempt without the override
+								// (which is not armed, so it cannot loop) and skip the exit
+								// bookkeeping below - that attempt's own exit does it.
+								const effortRejection = settleEffortFallback(targetSessionId);
+								const retry = spawnAgentForSessionRef.current;
+								if (effortRejection && retry && !settled) {
+									settled = true;
+									cleanup();
+									logger.warn(
+										'[spawnAgentForSession] Effort rejected by the provider; retrying at the agent default',
+										undefined,
+										{ sessionId, effort: options?.effortOverride, ...effortRejection }
+									);
+									void retry(sessionId, prompt, cwdOverride, {
+										...options,
+										effortOverride: undefined,
+									}).then(resolve);
+									return;
+								}
+
 								// Record query stats for Auto Run queries
 								const queryDuration = Date.now() - queryStartTime;
 								const activeTab = getActiveTab(session);
@@ -385,19 +429,22 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 
 								// Check for queued items BEFORE updating state (using sessionsRef for latest state)
 								const currentSession = sessionsRef.current.find((s) => s.id === sessionId);
-								let queuedItemToProcess: { sessionId: string; item: QueuedItem } | null = null;
 								// Skip paused items: only a runnable (non-held) item triggers dispatch.
 								const nextRunnable = currentSession
 									? nextRunnableQueueItem(currentSession.executionQueue)
 									: undefined;
 								const hasQueuedItems = !!nextRunnable;
-
-								if (nextRunnable) {
-									queuedItemToProcess = {
-										sessionId: sessionId,
-										item: nextRunnable,
-									};
-								}
+								// This `-batch-` process exiting says nothing about the item's target
+								// tab, which can be mid-turn on a prompt the user sent in parallel.
+								// Dispatching there collides with that live process (MAESTRO-ZS), so
+								// the item stays queued and the busy tab's own exit drains it. The
+								// update below applies the same check, so it dequeues nothing either.
+								const queuedItemToProcess: { sessionId: string; item: QueuedItem } | null =
+									currentSession &&
+									nextRunnable &&
+									!isQueuedItemTargetBusy(currentSession, nextRunnable)
+										? { sessionId, item: nextRunnable }
+										: null;
 
 								// Update state - if there are queued items, keep busy and process next
 								setSessions((prev) =>
@@ -407,7 +454,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 										const { item: nextItem, remaining: remainingQueue } = takeNextRunnableQueueItem(
 											s.executionQueue
 										);
-										if (nextItem) {
+										if (nextItem && !isQueuedItemTargetBusy(s, nextItem)) {
 											const target = resolveQueuedItemTarget(s, nextItem);
 
 											if (!target) {
@@ -471,13 +518,17 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 											};
 										}
 
-										// No queued items. This spawn ran under its own `-batch-` process id
+										// Nothing to dispatch: the queue is empty, or its next item is held
+										// for a tab still mid-turn. This spawn ran under its own `-batch-` process id
 										// and deliberately never marked a tab busy (see the spawn site), so
 										// its exit must not clear tabs whose own `-ai-{tabId}` agents are
 										// still running in parallel - that drops the in-progress indicator
 										// from threads that are very much still working. Each of those tabs
-										// is cleared by its own onExit handler.
-										const anyTabStillBusy = s.aiTabs?.some((tab) => tab.state === 'busy') ?? false;
+										// is cleared by its own onExit handler. A closed tab still mid-turn
+										// (orphanedThinkingTabs) counts too: a held item can be waiting on
+										// one, and settling the agent idle would end the Auto Run queue wait
+										// below while that turn and its follow-up are still pending.
+										const anyTabStillBusy = getBusyTabs(s, { includeOrphans: true }).length > 0;
 
 										return {
 											...s,
@@ -492,10 +543,18 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 								// Process queued item AFTER state update
 								if (queuedItemToProcess && processQueuedItemRef.current) {
 									setTimeout(() => {
-										processQueuedItemRef.current!(
-											queuedItemToProcess!.sessionId,
-											queuedItemToProcess!.item
-										);
+										// `processQueuedItem` rejects on a dispatch failure after putting
+										// the prompt back in the queue; unowned, that rejection surfaced
+										// as an unhandled crash report instead of a logged failure.
+										processQueuedItemRef
+											.current?.(queuedItemToProcess.sessionId, queuedItemToProcess.item)
+											.catch((err) => {
+												logger.error(
+													'[useAgentExecution] Queued dispatch after batch task failed, item returned to queue',
+													undefined,
+													err
+												);
+											});
 									}, 0);
 								}
 
@@ -647,6 +706,14 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							// this path without a human in the loop; everything else here is a
 							// slash command or another user action, so it stays 'user'.
 							querySource: isBatchProcess ? 'auto' : 'user',
+							// The agent's TUI setting resolves server-side from the
+							// `{sessionId}-batch-` process id. What main cannot know is the
+							// idle budget: maestro-p's own 300s default would kill a silent
+							// test run long before the Auto Run watchdog above, so hand it
+							// that watchdog's budget (or a day when the watchdog is off).
+							maestroPMaxWaitSeconds: isBatchProcess
+								? autoRunMaestroPMaxWaitSeconds(useSettingsStore.getState())
+								: undefined,
 						})
 						.catch((err: unknown) => {
 							resolveOnce({
@@ -767,7 +834,16 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 						cleanupFns.forEach((fn) => fn());
 						// Remove from tracking
 						activeSynopsisSessionsRef.current.get(sessionId)?.delete(targetSessionId);
+						settleEffortFallback(targetSessionId);
 					};
+
+					// The cheap effort is a value Maestro picked off a static ladder. If
+					// the provider refuses it, the exit handler below runs the synopsis
+					// once more; by then the refusal is noted and `cheapTurnSettings`
+					// no longer hands the value out, so the retry inherits the tab's.
+					if (cheapSynopsis.effort !== undefined) {
+						armEffortFallback(targetSessionId);
+					}
 
 					cleanupFns.push(
 						window.maestro.process.onData((sid: string, data: string) => {
@@ -800,7 +876,31 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 					cleanupFns.push(
 						window.maestro.process.onExit((sid: string, code: number | null | undefined) => {
 							if (sid === targetSessionId) {
+								const effortRejection = settleEffortFallback(targetSessionId);
 								cleanup();
+								// Retry only when re-resolving really drops the refused value;
+								// otherwise the second attempt would send it again and loop.
+								const retry = spawnBackgroundSynopsisRef.current;
+								if (
+									effortRejection &&
+									retry &&
+									cheapTurnSettings(toolType).effort !== cheapSynopsis.effort
+								) {
+									logger.warn(
+										'[spawnBackgroundSynopsis] Effort rejected by the provider; retrying at the agent default',
+										undefined,
+										{ sessionId, effort: cheapSynopsis.effort, ...effortRejection }
+									);
+									void retry(
+										sessionId,
+										cwd,
+										resumeAgentSessionId,
+										prompt,
+										toolType,
+										sessionConfig
+									).then(resolve);
+									return;
+								}
 								const ctx = lastSynopsisUsageEvent
 									? (estimateContextUsage(lastSynopsisUsageEvent, toolType) ?? undefined)
 									: undefined;
@@ -964,6 +1064,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 
 	// Update refs for functions that need to be accessed from other callbacks
 	spawnBackgroundSynopsisRef.current = spawnBackgroundSynopsis;
+	spawnAgentForSessionRef.current = spawnAgentForSession;
 	spawnAgentWithPromptRef.current = spawnAgentWithPrompt;
 
 	return {

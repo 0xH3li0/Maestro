@@ -236,8 +236,15 @@ interface CodexPayload {
  */
 interface CodexItem {
 	id?: string;
-	type?: 'reasoning' | 'agent_message' | 'tool_call' | 'tool_result' | 'command_execution';
+	type?:
+		| 'reasoning'
+		| 'agent_message'
+		| 'tool_call'
+		| 'tool_result'
+		| 'command_execution'
+		| 'error';
 	text?: string;
+	message?: string;
 	// Legacy tool_call/tool_result fields (Codex < v0.111.0)
 	tool?: string;
 	args?: Record<string, unknown>;
@@ -527,11 +534,15 @@ export class CodexOutputParser implements AgentOutputParser {
 			};
 		}
 
-		// Handle error messages
+		// Handle error messages. Legacy shapes carry the text in `error`; the
+		// bare exec-JSON `error` event carries it in `message` (the same fallback
+		// detectErrorFromParsed makes). Without it the event read "Unknown error",
+		// and the CLI, which keeps the FIRST error text of a turn, reported that
+		// instead of the API's own message on the `turn.failed` line after it.
 		if (msg.type === 'error' || msg.error) {
 			return {
 				type: 'error',
-				text: extractErrorText(msg.error),
+				text: extractErrorText(msg.error ?? msg.message),
 				raw: msg,
 			};
 		}
@@ -840,6 +851,20 @@ export class CodexOutputParser implements AgentOutputParser {
 	 */
 	private transformItemCompleted(item: CodexItem, msg: CodexRawMessage): ParsedEvent {
 		switch (item.type) {
+			case 'error':
+				// Exec JSON uses item-level errors for nonfatal notices, including
+				// ignored config keys and under-development features. Unlike a
+				// top-level error or turn.failed, these do not fail the turn.
+				// Keep them visible independently of Thinking and out of the answer.
+				return {
+					type: 'warning',
+					text:
+						typeof item.message === 'string' && item.message.trim()
+							? `Codex warning: ${item.message}`
+							: 'Codex warning',
+					raw: msg,
+				};
+
 			case 'reasoning':
 				// Reasoning shows model's thinking process.
 				// Format reasoning text: add line breaks before ** SECTION ** markers

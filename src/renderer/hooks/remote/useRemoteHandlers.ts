@@ -29,6 +29,7 @@ import { substituteTemplateVariables } from '../../utils/templateVariables';
 import { gitService } from '../../services/git';
 import { captureException } from '../../utils/sentry';
 import { isAgentAlreadyRunningError } from '../../../shared/processErrors';
+import { prependNewSessionMessageOnFirstTurn } from '../../../shared/newSessionMessage';
 import { filterYoloArgs } from '../../utils/agentArgs';
 import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
 import { DEFAULT_IMAGE_ONLY_PROMPT } from '../input/useInputProcessing';
@@ -568,6 +569,15 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 
 				const remoteImages = images && images.length > 0 ? images : undefined;
 
+				// A dispatch that opens the tab's first turn starts a new provider
+				// session, so it carries the New Session Message like a typed message
+				// does. Agent-only: the user bubble below keeps the plain `promptToSend`.
+				const agentPrompt = prependNewSessionMessageOnFirstTurn(
+					promptToSend,
+					session.newSessionMessage,
+					tabAgentSessionId
+				);
+
 				logger.info('[Remote] Spawning agent:', undefined, {
 					maestroSessionId: sessionId,
 					targetSessionId,
@@ -706,8 +716,8 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 						// plain `promptToSend`.
 						prompt:
 							mentionPlan && writeTabId
-								? withMentionTurnNotes(promptToSend, previewMentionDispatch(mentionPlan))
-								: promptToSend,
+								? withMentionTurnNotes(agentPrompt, previewMentionDispatch(mentionPlan))
+								: agentPrompt,
 						images: remoteImages,
 						appendSystemPrompt,
 						agentSessionId: tabAgentSessionId ?? undefined,

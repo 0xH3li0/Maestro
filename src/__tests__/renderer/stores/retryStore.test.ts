@@ -199,6 +199,30 @@ describe('firing the retry', () => {
 		expect(getRetryEntry('s8', 't1')?.status).toBe('in-flight');
 	});
 
+	// `processQueuedItem` marks nothing busy - its callers do - and the resend
+	// used to skip that half. The provider ran the turn while the tab read idle:
+	// no Thinking pill, no pulsing dot, and the failed attempt's last output on
+	// screen as if it were the answer.
+	it('marks the tab running before the resend, without a second user bubble', () => {
+		setupSession('s8b', 't1');
+		seedSnapshot('s8b', 't1');
+		scheduleRetryForError('s8b', 't1', overload());
+		let stateAtDispatch: { session?: string; tab?: string } = {};
+		processQueuedItem.mockImplementation(async () => {
+			const s = useSessionStore.getState().sessions.find((x) => x.id === 's8b');
+			stateAtDispatch = { session: s?.state, tab: s?.aiTabs[0].state };
+			return true;
+		});
+
+		retryNow('s8b', 't1');
+
+		expect(stateAtDispatch).toEqual({ session: 'busy', tab: 'busy' });
+		const session = useSessionStore.getState().sessions.find((x) => x.id === 's8b')!;
+		expect(session.busySource).toBe('ai');
+		expect(session.aiTabs[0].thinkingStartTime).toBe(NOW);
+		expect(session.aiTabs[0].logs.filter((l) => l.source === 'user')).toHaveLength(0);
+	});
+
 	it('retryNow cancels the timer and fires immediately', () => {
 		setupSession('s9', 't1');
 		seedSnapshot('s9', 't1');
@@ -610,6 +634,73 @@ describe('clearing the error banner on recovery', () => {
 
 		expect(getRetryEntry('s19', 't1')?.status).toBe('scheduled');
 		expect(tabError('s19', 't1')).toBeDefined();
+	});
+});
+
+describe("dropping the provider's limit banner on recovery", () => {
+	const BANNER = "You've hit your weekly limit · resets 10am (America/Chicago)";
+
+	/** Lay out the transcript the error listener leaves: prompt, card, banner. */
+	function seedOutageTranscript(id: string, tabId: string) {
+		const outageId = getRetryEntry(id, tabId)!.outageId;
+		useSessionStore.setState({
+			sessions: useSessionStore.getState().sessions.map((s: any) =>
+				s.id !== id
+					? s
+					: {
+							...s,
+							aiTabs: s.aiTabs.map((t: any) =>
+								t.id !== tabId
+									? t
+									: {
+											...t,
+											logs: [
+												{ id: 'u', timestamp: NOW, source: 'user', text: 'hi' },
+												{
+													id: 'card',
+													timestamp: NOW,
+													source: 'system',
+													text: quota().message,
+													retryOutageId: outageId,
+												},
+												{ id: 'banner', timestamp: NOW, source: 'stdout', text: BANNER },
+											],
+										}
+							),
+						}
+			),
+		} as any);
+	}
+
+	const logIds = (id: string, tabId: string) =>
+		useSessionStore
+			.getState()
+			.sessions.find((s: any) => s.id === id)
+			?.aiTabs.find((t: any) => t.id === tabId)
+			?.logs.map((l: any) => l.id);
+
+	it('removes the banner once the resend gets through', () => {
+		setupSession('s30', 't1');
+		seedSnapshot('s30', 't1');
+		scheduleRetryForError('s30', 't1', quota());
+		seedOutageTranscript('s30', 't1');
+		retryNow('s30', 't1');
+
+		clearRetryIfSettled('s30', 't1');
+
+		expect(logIds('s30', 't1')).toEqual(['u', 'card']);
+	});
+
+	it('keeps the banner when the user stops the retry', () => {
+		// Stopped means the limit still stands, so the banner is still true.
+		setupSession('s31', 't1');
+		seedSnapshot('s31', 't1');
+		scheduleRetryForError('s31', 't1', quota());
+		seedOutageTranscript('s31', 't1');
+
+		cancelRetry('s31', 't1');
+
+		expect(logIds('s31', 't1')).toEqual(['u', 'card', 'banner']);
 	});
 });
 

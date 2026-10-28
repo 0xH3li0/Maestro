@@ -197,6 +197,7 @@ If you scroll the tab strip away while the tab header still holds focus, the nex
 | Next Tab                  | `Cmd+Shift+]`           | `Ctrl+Shift+]`            |
 | Tab Switcher              | `Opt+Cmd+T`             | `Alt+Ctrl+T`              |
 | Rename Tab                | `Cmd+Shift+R`           | `Ctrl+Shift+R`            |
+| Rename Tab Group          | unassigned by default   | unassigned by default     |
 | Go to Tab 1-9             | `Cmd+1` through `Cmd+9` | `Ctrl+1` through `Ctrl+9` |
 | Go to Last Tab            | `Cmd+0`                 | `Ctrl+0`                  |
 
@@ -638,7 +639,7 @@ Most shortcuts can be remapped to fit your workflow:
 4. Press your desired key combination
 5. The new binding is saved immediately
 
-Some actions ship with **no** key assigned and read **Not set** instead of a combination - the media player controls and Open Leaderboard are current examples. They are dimmed, but they work exactly like any other row: click and record. Maestro leaves them unbound rather than claiming chords for actions most people reach through Quick Actions.
+Some actions ship with **no** key assigned and read **Not set** instead of a combination - the media player controls, Open Leaderboard, and Toggle In-App Toasts are current examples. They are dimmed, but they work exactly like any other row: click and record. Maestro leaves them unbound rather than claiming chords for actions most people reach through Quick Actions.
 
 ![Shortcuts Settings](./screenshots/shortcuts-settings.png)
 

@@ -25,7 +25,7 @@ import { isEphemeralBrowserTab, rehydrateBrowserTab } from '../../utils/browserT
 import { applyLiveAiTurns } from '../../utils/liveTurnReattach';
 import { fetchLiveAiTurns } from '../../services/process';
 import { useOwnedSessionGate } from '../agent/internal/useOwnedSessionGate';
-import { getRepairedUnifiedTabOrder } from '../../utils/tabHelpers';
+import { ensureAgentHasVisibleTab, getRepairedUnifiedTabOrder } from '../../utils/tabHelpers';
 import {
 	collectLeafTabRefs,
 	normalizeTabGroups,
@@ -49,6 +49,40 @@ import {
 } from '../../../shared/deferredSessionContent';
 
 const CONNECTION_RECONCILE_RETRY_MS = 1000;
+
+/** The session fields every tab helper iterates with `.map` / `for...of`. */
+const TAB_COLLECTION_FIELDS = [
+	'aiTabs',
+	'filePreviewTabs',
+	'browserTabs',
+	'terminalTabs',
+	'unifiedTabOrder',
+	'tabGroups',
+] as const;
+
+/**
+ * Replace any tab collection that was persisted as something other than an
+ * array with an empty one. `undefined` / `null` are left alone: every reader
+ * already defaults those with `?? []`. A truthy non-array (an object) is the
+ * case that defeats that default, so `(session.tabGroups || []).map` throws.
+ *
+ * It has to run before anything else in restoreSession and again on its error
+ * fallback: when restoration threw on such a field, the fallback used to hand
+ * the raw session to the store, and the tab strip then threw on every render,
+ * so the app crashed on each launch (MAESTRO-16B).
+ */
+function withArrayTabCollections(session: Session): Session {
+	let repaired: Session | null = null;
+	for (const field of TAB_COLLECTION_FIELDS) {
+		const value: unknown = session[field];
+		if (value == null || Array.isArray(value)) continue;
+		logger.warn(
+			`[restoreSession] Session ${session.id} has a non-array ${field}; resetting it to []`
+		);
+		repaired = { ...(repaired ?? session), [field]: [] };
+	}
+	return repaired ?? session;
+}
 
 /** Ids of the terminal tabs that are tiled into one of the session's tab groups. */
 function collectGroupedTerminalIds(session: { tabGroups?: Session['tabGroups'] }): Set<string> {
@@ -402,6 +436,10 @@ export function useSessionRestoration(): SessionRestorationReturn {
 	// --- restoreSession ---
 	const restoreSession = useCallback(async (session: Session): Promise<Session> => {
 		try {
+			// A tab collection persisted as a non-array would throw in every helper
+			// below and then in the tab strip, so coerce it before anything reads it.
+			session = withArrayTabCollections(session);
+
 			// Migration: tag snoozes parked before SnoozedTabEntry carried a kind.
 			// An untagged entry falls through every per-kind switch, and the wake
 			// path would clear the snooze without restoring the tab.
@@ -764,46 +802,50 @@ export function useSessionRestoration(): SessionRestorationReturn {
 			// lands in the store: prune leaves whose tab no longer exists, collapse
 			// resulting single-child splits, dissolve sub-two-pane groups (promoting
 			// survivors), and clear a stale activeGroupId. A session with no groups
-			// round-trips untouched.
-			return normalizeTabGroups({
-				...restoredSession,
-				aiPid: 0,
-				terminalPid: 0,
-				state: isLimitPause ? ('error' as SessionState) : ('idle' as SessionState),
-				busySource: undefined,
-				thinkingStartTime: undefined,
-				currentCycleTokens: undefined,
-				currentCycleBytes: undefined,
-				statusMessage: undefined,
-				isGitRepo,
-				gitBranches,
-				gitTags,
-				gitRefsCacheTime,
-				isLive: false,
-				liveUrl: undefined,
-				aiLogs: [],
-				aiTabs: resetAiTabs,
-				shellLogs: correctedSession.shellLogs,
-				// A cold desktop start kills every consult process, so a turn still
-				// waiting on one would hold its tab forever: release it with an
-				// "interrupted" reply. A web-desktop reload is different - main kept
-				// running and the consult with it, so the hold settles normally.
-				executionQueue: isWebDesktop()
-					? correctedSession.executionQueue || []
-					: interruptConsultHolds(correctedSession.executionQueue || []),
-				activeTimeMs: correctedSession.activeTimeMs || 0,
-				// Keep a limit pause live so auto-resume re-attaches; clear anything else.
-				// `agentErrorTabId` rides through the spread above (persistence only keeps
-				// it for limit pauses, so it's already undefined for everything else).
-				agentError: isLimitPause ? correctedSession.agentError : undefined,
-				agentErrorPaused: isLimitPause ? true : false,
-				closedTabHistory: [],
-				unifiedTabOrder: repairedUnifiedTabOrder,
-			});
+			// round-trips untouched. An agent saved with only hidden consult tabs (an
+			// older build let the last file/terminal/browser close strand it there)
+			// comes back with a blank AI chat instead of a chipless conversation.
+			return ensureAgentHasVisibleTab(
+				normalizeTabGroups({
+					...restoredSession,
+					aiPid: 0,
+					terminalPid: 0,
+					state: isLimitPause ? ('error' as SessionState) : ('idle' as SessionState),
+					busySource: undefined,
+					thinkingStartTime: undefined,
+					currentCycleTokens: undefined,
+					currentCycleBytes: undefined,
+					statusMessage: undefined,
+					isGitRepo,
+					gitBranches,
+					gitTags,
+					gitRefsCacheTime,
+					isLive: false,
+					liveUrl: undefined,
+					aiLogs: [],
+					aiTabs: resetAiTabs,
+					shellLogs: correctedSession.shellLogs,
+					// A cold desktop start kills every consult process, so a turn still
+					// waiting on one would hold its tab forever: release it with an
+					// "interrupted" reply. A web-desktop reload is different - main kept
+					// running and the consult with it, so the hold settles normally.
+					executionQueue: isWebDesktop()
+						? correctedSession.executionQueue || []
+						: interruptConsultHolds(correctedSession.executionQueue || []),
+					activeTimeMs: correctedSession.activeTimeMs || 0,
+					// Keep a limit pause live so auto-resume re-attaches; clear anything else.
+					// `agentErrorTabId` rides through the spread above (persistence only keeps
+					// it for limit pauses, so it's already undefined for everything else).
+					agentError: isLimitPause ? correctedSession.agentError : undefined,
+					agentErrorPaused: isLimitPause ? true : false,
+					closedTabHistory: [],
+					unifiedTabOrder: repairedUnifiedTabOrder,
+				})
+			);
 		} catch (error) {
 			logger.error(`Error restoring session ${session.id}:`, undefined, error);
 			return {
-				...session,
+				...withArrayTabCollections(session),
 				aiPid: -1,
 				terminalPid: 0,
 				state: 'error' as SessionState,

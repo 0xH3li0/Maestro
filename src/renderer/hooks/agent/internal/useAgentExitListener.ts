@@ -187,6 +187,18 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 				}
 			}
 
+			// Land everything the finished turn printed BEFORE anything below reads
+			// or extends its transcript. Output is batched for up to a flush
+			// interval, and a `--print` run emits its whole reply on the final
+			// result, an instant before this exit. Without the flush the reply is
+			// still in the buffer when the reducer below appends the NEXT queued
+			// message's card, so the transcript reads "next question, previous
+			// answer": the turn that is now running looks finished, and the queue
+			// behind it looks stalled. It also left the toast and synopsis quoting
+			// the reply before last. (Issue #1022 added the flush further down,
+			// ahead of the spawn, which is after the card is already in place.)
+			deps.batchedUpdater.flushNow();
+
 			if (isFromAi && tabIdFromSession) {
 				deps.activeHiddenToolRef.current?.delete(`${actualSessionId}:${tabIdFromSession}`);
 				// Agent Resilience: if an auto-retry resend is still 'in-flight' at
@@ -826,10 +838,10 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 			}
 
 			if (queuedItemToProcess && ownsSideEffects) {
-				// Flush any pending batched stdout/stderr chunks before the queued
-				// message is dispatched. Otherwise the new user log entry is appended
-				// ahead of the trailing chunks from the response that just finished,
-				// and those chunks merge into the next response's bubble (issue #1022).
+				// Belt and braces for anything batched while this handler awaited
+				// (git refresh, stats): it must not merge into the next response's
+				// bubble (issue #1022). The flush that keeps the finished reply ahead
+				// of the next message's card is at the top of this handler.
 				deps.batchedUpdater.flushNow();
 				setTimeout(() => {
 					// This is the MAIN queue-drain path, and it used to reject into
@@ -848,7 +860,14 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 							);
 						});
 				}, 0);
-			} else if (toastData) {
+			}
+
+			if (
+				toastData &&
+				!(tabIdFromSession && isRetryPending(tabIdFromSession)) &&
+				(!queuedItemToProcess || useSettingsStore.getState().notificationHistoryQueuedReplies)
+			) {
+				// Retry attempts have failed, so they must not announce a successful completion.
 				setTimeout(() => {
 					window.maestro.logger.log('info', 'Agent process completed', 'App', {
 						agentSessionId: toastData!.agentSessionId,
@@ -873,20 +892,21 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 						currentActiveSession?.id === actualSessionId &&
 						(!tabIdFromSession || currentActiveSession.activeTabId === tabIdFromSession);
 
-					if (!isViewingCompletedTab) {
-						notifyToast({
-							type: 'success',
-							title: toastData!.title,
-							message: toastData!.summary,
-							group: toastData!.groupName,
-							project: toastData!.projectName,
-							taskDuration: toastData!.duration,
-							agentSessionId: toastData!.agentSessionId,
-							tabName: toastData!.tabName,
-							sessionId: toastData!.sessionId,
-							tabId: toastData!.tabId,
-						});
-					} else {
+					const historyOnly = !!queuedItemToProcess || isViewingCompletedTab;
+					notifyToast({
+						historyOnly,
+						type: 'success',
+						title: toastData!.title,
+						message: toastData!.summary,
+						group: toastData!.groupName,
+						project: toastData!.projectName,
+						taskDuration: toastData!.duration,
+						agentSessionId: toastData!.agentSessionId,
+						tabName: toastData!.tabName,
+						sessionId: toastData!.sessionId,
+						tabId: toastData!.tabId,
+					});
+					if (isViewingCompletedTab && !queuedItemToProcess) {
 						// Viewing the completed tab: the visual toast is suppressed (no need
 						// to pop a toast about the tab you're already watching), but the
 						// audio/TTS cue must still fire. Otherwise custom notifications are

@@ -189,6 +189,16 @@ export interface UseSettingsReturn {
 	audioFeedbackCommand: string;
 	setAudioFeedbackCommand: (value: string) => void;
 	toastDuration: number;
+	notificationCenterLarge: boolean;
+	setNotificationCenterLarge: (value: boolean) => void;
+	notificationCenterDetails: boolean;
+	setNotificationCenterDetails: (value: boolean) => void;
+	notificationCenterKeyboardNavigation: boolean;
+	setNotificationCenterKeyboardNavigation: (value: boolean) => void;
+	notificationHistoryQueuedReplies: boolean;
+	setNotificationHistoryQueuedReplies: (value: boolean) => void;
+	notificationHistoryAutoRunTasks: boolean;
+	setNotificationHistoryAutoRunTasks: (value: boolean) => void;
 	setToastDuration: (value: number) => void;
 	idleNotificationEnabled: boolean;
 	setIdleNotificationEnabled: (value: boolean) => void;
@@ -404,6 +414,8 @@ export interface UseSettingsReturn {
 	// Automatic tab naming settings
 	automaticTabNamingEnabled: boolean;
 	setAutomaticTabNamingEnabled: (value: boolean) => void;
+	shortenLongTabNames: boolean;
+	setShortenLongTabNames: (value: boolean) => void;
 
 	// Utility agent settings (auxiliary tasks: tab naming, context grooming)
 	utilityAgentId: string | null;
@@ -460,6 +472,8 @@ export interface UseSettingsReturn {
 	setForcedParallelAlways: (value: boolean) => void;
 	crossAgentMentionsWritable: boolean;
 	setCrossAgentMentionsWritable: (value: boolean) => void;
+	crossAgentHandoffsWritable: boolean;
+	setCrossAgentHandoffsWritable: (value: boolean) => void;
 
 	// Director's Notes settings
 	directorNotesSettings: DirectorNotesSettings;
@@ -508,6 +522,8 @@ export interface UseSettingsReturn {
 	setShowStarredSessionsSection: (value: boolean) => void;
 	showLeftPanelGroupMemberCount: boolean;
 	setShowLeftPanelGroupMemberCount: (value: boolean) => void;
+	showLeftPanelCollapsedInitials: boolean;
+	setShowLeftPanelCollapsedInitials: (value: boolean) => void;
 	leftPanelCollapsedPillsPerRow: number;
 	setLeftPanelCollapsedPillsPerRow: (value: number) => void;
 	showLeftPanelLocationPills: boolean;

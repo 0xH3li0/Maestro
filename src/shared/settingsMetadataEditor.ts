@@ -48,6 +48,13 @@ export const EDITOR_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: false,
 		category: 'editor',
 	},
+	crossAgentHandoffsWritable: {
+		description:
+			'When true (default), a hand-off ("then send what you find to @agent") may modify files in the receiving agent\'s workspace. When false, hand-offs run read-only like consults.',
+		type: 'boolean',
+		default: true,
+		category: 'editor',
+	},
 	defaultSaveToHistory: {
 		description: 'Whether completed tasks are saved to history by default.',
 		type: 'boolean',
@@ -162,6 +169,13 @@ export const EDITOR_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		description: 'Automatically name tabs based on the first message or task.',
 		type: 'boolean',
 		default: true,
+		category: 'editor',
+	},
+	shortenLongTabNames: {
+		description:
+			'Cut an auto-generated tab name longer than 40 characters at a word boundary. Off keeps the full name (up to 80 characters).',
+		type: 'boolean',
+		default: false,
 		category: 'editor',
 	},
 	newTabPlacement: {

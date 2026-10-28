@@ -6,6 +6,10 @@
 import type { AutoRunBroadcastState } from '../../shared/autoRunBroadcast';
 import type { DesktopTabEntry } from '../../shared/desktopTabs';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../../shared/snoozeCommands';
+import type {
+	SteeringCommandRequest,
+	SteeringCommandResult,
+} from '../../shared/autoRunSteeringCommands';
 import type { WindowCommandRequest, WindowCommandResult } from '../../shared/windowCommands';
 import type { UsageStats } from '../../shared/types';
 import type { RemoteGroupChatMessage, RemoteGroupChatState } from '../../shared/groupChatRemote';
@@ -236,6 +240,13 @@ export interface WebClient {
 	 * while the account stays, and the socket must still go.
 	 */
 	sessionId?: string;
+	/**
+	 * True when the upgrade presented this boot's CLI secret (`maestro-cli`).
+	 * A browser cannot set custom headers on a WebSocket upgrade, so this is
+	 * how a handler tells the CLI from a web client. Handlers a browser must
+	 * never reach (switching Live mode or its tunnel) refuse sockets without it.
+	 */
+	cli?: boolean;
 }
 
 /**
@@ -388,6 +399,14 @@ export type StarTabCallback = (
  * thrown error there reads as a broken command instead of "no such snooze".
  */
 export type SnoozeCommandCallback = (request: SnoozeCommandRequest) => Promise<SnoozeCommandResult>;
+/**
+ * One Auto Run steering verb, forwarded to the renderer - which holds the notes
+ * its run loop reads - and answered with whatever it did. Resolves rather than
+ * rejects on a miss, for the same reason `SnoozeCommandCallback` does.
+ */
+export type AutoRunSteeringCommandCallback = (
+	request: SteeringCommandRequest
+) => Promise<SteeringCommandResult>;
 /**
  * `maestro-cli window` - list windows, or move an agent or a whole group
  * between them. Answered by the primary window through the same WindowContext
@@ -760,7 +779,7 @@ export interface NotifyToastParams {
 	message: string;
 	/** One of the 5 canonical colors. Default: `'theme'`. */
 	color: NotifyToastColor;
-	/** Auto-dismiss seconds; ignored when `dismissible: true`. */
+	/** Normalized auto-dismiss milliseconds; the raw WebSocket duration remains seconds. */
 	duration?: number;
 	/**
 	 * Sticky toast - no auto-dismiss, requires the user to click the close
@@ -1347,6 +1366,7 @@ export type StartGroupChatCallback = (
 ) => Promise<StartGroupChatResult | null>;
 export type GetGroupChatStateCallback = (chatId: string) => Promise<GroupChatState | null>;
 export type StopGroupChatCallback = (chatId: string) => Promise<boolean>;
+export type ArchiveGroupChatCallback = (chatId: string, archived: boolean) => Promise<boolean>;
 export type SendGroupChatMessageCallback = (chatId: string, message: string) => Promise<boolean>;
 export type GetGroupChatsCallback = () => Promise<GroupChatState[]>;
 

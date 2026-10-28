@@ -26,7 +26,7 @@ import { notifyToast } from '../../stores/notificationStore';
 import { generateId } from '../../utils/ids';
 import { aiTabFocusFields } from '../../utils/tabHelpers';
 import { getAutoRunSessionsForGroupChat } from '../../utils/groupChatAutoRunRegistry';
-import { stopGroupChatWork } from '../../services/remoteGroupChat';
+import { archiveGroupChat, stopGroupChatWork } from '../../services/remoteGroupChat';
 import { logger } from '../../utils/logger';
 
 // ---------------------------------------------------------------------------
@@ -625,9 +625,8 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 
 	const handleArchiveGroupChat = useCallback(
 		async (id: string, archived: boolean) => {
-			const { activeGroupChatId, setGroupChats } = useGroupChatStore.getState();
-			const updated = await window.maestro.groupChat.archive(id, archived);
-			setGroupChats((prev) => prev.map((c) => (c.id === id ? updated : c)));
+			const { activeGroupChatId } = useGroupChatStore.getState();
+			await archiveGroupChat(id, archived);
 			if (archived && activeGroupChatId === id) {
 				handleCloseGroupChat();
 			}

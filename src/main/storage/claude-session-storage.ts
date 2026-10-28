@@ -18,13 +18,15 @@ import Store from 'electron-store';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { isExpectedSessionReadError } from '../utils/session-read-errors';
-import { CLAUDE_SESSION_PARSE_LIMITS } from '../constants';
-import { computeClaudeUsageCost } from '../utils/pricing';
-import { claudeModelUsage } from '../../shared/modelUsage';
 import { encodeClaudeProjectPath } from '../utils/statsCache';
 import { readFileRemote, listDirWithStatsRemote } from '../utils/remote-fs';
 import { mapWithConcurrency, REMOTE_SESSION_READ_CONCURRENCY } from '../utils/concurrency';
 import { getSessionInfoCache, fileFingerprint, type SessionFileRef } from './session-info-cache';
+import { runTranscriptParse } from '../transcript-parse/transcript-parse-pool';
+import {
+	extractClaudeTextFromContent,
+	parseClaudeSessionInfo,
+} from '../transcript-parse/transcript-parse-tasks';
 import type {
 	AgentSessionInfo,
 	PaginatedSessionsResult,
@@ -41,9 +43,11 @@ import type {
 	ClaudeSessionOriginInfo,
 	ClaudeSessionOriginsData,
 } from '../stores/types';
-import { BaseSessionStorage } from './base-session-storage';
+import { BaseSessionStorage, MessagePageCollector } from './base-session-storage';
+import { forEachJsonlLine } from '../utils/jsonl-stream';
 import { setClaudeSessionOrigin } from './claude-session-origins';
 import type { SearchableMessage } from './base-session-storage';
+import { getProviderAccountDirs } from '../agents/provider-account-dirs';
 export type { ClaudeSessionOriginsData } from '../stores/types';
 
 /**
@@ -80,130 +84,100 @@ function stripImagePlaceholderLines(text: string): string {
 }
 
 /**
- * Extract semantic text from message content.
- * Skips images, tool_use, and tool_result - only returns actual text content.
+ * One transcript line as a displayable message, or null when the line is not a
+ * user/assistant turn, has nothing to show, or is malformed.
  */
-function extractTextFromContent(content: unknown): string {
-	if (typeof content === 'string') {
-		return content;
+function parseClaudeTranscriptMessage(line: string): SessionMessage | null {
+	try {
+		return claudeTranscriptEntryToMessage(JSON.parse(line));
+	} catch {
+		// Skip malformed lines: invalid JSON, or valid JSON whose shape breaks
+		// the conversion (a null content block). One damaged record must not
+		// fail the whole read and lock the user out of the conversation.
+		return null;
 	}
-	if (Array.isArray(content)) {
-		const textParts = content
-			.filter((part: { type?: string }) => part.type === 'text')
-			.map((part: { type?: string; text?: string }) => part.text || '')
-			.filter((text: string) => text.trim());
-		return textParts.join(' ');
+}
+
+function claudeTranscriptEntryToMessage(
+	entry: ReturnType<typeof JSON.parse>
+): SessionMessage | null {
+	if (entry?.type !== 'user' && entry?.type !== 'assistant') return null;
+
+	let msgContent = '';
+	let toolUse = undefined;
+	let images: string[] | undefined;
+
+	if (entry.message?.content) {
+		if (typeof entry.message.content === 'string') {
+			msgContent = entry.message.content;
+		} else if (Array.isArray(entry.message.content)) {
+			const textBlocks = entry.message.content.filter((b: { type?: string }) => b.type === 'text');
+			const toolBlocks = entry.message.content.filter(
+				(b: { type?: string }) => b.type === 'tool_use'
+			);
+			const imageBlocks = entry.message.content.filter(
+				(b: { type?: string }) => b.type === 'image'
+			);
+
+			// Reconstruct base64 data URLs from image content blocks so a
+			// resumed tab re-renders the original images instead of falling
+			// back to the harness's synthetic `[Image: ...]` placeholder text.
+			if (imageBlocks.length > 0) {
+				const urls = imageBlocks
+					.map((b: { source?: { type?: string; media_type?: string; data?: string } }) => {
+						const src = b.source;
+						if (src?.type === 'base64' && src.media_type && src.data) {
+							return `data:${src.media_type};base64,${src.data}`;
+						}
+						return null;
+					})
+					.filter((url: string | null): url is string => url !== null);
+				if (urls.length > 0) {
+					images = urls;
+				}
+			}
+
+			// Always drop the synthetic `[Image: ... Multiply coordinates by
+			// ...]` placeholder lines. They are redundant either way: when the
+			// image is in this same message we render the recovered image, and
+			// when the placeholder arrives as its own follow-up message it is a
+			// text echo of an image already shown in a prior message. Filtering
+			// line-by-line lets a placeholder-only message collapse to empty so
+			// it is dropped entirely below.
+			msgContent = stripImagePlaceholderLines(
+				textBlocks.map((b: { text?: string }) => b.text || '').join('\n')
+			);
+			if (toolBlocks.length > 0) {
+				toolUse = toolBlocks;
+			}
+		}
 	}
-	return '';
+
+	if (!(msgContent && msgContent.trim()) && !toolUse && !images) return null;
+	return {
+		type: entry.type,
+		role: entry.message?.role,
+		content: msgContent,
+		timestamp: entry.timestamp,
+		uuid: entry.uuid,
+		toolUse,
+		...(images && { images }),
+	};
 }
 
 /**
- * Parse session content and extract metadata
+ * Parse session content and extract metadata. Used for content already in hand
+ * (an SSH read); a LOCAL file goes through the worker pool in `parseSessionFile`.
  */
 function parseSessionContent(
 	content: string,
 	sessionId: string,
 	projectPath: string,
-	stats: { size: number; mtimeMs: number }
+	stats: { size: number; mtimeMs: number },
+	subagentContents: readonly string[] = []
 ): AgentSessionInfo | null {
 	try {
-		const lines = content.split('\n').filter((l) => l.trim());
-
-		let firstAssistantMessage = '';
-		let firstUserMessage = '';
-		let timestamp = new Date(stats.mtimeMs).toISOString();
-
-		// Fast regex-based extraction for message counts
-		const userMessageCount = (content.match(/"type"\s*:\s*"user"/g) || []).length;
-		const assistantMessageCount = (content.match(/"type"\s*:\s*"assistant"/g) || []).length;
-		const messageCount = userMessageCount + assistantMessageCount;
-
-		// Extract first meaningful message content
-		// Prefer first assistant response as preview (more meaningful than system context)
-		// Fall back to first user message if no assistant response exists
-		for (
-			let i = 0;
-			i < Math.min(lines.length, CLAUDE_SESSION_PARSE_LIMITS.FIRST_MESSAGE_SCAN_LINES);
-			i++
-		) {
-			try {
-				const entry = JSON.parse(lines[i]);
-				// Capture first user message as fallback
-				if (!firstUserMessage && entry.type === 'user' && entry.message?.content) {
-					const textContent = extractTextFromContent(entry.message.content);
-					if (textContent.trim()) {
-						firstUserMessage = textContent;
-						timestamp = entry.timestamp || timestamp;
-					}
-				}
-				// Capture first assistant message as preferred preview
-				if (!firstAssistantMessage && entry.type === 'assistant' && entry.message?.content) {
-					const textContent = extractTextFromContent(entry.message.content);
-					if (textContent.trim()) {
-						firstAssistantMessage = textContent;
-						// Once we have assistant message, we can stop scanning
-						break;
-					}
-				}
-			} catch {
-				// Skip malformed lines
-			}
-		}
-
-		// Use assistant response as preview if available, otherwise fall back to user message
-		const previewMessage = firstAssistantMessage || firstUserMessage;
-
-		// Per-model token + cost extraction (a session may mix models).
-		const {
-			inputTokens: totalInputTokens,
-			outputTokens: totalOutputTokens,
-			cacheReadTokens: totalCacheReadTokens,
-			cacheCreationTokens: totalCacheCreationTokens,
-			costUsd,
-			byModel,
-		} = computeClaudeUsageCost(content);
-
-		// Extract last timestamp for duration
-		let lastTimestamp = timestamp;
-		for (
-			let i = lines.length - 1;
-			i >= Math.max(0, lines.length - CLAUDE_SESSION_PARSE_LIMITS.LAST_TIMESTAMP_SCAN_LINES);
-			i--
-		) {
-			try {
-				const entry = JSON.parse(lines[i]);
-				if (entry.timestamp) {
-					lastTimestamp = entry.timestamp;
-					break;
-				}
-			} catch {
-				// Skip malformed lines
-			}
-		}
-
-		const startTime = new Date(timestamp).getTime();
-		const endTime = new Date(lastTimestamp).getTime();
-		const durationSeconds = Math.max(0, Math.floor((endTime - startTime) / 1000));
-
-		return {
-			sessionId,
-			projectPath,
-			timestamp,
-			modifiedAt: new Date(stats.mtimeMs).toISOString(),
-			firstMessage: previewMessage.slice(
-				0,
-				CLAUDE_SESSION_PARSE_LIMITS.FIRST_MESSAGE_PREVIEW_LENGTH
-			),
-			messageCount,
-			sizeBytes: stats.size,
-			costUsd,
-			inputTokens: totalInputTokens,
-			outputTokens: totalOutputTokens,
-			cacheReadTokens: totalCacheReadTokens,
-			cacheCreationTokens: totalCacheCreationTokens,
-			byModel: claudeModelUsage(byModel),
-			durationSeconds,
-		};
+		return parseClaudeSessionInfo(content, sessionId, projectPath, stats, subagentContents);
 	} catch (error) {
 		logger.error(`Error parsing session content for session: ${sessionId}`, LOG_CONTEXT, error);
 		captureException(error, { operation: 'claudeStorage:parseSession', sessionId });
@@ -228,8 +202,16 @@ async function parseSessionFile(
 			return null;
 		}
 
-		const content = await fs.readFile(filePath, 'utf-8');
-		return parseSessionContent(content, sessionId, projectPath, stats);
+		// Read and parsed on the worker pool: a transcript can run to hundreds of
+		// MB, and parsing it here would block the main thread.
+		return await runTranscriptParse({
+			kind: 'claude-session-info',
+			filePath,
+			sessionId,
+			projectPath,
+			sizeBytes: stats.size,
+			mtimeMs: stats.mtimeMs,
+		});
 	} catch (error) {
 		if (error instanceof RangeError) {
 			logger.warn('Session file too large to parse', LOG_CONTEXT, { filePath });
@@ -316,11 +298,43 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 	}
 
 	/**
+	 * The local transcript of `sessionId`, in whichever account it was written.
+	 *
+	 * Session ids are UUIDs, so one names one file across every account dir.
+	 * The default account is tried first (the common case, and the only one when
+	 * accounts share a pool through a symlinked `projects/`); the other account
+	 * dirs are only scanned when it is not there. Without this, a tab whose agent
+	 * runs under a different `CLAUDE_CONFIG_DIR` could not be opened, resumed into
+	 * view, or edited from Maestro. Falls back to the default path so a missing
+	 * file still fails with the usual read error.
+	 */
+	private async locateLocalSessionFile(projectPath: string, sessionId: string): Promise<string> {
+		const defaultFile = path.join(this.getEncodedProjectDir(projectPath), `${sessionId}.jsonl`);
+		const exists = async (file: string): Promise<boolean> => {
+			try {
+				await fs.access(file);
+				return true;
+			} catch {
+				return false;
+			}
+		};
+		if (await exists(defaultFile)) return defaultFile;
+		for (const accountDir of await getProviderAccountDirs('claude-code')) {
+			const candidate = path.join(
+				this.getEncodedProjectDir(projectPath, accountDir),
+				`${sessionId}.jsonl`
+			);
+			if (candidate !== defaultFile && (await exists(candidate))) return candidate;
+		}
+		return defaultFile;
+	}
+
+	/**
 	 * Get the Claude projects directory path (remote via SSH)
 	 * On remote Linux hosts, ~ expands to the user's home directory
 	 */
-	private getRemoteProjectsDir(): string {
-		return '~/.claude/projects';
+	private getRemoteProjectsDir(configDir?: string): string {
+		return path.posix.join(configDir ?? '~/.claude', 'projects');
 	}
 
 	/**
@@ -336,9 +350,9 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 	 * Get the encoded project directory path (remote)
 	 * Uses POSIX-style paths for remote Linux hosts
 	 */
-	private getRemoteEncodedProjectDir(projectPath: string): string {
+	private getRemoteEncodedProjectDir(projectPath: string, configDir?: string): string {
 		const encodedPath = encodeClaudeProjectPath(projectPath);
-		return `${this.getRemoteProjectsDir()}/${encodedPath}`;
+		return `${this.getRemoteProjectsDir(configDir)}/${encodedPath}`;
 	}
 
 	/**
@@ -455,6 +469,7 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 		const refs: SessionFileRef[] = files.map((file) => ({
 			key: file.filePath,
 			fingerprint: fileFingerprint(file.sizeBytes, file.mtimeMs),
+			sizeBytes: file.sizeBytes,
 		}));
 
 		const sessions = await getSessionInfoCache(this.agentId).resolve(
@@ -504,7 +519,7 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 	): Promise<AgentSessionInfo[]> {
 		// Use SSH remote access if config provided
 		if (sshConfig) {
-			return this.listSessionsRemote(projectPath, sshConfig);
+			return this.listSessionsRemote(projectPath, sshConfig, configDir);
 		}
 
 		const projectDir = this.getEncodedProjectDir(projectPath, configDir);
@@ -542,9 +557,10 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 	 */
 	private async listSessionsRemote(
 		projectPath: string,
-		sshConfig: SshRemoteConfig
+		sshConfig: SshRemoteConfig,
+		configDir?: string
 	): Promise<AgentSessionInfo[]> {
-		const projectDir = this.getRemoteEncodedProjectDir(projectPath);
+		const projectDir = this.getRemoteEncodedProjectDir(projectPath, configDir);
 
 		const dirResult = await listDirWithStatsRemote(projectDir, sshConfig, { nameSuffix: '.jsonl' });
 		if (!dirResult.success) {
@@ -608,8 +624,8 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 			return this.listSessionsPaginatedRemote(projectPath, options, sshConfig);
 		}
 
-		const { cursor, limit = 100 } = options || {};
-		const projectDir = this.getEncodedProjectDir(projectPath);
+		const { cursor, limit = 100, configDir } = options || {};
+		const projectDir = this.getEncodedProjectDir(projectPath, configDir);
 
 		const sortedFiles = await this.statProjectSessionFiles(projectDir);
 		const totalCount = sortedFiles.length;
@@ -662,8 +678,8 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 		options: SessionListOptions | undefined,
 		sshConfig: SshRemoteConfig
 	): Promise<PaginatedSessionsResult> {
-		const { cursor, limit = 100 } = options || {};
-		const projectDir = this.getRemoteEncodedProjectDir(projectPath);
+		const { cursor, limit = 100, configDir } = options || {};
+		const projectDir = this.getRemoteEncodedProjectDir(projectPath, configDir);
 
 		const dirResult = await listDirWithStatsRemote(projectDir, sshConfig, { nameSuffix: '.jsonl' });
 		if (!dirResult.success) {
@@ -734,8 +750,12 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 		options?: SessionReadOptions,
 		sshConfig?: SshRemoteConfig
 	): Promise<SessionMessagesResult> {
-		// Get content either locally or via SSH
-		let content: string;
+		// Only the requested page is held; see MessagePageCollector.
+		const page = new MessagePageCollector(options);
+		const collect = (line: string) => {
+			const message = parseClaudeTranscriptMessage(line);
+			if (message) page.push(message);
+		};
 
 		if (sshConfig) {
 			const projectDir = this.getRemoteEncodedProjectDir(projectPath);
@@ -748,91 +768,16 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 				);
 				return { messages: [], total: 0, hasMore: false };
 			}
-			content = result.data;
-		} else {
-			const projectDir = this.getEncodedProjectDir(projectPath);
-			const sessionFile = path.join(projectDir, `${sessionId}.jsonl`);
-			content = await fs.readFile(sessionFile, 'utf-8');
-		}
-
-		const lines = content.split('\n').filter((l) => l.trim());
-
-		const messages: SessionMessage[] = [];
-
-		for (const line of lines) {
-			try {
-				const entry = JSON.parse(line);
-				if (entry.type === 'user' || entry.type === 'assistant') {
-					let msgContent = '';
-					let toolUse = undefined;
-					let images: string[] | undefined;
-
-					if (entry.message?.content) {
-						if (typeof entry.message.content === 'string') {
-							msgContent = entry.message.content;
-						} else if (Array.isArray(entry.message.content)) {
-							const textBlocks = entry.message.content.filter(
-								(b: { type?: string }) => b.type === 'text'
-							);
-							const toolBlocks = entry.message.content.filter(
-								(b: { type?: string }) => b.type === 'tool_use'
-							);
-							const imageBlocks = entry.message.content.filter(
-								(b: { type?: string }) => b.type === 'image'
-							);
-
-							// Reconstruct base64 data URLs from image content blocks so a
-							// resumed tab re-renders the original images instead of falling
-							// back to the harness's synthetic `[Image: ...]` placeholder text.
-							if (imageBlocks.length > 0) {
-								const urls = imageBlocks
-									.map((b: { source?: { type?: string; media_type?: string; data?: string } }) => {
-										const src = b.source;
-										if (src?.type === 'base64' && src.media_type && src.data) {
-											return `data:${src.media_type};base64,${src.data}`;
-										}
-										return null;
-									})
-									.filter((url: string | null): url is string => url !== null);
-								if (urls.length > 0) {
-									images = urls;
-								}
-							}
-
-							// Always drop the synthetic `[Image: ... Multiply coordinates by
-							// ...]` placeholder lines. They are redundant either way: when the
-							// image is in this same message we render the recovered image, and
-							// when the placeholder arrives as its own follow-up message it is a
-							// text echo of an image already shown in a prior message. Filtering
-							// line-by-line lets a placeholder-only message collapse to empty so
-							// it is dropped entirely below.
-							msgContent = stripImagePlaceholderLines(
-								textBlocks.map((b: { text?: string }) => b.text || '').join('\n')
-							);
-							if (toolBlocks.length > 0) {
-								toolUse = toolBlocks;
-							}
-						}
-					}
-
-					if ((msgContent && msgContent.trim()) || toolUse || images) {
-						messages.push({
-							type: entry.type,
-							role: entry.message?.role,
-							content: msgContent,
-							timestamp: entry.timestamp,
-							uuid: entry.uuid,
-							toolUse,
-							...(images && { images }),
-						});
-					}
-				}
-			} catch {
-				// Skip malformed lines
+			for (const line of result.data.split('\n')) {
+				if (line.trim()) collect(line);
 			}
+		} else {
+			// Streamed, never read whole: a transcript can be hundreds of MB (#1862).
+			const sessionFile = await this.locateLocalSessionFile(projectPath, sessionId);
+			await forEachJsonlLine(sessionFile, collect);
 		}
 
-		return BaseSessionStorage.applyMessagePagination(messages, options);
+		return page.result();
 	}
 
 	protected async getSearchableMessages(
@@ -850,8 +795,7 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 				if (!result.success || !result.data) return [];
 				content = result.data;
 			} else {
-				const projectDir = this.getEncodedProjectDir(projectPath);
-				const sessionFile = path.join(projectDir, `${sessionId}.jsonl`);
+				const sessionFile = await this.locateLocalSessionFile(projectPath, sessionId);
 				content = await fs.readFile(sessionFile, 'utf-8');
 			}
 		} catch {
@@ -865,7 +809,7 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 			try {
 				const entry = JSON.parse(line);
 				if (entry.type === 'user' || entry.type === 'assistant') {
-					const textContent = extractTextFromContent(entry.message?.content);
+					const textContent = extractClaudeTextFromContent(entry.message?.content);
 					if (textContent.trim()) {
 						searchableMessages.push({
 							role: entry.type as 'user' | 'assistant',
@@ -908,8 +852,7 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 			return { success: false, error: 'Delete not supported for remote sessions' };
 		}
 
-		const projectDir = this.getEncodedProjectDir(projectPath);
-		const sessionFile = path.join(projectDir, `${sessionId}.jsonl`);
+		const sessionFile = await this.locateLocalSessionFile(projectPath, sessionId);
 
 		try {
 			const content = await fs.readFile(sessionFile, 'utf-8');

@@ -81,6 +81,7 @@ export async function wrapSpawnForSsh(input: SshSpawnWrapInput): Promise<SshSpaw
 		claudeResolvedReason,
 		claudeDecisionRealBinPath,
 		claudeResolvedRemote,
+		acceptWorkspaceTrust,
 	} = claudeContext;
 
 	// ========================================================================
@@ -136,6 +137,8 @@ export async function wrapSpawnForSsh(input: SshSpawnWrapInput): Promise<SshSpaw
 							},
 							interactiveModeArgs: agent?.interactiveModeArgs,
 							remoteClaudeBin: claudeDecisionRealBinPath,
+							maxWaitSeconds: config.maestroPMaxWaitSeconds,
+							acceptWorkspaceTrust,
 						})
 					: null;
 

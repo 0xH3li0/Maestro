@@ -77,6 +77,7 @@ import {
 	routeModeratorResponse,
 	routeAgentResponse,
 	spawnModeratorSynthesis,
+	respawnParticipantWithRecovery,
 	getGroupChatReadOnlyState,
 	clearPendingParticipants,
 	setGetSessionsCallback,
@@ -111,6 +112,11 @@ import { AgentDetector } from '../../../main/agents';
 import { groupChatEmitters } from '../../../main/ipc/handlers/groupChat';
 import { getPrompt } from '../../../main/prompt-manager';
 
+// Captured at import, before any test installs fake timers, so a wait on it
+// still runs on the real clock while vi.useFakeTimers() is active.
+const realSetTimeout = globalThis.setTimeout;
+const realSleep = (ms: number) => new Promise<void>((resolve) => realSetTimeout(resolve, ms));
+
 describe('group-chat-router', () => {
 	let mockProcessManager: IProcessManager;
 	let mockAgentDetector: AgentDetector;
@@ -143,6 +149,9 @@ describe('group-chat-router', () => {
 				binaryName: 'claude',
 				command: 'claude',
 				args: ['--print', '--verbose', '--output-format', 'stream-json'],
+				fullAccessArgs: ['--dangerously-skip-permissions'],
+				readOnlyArgs: ['--permission-mode', 'plan'],
+				readOnlyCliEnforced: true,
 				available: true,
 				path: '/usr/local/bin/claude',
 				capabilities: {},
@@ -1509,6 +1518,10 @@ describe('group-chat-router', () => {
 			);
 			expect(participantSpawnCall).toBeDefined();
 			expect(participantSpawnCall?.[0].readOnlyMode).toBe(true);
+			expect(participantSpawnCall?.[0].args).toEqual(
+				expect.arrayContaining(['--permission-mode', 'plan'])
+			);
+			expect(participantSpawnCall?.[0].args).not.toContain('--dangerously-skip-permissions');
 		});
 
 		it('participants spawn with readOnlyMode: false when readOnly is not set', async () => {
@@ -1527,12 +1540,62 @@ describe('group-chat-router', () => {
 				// no readOnly flag = false
 			);
 
-			// Participant should be spawned with readOnlyMode: false
+			// Participant should be spawned with readOnlyMode: false and full-access args
 			const participantSpawnCall = mockProcessManager.spawn.mock.calls.find((call) =>
 				call[0].sessionId?.includes('participant')
 			);
 			expect(participantSpawnCall).toBeDefined();
 			expect(participantSpawnCall?.[0].readOnlyMode).toBe(false);
+			expect(participantSpawnCall?.[0].args).toContain('--dangerously-skip-permissions');
+			expect(participantSpawnCall?.[0].args).not.toContain('plan');
+		});
+
+		it('respawnParticipantWithRecovery propagates full-access and read-only permission args', async () => {
+			const chat = await createTestChatWithModerator('Participant Recovery Permission Test');
+			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+
+			mockProcessManager.spawn.mockClear();
+			await respawnParticipantWithRecovery(
+				chat.id,
+				'Client',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			const writableRecoverySpawn = mockProcessManager.spawn.mock.calls.find((call) =>
+				call[0].sessionId?.includes('recovery')
+			);
+			expect(writableRecoverySpawn).toBeDefined();
+			expect(writableRecoverySpawn?.[0].readOnlyMode).toBe(false);
+			expect(writableRecoverySpawn?.[0].args).toContain('--dangerously-skip-permissions');
+			expect(writableRecoverySpawn?.[0].args).not.toContain('plan');
+
+			// Switch the group chat to read-only and verify recovery honors it
+			await routeUserMessage(
+				chat.id,
+				'Inspect only',
+				mockProcessManager,
+				mockAgentDetector,
+				true
+			);
+			mockProcessManager.spawn.mockClear();
+
+			await respawnParticipantWithRecovery(
+				chat.id,
+				'Client',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			const readOnlyRecoverySpawn = mockProcessManager.spawn.mock.calls.find((call) =>
+				call[0].sessionId?.includes('recovery')
+			);
+			expect(readOnlyRecoverySpawn).toBeDefined();
+			expect(readOnlyRecoverySpawn?.[0].readOnlyMode).toBe(true);
+			expect(readOnlyRecoverySpawn?.[0].args).toEqual(
+				expect.arrayContaining(['--permission-mode', 'plan'])
+			);
+			expect(readOnlyRecoverySpawn?.[0].args).not.toContain('--dangerously-skip-permissions');
 		});
 
 		it('auto-added participants are only started once for a moderator handoff', async () => {
@@ -1604,13 +1667,20 @@ describe('group-chat-router', () => {
 
 		/**
 		 * Drives the queued-delegation poll loop forward under fake timers until
-		 * `done()` reports the handoff landed. Each pass advances one poll interval
-		 * and then flushes the microtasks the delivery chain resolves on.
+		 * `done()` reports the handoff landed. Each pass advances one poll interval,
+		 * then sleeps briefly on the REAL clock: every poll tick reads the chat from
+		 * disk and the delivery writes the log before it spawns, and that I/O only
+		 * completes on real event-loop turns. Flushing microtasks alone burned the
+		 * whole pass budget in a few milliseconds on a slow CI runner, before the
+		 * I/O finished, which is what made these tests flaky. A pass that misses
+		 * the I/O is not lost: the next one fires the timer the poller registers
+		 * late. 100 passes is 500s of fake time, inside the 15 minute wait budget,
+		 * so a give-up can never stand in for a delivery.
 		 */
-		async function runPollsUntil(done: () => boolean, passes = 10): Promise<void> {
+		async function runPollsUntil(done: () => boolean, passes = 100): Promise<void> {
 			for (let i = 0; i < passes && !done(); i++) {
 				await vi.advanceTimersByTimeAsync(5000);
-				await vi.advanceTimersByTimeAsync(0);
+				await realSleep(20);
 			}
 		}
 
@@ -1707,6 +1777,44 @@ describe('group-chat-router', () => {
 				clearPendingParticipants(chat.id);
 			} finally {
 				groupChatEmitters.emitMessage = previousEmitMessage;
+				vi.useRealTimers();
+			}
+		});
+
+		it('releases a held delegation when the chat opts out mid-wait', async () => {
+			vi.useFakeTimers();
+			try {
+				const chat = await createTestChatWithModerator('Busy Opt Out Mid Wait Test');
+				await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+				setGetSessionsCallback(() => [busyClientSession]);
+				mockProcessManager.spawn.mockClear();
+
+				await routeModeratorResponse(
+					chat.id,
+					'@Client: Please implement this feature',
+					mockProcessManager,
+					mockAgentDetector
+				);
+				await runPollsUntil(() => false, 2);
+				expect(participantSpawnsFor(chat.id)).toHaveLength(0);
+
+				// The user flips the toggle off in Edit Group Chat while the agent is
+				// still busy: the waiting delegation must go in on the next poll
+				// rather than sit out the rest of the wait budget.
+				await updateGroupChat(chat.id, { requireIdleParticipants: false });
+
+				// The release path writes its "No longer waiting" line to the log file
+				// before it spawns; runPollsUntil gives that real I/O time to land.
+				await runPollsUntil(() => participantSpawnsFor(chat.id).length > 0);
+				expect(participantSpawnsFor(chat.id)).toHaveLength(1);
+
+				const messages = await readLog(chat.logPath);
+				expect(
+					messages.some((m) => m.from === 'system' && m.content.includes('No longer waiting'))
+				).toBe(true);
+
+				clearPendingParticipants(chat.id);
+			} finally {
 				vi.useRealTimers();
 			}
 		});

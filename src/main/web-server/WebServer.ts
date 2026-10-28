@@ -25,6 +25,11 @@
  *   it knows the URL
  */
 
+import type {
+	NotificationInboxRequest,
+	NotificationInboxResult,
+} from '../../shared/notificationInbox';
+
 import Fastify from 'fastify';
 import websocket from '@fastify/websocket';
 import rateLimit from '@fastify/rate-limit';
@@ -88,6 +93,7 @@ import type {
 	RenameTabCallback,
 	StarTabCallback,
 	SnoozeCommandCallback,
+	AutoRunSteeringCommandCallback,
 	WindowCommandCallback,
 	ReorderTabCallback,
 	ToggleBookmarkCallback,
@@ -158,6 +164,7 @@ import type {
 	StartGroupChatOptions,
 	GetGroupChatStateCallback,
 	StopGroupChatCallback,
+	ArchiveGroupChatCallback,
 	SendGroupChatMessageCallback,
 	GroupChatMessage,
 	GroupChatState,
@@ -190,6 +197,7 @@ import type {
 	GetSessionHistoryCallback,
 } from './types';
 import type { SnoozeCommandRequest } from '../../shared/snoozeCommands';
+import type { SteeringCommandRequest } from '../../shared/autoRunSteeringCommands';
 import type { WindowCommandRequest } from '../../shared/windowCommands';
 
 // Logger context for all web server logs
@@ -553,6 +561,10 @@ export class WebServer {
 		this.callbackRegistry.setSnoozeCommandCallback(callback);
 	}
 
+	setAutoRunSteeringCommandCallback(callback: AutoRunSteeringCommandCallback): void {
+		this.callbackRegistry.setAutoRunSteeringCommandCallback(callback);
+	}
+
 	setWindowCommandCallback(callback: WindowCommandCallback): void {
 		this.callbackRegistry.setWindowCommandCallback(callback);
 	}
@@ -571,6 +583,13 @@ export class WebServer {
 
 	setOpenDocumentGraphCallback(callback: OpenDocumentGraphCallback): void {
 		this.callbackRegistry.setOpenDocumentGraphCallback(callback);
+	}
+
+	/** Register the request-response bridge to the desktop history store. */
+	setNotificationInboxCallback(
+		callback: (request: NotificationInboxRequest) => Promise<NotificationInboxResult>
+	): void {
+		this.callbackRegistry.setNotificationInboxCallback(callback);
 	}
 
 	setOpenModalCallback(callback: OpenModalCallback): void {
@@ -810,6 +829,10 @@ export class WebServer {
 
 	setStopGroupChatCallback(callback: StopGroupChatCallback): void {
 		this.callbackRegistry.setStopGroupChatCallback(callback);
+	}
+
+	setArchiveGroupChatCallback(callback: ArchiveGroupChatCallback): void {
+		this.callbackRegistry.setArchiveGroupChatCallback(callback);
 	}
 
 	setSendGroupChatMessageCallback(callback: SendGroupChatMessageCallback): void {
@@ -1140,6 +1163,7 @@ export class WebServer {
 	private setupMessageHandlerCallbacks(): void {
 		this.messageHandler.setCallbacks({
 			getSessionDetail: (sessionId: string) => this.callbackRegistry.getSessionDetail(sessionId),
+			getAutoRunState: (sessionId: string) => this.liveSessionManager.getAutoRunState(sessionId),
 			executeCommand: async (
 				sessionId: string,
 				command: string,
@@ -1174,6 +1198,8 @@ export class WebServer {
 				this.callbackRegistry.starTab(sessionId, tabId, starred),
 			snoozeCommand: async (request: SnoozeCommandRequest) =>
 				this.callbackRegistry.snoozeCommand(request),
+			autoRunSteeringCommand: async (request: SteeringCommandRequest) =>
+				this.callbackRegistry.autoRunSteeringCommand(request),
 			windowCommand: async (request: WindowCommandRequest) =>
 				this.callbackRegistry.windowCommand(request),
 			reorderTab: async (sessionId: string, fromIndex: number, toIndex: number) =>
@@ -1183,6 +1209,7 @@ export class WebServer {
 				this.callbackRegistry.openFileTab(sessionId, filePath, options),
 			openDocumentGraph: async (params) => this.callbackRegistry.openDocumentGraph(params),
 			openModal: async (params) => this.callbackRegistry.openModal(params),
+			notificationInbox: (request) => this.callbackRegistry.notificationInbox(request),
 			refreshFileTree: async (sessionId: string) =>
 				this.callbackRegistry.refreshFileTree(sessionId),
 			openBrowserTab: async (sessionId: string, url: string, options?: { background?: boolean }) =>
@@ -1319,6 +1346,8 @@ export class WebServer {
 			) => this.callbackRegistry.startGroupChat(topic, participantIds, options),
 			getGroupChatState: async (chatId: string) => this.callbackRegistry.getGroupChatState(chatId),
 			stopGroupChat: async (chatId: string) => this.callbackRegistry.stopGroupChat(chatId),
+			archiveGroupChat: async (chatId: string, archived: boolean) =>
+				this.callbackRegistry.archiveGroupChat(chatId, archived),
 			sendGroupChatMessage: async (chatId: string, message: string) =>
 				this.callbackRegistry.sendGroupChatMessage(chatId, message),
 			mergeContext: async (sourceSessionId: string, targetSessionId: string) =>

@@ -249,6 +249,7 @@ because that cost is paid on the main thread on every store write (~40ms on the
 | `formatRelativeTime(dateOrTimestamp)`  | `(Date \| number \| string) => string` | `"just now"`, `"5m ago"`, `"2h ago"`, `"Dec 3"`.                                  |
 | `formatCacheAge(cacheAgeMs)`           | `(number \| null) => string`           | Cache age labels from elapsed milliseconds: `"just now"`, `"5m ago"`, `"2h ago"`. |
 | `formatCalendarDay(isoDay)`            | `(string) => string`                   | A `YYYY-MM-DD` day for display: `"Jul 10, 2026"`. Parsed as LOCAL, not UTC.       |
+| `formatHourOfDay(hour)`                | `(number) => string`                   | Hour 0-23 as a clock label: `"12 AM"`, `"1 PM"`.                                  |
 | `formatElapsedTimeColon(seconds)`      | `(number) => string`                   | Timer style: `"5:12"`, `"1:30:45"`.                                               |
 | `fileTimestampSlug(dateOrTimestamp?)`  | `(Date \| number?) => string`          | `"20260713-142530"` for a generated file name. Local time, sorts chronologically. |
 | `formatCost(cost)`                     | `(number) => string`                   | USD: `"$1.23"`, `"<$0.01"`, `"$0.00"`.                                            |
@@ -663,7 +664,7 @@ Document ids are always reconciled against the batch store's `documentList`, NOT
 
 ## Model Tiers & Effort (`src/shared/modelTiers.ts` - Both)
 
-One vocabulary (`low | medium | high`) for two independent axes: which model runs the turn (**tier**) and how hard it thinks (**effort**). The levels are ladder POSITIONS, not literal provider values - Claude's ceiling is `max`, Codex's floor is `minimal`.
+One vocabulary (`low | medium | high`) for two independent axes: which model runs the turn (**tier**) and how hard it thinks (**effort**). The levels are ladder POSITIONS, not literal provider values - Claude's ceiling is `max`, Codex's is `xhigh`.
 
 | Function / Constant                   | Signature                                           | Purpose                                                                               |
 | ------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------- |
@@ -745,7 +746,7 @@ Rendering rule: no surface may display the raw structured output as if it were t
 | Function / Constant                  | Signature                                            | Purpose                                                                                                                                                         |
 | ------------------------------------ | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `HISTORY_VERSION`                    | `number` (1)                                         | Current history file format version.                                                                                                                            |
-| `MAX_ENTRIES_PER_SESSION`            | `number` (5000)                                      | Max history entries per session file.                                                                                                                           |
+| `MAX_ENTRIES_PER_SESSION`            | `number` (10000)                                     | Default max history entries per session file; the live cap is the `maxLogBuffer` setting.                                                                       |
 | `ORPHANED_SESSION_ID`                | `string` (`'_orphaned'`)                             | Session ID for entries without associated sessions.                                                                                                             |
 | `sanitizeSessionId(sessionId)`       | `(string) => string`                                 | Replace non-safe chars with underscore for filesystem.                                                                                                          |
 | `paginateEntries(entries, options?)` | `<T>(T[], PaginationOptions?) => PaginatedResult<T>` | Apply limit/offset pagination. Default: limit 100, offset 0.                                                                                                    |
@@ -1013,12 +1014,13 @@ the spelled-out platforms.
 
 ### Context Usage (`src/renderer/utils/contextUsage.ts`)
 
-| Function                                                                                | Signature                                       | Purpose                                                                              |
-| --------------------------------------------------------------------------------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------ |
-| `calculateContextTokens(stats, agentId?)`                                               | `(UsageStats, string?) => number`               | Agent-specific context token calculation. Claude: input+cache. OpenAI: input+output. |
-| `estimateContextUsage(stats, agentId?)`                                                 | `(UsageStats, string?) => number \| null`       | Estimate context usage %. Returns null for accumulated multi-tool turns.             |
-| `calculateContextDisplay(usageStats, contextWindow, agentId?, fallbackPercentage?)`     | Returns `{ tokens, percentage, contextWindow }` | Single source of truth for context gauge rendering.                                  |
-| `estimateAccumulatedGrowth(currentUsage, outputTokens, cacheReadTokens, contextWindow)` | `(number, number, number, number) => number`    | Conservative growth estimate during tool-heavy turns. Bounded to 1-3% per turn.      |
+| Function                                                                                | Signature                                       | Purpose                                                                                                                                                        |
+| --------------------------------------------------------------------------------------- | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `calculateContextTokens(stats, agentId?)`                                               | `(UsageStats, string?) => number`               | Agent-specific context token calculation. Claude: input+cache. OpenAI: input+output.                                                                           |
+| `estimateContextUsage(stats, agentId?)`                                                 | `(UsageStats, string?) => number \| null`       | Estimate context usage %. Returns null for accumulated multi-tool turns.                                                                                       |
+| `calculateContextDisplay(usageStats, contextWindow, agentId?, fallbackPercentage?)`     | Returns `{ tokens, percentage, contextWindow }` | Single source of truth for context gauge rendering.                                                                                                            |
+| `resolveGaugeTokenStats(stats, agentId?)`                                               | Returns the token fields to measure             | Picks the provider occupancy snapshot (`absoluteUsage`) over a turn's summed token spend. Run a stored tab record through it before `calculateContextDisplay`. |
+| `estimateAccumulatedGrowth(currentUsage, outputTokens, cacheReadTokens, contextWindow)` | `(number, number, number, number) => number`    | Conservative growth estimate during tool-heavy turns. Bounded to 1-3% per turn.                                                                                |
 
 ### Context Window Precedence (`src/renderer/utils/contextWindowPrecedence.ts`)
 

@@ -371,6 +371,12 @@ You will know you are in command mode: a `$` appears at the left of the input, t
 - **Colour is preserved.** Output keeps the colours the command produced (`git status`, `eza`, `rg`), rendered properly rather than shown as raw escape codes. The copy button gives you clean, uncoloured text.
 - **The draft survives a tab switch**, mode and all. Leave a half-typed command, go read another tab, come back, and it is still a command.
 
+### Running a Command from an Agent's Reply
+
+When an agent answers with a shell code block (`bash`, `sh`, `zsh`, `console`), the block gets a **Run** button beside its copy button. Clicking it runs the command exactly as if you had typed it after `!`: same card, same working directory, same recall history. **Alt-click** puts the command in the composer in command mode instead, so you can edit it before pressing Enter. Hover the button to see the full command line, which matters when a long line scrolls off the side of the block.
+
+A block written as a terminal session (`$ npm test` followed by its output) runs only the `$` lines, so the sample output is never executed. Blocks in your own messages, and blocks in other languages, have no Run button.
+
 ### Tab Completion in Command Mode
 
 Command mode gets the same `Tab` completion the [Command Terminal](#command-terminal) has, so you are not typing paths from memory:
@@ -693,7 +699,7 @@ The command interpreter can be focused for a clean, terminal-only experience whe
 
 ## Command Terminal
 
-Each agent has a Command Terminal alongside its AI Terminal - a real PTY shell scoped to the agent's working directory. Switch between them with `Cmd+J` / `Ctrl+J`. Open a new terminal tab with `Ctrl+Shift+` + `` ` ``; close, rename, and reorder it just like an AI tab. Right-click (or hover) a terminal tab to open its action menu.
+Each agent has a Command Terminal alongside its AI Terminal - a real PTY shell scoped to the agent's working directory. Open a new terminal tab with `Cmd+J` / `Ctrl+J` (or `Ctrl+Shift+` + `` ` ``); close, rename, and reorder it just like an AI tab. Jump to the nearest terminal tab with `Opt+Cmd+J` / `Alt+Ctrl+J`. To switch the current tab between AI and shell in place, run **Switch AI/Shell Mode** from Quick Actions (`Cmd+K` / `Ctrl+K`). It has no key of its own. Right-click (or hover) a terminal tab to open its action menu.
 
 ### Startup Command
 
@@ -716,6 +722,37 @@ Configure a command to run automatically every time a terminal tab's shell is st
 
 > **SSH agents**: when the agent is configured to run on a remote host, the terminal tab also runs on that host, and the startup command executes remotely (the working directory must be a path on the remote machine).
 
+## Opening Links
+
+Clicking a web link in the AI Terminal, a Command Terminal, a file preview, or a user message opens it in the browser chosen under **Settings -> General -> Default Browser**: an in-app Maestro browser tab, or your system browser.
+
+| Gesture                    | Result                                                           |
+| -------------------------- | ---------------------------------------------------------------- |
+| Click                      | Opens in the default browser                                     |
+| `Cmd+Click` / `Ctrl+Click` | Opens in the other browser, for this link only                   |
+| Right-click                | Menu: Copy Link, Open in Maestro Browser, Open in System Browser |
+
+### Routing Hints
+
+To make one link always open in a specific browser, whatever the setting and whatever key is held, put a hint in front of its `http://` or `https://`:
+
+| Written as                      | Always opens in                           |
+| ------------------------------- | ----------------------------------------- |
+| `maestro+http://localhost:5173` | A Maestro browser tab in the active agent |
+| `system+https://github.com`     | The system browser                        |
+
+Maestro removes the hint before it opens the page, so the server never sees it, and **Copy Link** copies the address without it. This is useful for a script that prints a local dev-server URL into a terminal tab, or for an agent that links a preview in chat:
+
+```bash
+echo "Preview: maestro+http://localhost:5173"
+```
+
+```markdown
+[dev server](maestro+http://localhost:5173)
+```
+
+Hints work in plain terminal output, in OSC 8 terminal hyperlinks, and in markdown links. In chat markdown, write a hinted URL as a link (`[label](maestro+https://...)`) or in angle brackets (`<maestro+https://...>`); a bare hinted URL in markdown is only partly linked. Only `http` and `https` may follow a hint: `maestro+file://...` or `system+ssh://...` opens nothing.
+
 ## Agent Management
 
 Agents are the core of Maestro - each agent represents an AI coding assistant running in its own workspace.
@@ -730,8 +767,8 @@ Agents are the core of Maestro - each agent represents an AI coding assistant ru
 
 **Advanced configuration options:**
 
-- **New Session Message** - A hidden message prefixed to the first message whenever a new session (tab) is created. Use this for initial context, setup instructions, or persona definitions that should apply at the start of every conversation. Not visible in chat.
-- **Nudge Message** - A hidden message appended to every interactive user message sent to the agent. This is useful for persistent instructions or reminders that guide the agent's behavior across all conversations. **Note:** Nudge messages only apply to interactive AI messages - they are not included in Auto Run tasks.
+- **New Session Message** - A hidden message prefixed to the first message of every new provider session. Use this for initial context, setup instructions, or persona definitions that should apply at the start of every conversation. Not visible in chat. See [When Each Message Is Sent](#when-each-message-is-sent).
+- **Nudge Message** - A hidden message appended to every message you type to the agent. This is useful for persistent instructions or reminders that guide the agent's behavior across all conversations. It is not added to automation. See [When Each Message Is Sent](#when-each-message-is-sent).
 - **Custom Path** - Override the default executable path
 - **Custom Arguments** - Additional command-line arguments
 - **Environment Variables** - Custom environment variables for the agent process
@@ -739,6 +776,26 @@ Agents are the core of Maestro - each agent represents an AI coding assistant ru
 - **Additional Directories** - Grant the agent access to directories beyond its working directory. Add a row per directory, then toggle **R** (read) and **W** (write) independently: a directory can be read-only reference material, a write-only drop box the agent should never read back, or both. A row with neither toggle lit is inert and is not sent to the agent. Each row also takes an optional **description** - a short hint about what the directory is for or how the agent should use it, which is passed to the agent alongside the access rule. Providers that support directory flags (for example Claude Code's `--add-dir`) also receive these grants natively; the read/write split and the descriptions are always carried in the agent's system prompt.
 
   Each response in the transcript is stamped underneath with the model and effort it was actually sent with (alongside the Claude [token source](/provider-notes#token-source) pill, where that applies). The stamp is taken when you press Enter, so changing the model while a turn is streaming labels your next message, never the one already running. A pill is omitted when no override was set and the agent's own default applied.
+
+#### When Each Message Is Sent
+
+The two messages follow different rules. The New Session Message goes with the first turn of a new provider session, no matter how that turn starts. The Nudge Message goes only with a message you type and send straight to the agent.
+
+| How the turn starts                            | New Session Message            | Nudge Message |
+| ---------------------------------------------- | ------------------------------ | ------------- |
+| Message typed to an idle agent                 | First turn of a new tab        | Every message |
+| Message typed while the agent is busy (queued) | First turn of a new tab        | No            |
+| Slash command                                  | First turn of a new tab        | No            |
+| `maestro-cli dispatch`, a snooze wake prompt   | First turn of a new tab        | No            |
+| `maestro-cli send`                             | Every send without `--session` | No            |
+| Auto Run, document tasks (desktop and CLI)     | Every task                     | No            |
+| Auto Run, goal-driven (desktop and CLI)        | Every iteration                | No            |
+| Cue pipeline                                   | Every run                      | No            |
+| Group Chat and `@mention` consults             | No                             | No            |
+
+Auto Run and Cue start a new provider session for each task, iteration, or run, so each one gets the New Session Message. A message that joins a conversation already in progress does not repeat it: the first turn of that conversation already carried it.
+
+If automation needs an instruction on every turn, put it in the New Session Message, in the Auto Run document, or in the Cue prompt. The Nudge Message will not reach it.
 
 ### Editing Agents
 
@@ -827,9 +884,12 @@ Drag the right edge of the sidebar to resize it. The width is persisted across s
 
 Click the sidebar toggle (`Opt+Cmd+Left` / `Alt+Ctrl+Left`) to collapse the sidebar to icon-only mode. In collapsed mode:
 
-- Agents show as icons with status indicators
-- Hover for agent name tooltip
+- Each agent shows as a two-letter badge tinted with its status color (`MR` for "Maestro RC", `Ma` for "Maestro"). Letters are picked across all your agents so no two share a label where the names allow
+- The active agent gets a ring and a stronger fill; a red corner dot marks unread messages
+- Hover for the full agent tooltip
 - Click to select an agent
+
+Prefer the plain status dots? Turn off **Settings → Display → Left Side Panel → Show agent initials when collapsed**.
 
 ## Tab Management
 
@@ -860,6 +920,7 @@ When you send your first message to a new tab, Maestro automatically generates a
 - Go to **Settings** (`Cmd+,` / `Ctrl+,`) → **General**
 - Toggle **Automatic Tab Naming** on or off
 - Default: Enabled
+- Toggle **Shorten long tab names** to cut a generated name longer than 40 characters at the last whole word (for example `Donation Appeal Pages Japanese...`). Default: off, which keeps the full name.
 
 **Wizard tabs:** a tab started with `/wizard` opens as `Wizard`, because it exists before anyone knows what you are planning. It renames itself to `wizard: <topic>` as soon as you say what you want (from the `/wizard <topic>` argument, or from your first message), and to the generated playbook folder once the wizard finishes. Rename it yourself at any point and Maestro leaves your name alone.
 
@@ -961,11 +1022,12 @@ Hover the chip to reveal its menu:
 | **Rename group**                 | Edit the name inline on the chip. `Enter` commits, `Esc` cancels. Submitting a blank name restores the automatic one rather than leaving the chip unlabeled. |
 | **Change icon**                  | Opens the emoji picker. The chosen emoji replaces the grid glyph on the chip.                                                                                |
 | **Break apart**                  | Returns every pane to the tab bar as an individual tab, in the chip's old position rather than at the end.                                                   |
+| **Close group**                  | Closes every tab in the group after a confirmation (`Enter` confirms). Focus moves to the chip beside it. Closed AI tabs can be reopened like any other.     |
 | **Move to First / Move to Last** | Jumps the chip to either end of the tab bar, the keyboard counterpart to dragging it.                                                                        |
 
 **Double-click the chip** to rename it without opening the menu.
 
-Renaming and breaking apart are also in Quick Actions (`Cmd+K` / `Ctrl+K`) as **Rename Tab Group** and **Break Apart Tab Group**, which act on the group currently showing. Break apart asks for confirmation first. Nothing is closed either way - the panes become ordinary tabs again and you can tile them whenever you like.
+Renaming, breaking apart, and closing are also in Quick Actions (`Cmd+K` / `Ctrl+K`) as **Rename Tab Group**, **Break Apart Tab Group**, and **Close Tab Group**, which act on the group currently showing. Break apart and close both ask for confirmation first. Breaking apart closes nothing - the panes become ordinary tabs again and you can tile them whenever you like.
 
 <Note>
 **Change icon** lives on the chip menu only, and the picker has no "no icon" entry - once a group has an emoji, the way back to the plain grid glyph is to break the group apart and tile it again.

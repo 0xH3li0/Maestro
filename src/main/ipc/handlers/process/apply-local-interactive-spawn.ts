@@ -21,6 +21,8 @@ export interface LocalInteractiveSpawnResult {
 	commandToSpawn: string;
 	argsToSpawn: string[];
 	customEnvVarsToPass: Record<string, string> | undefined;
+	/** The real claude binary maestro-p drives; set only when this turn runs through maestro-p. */
+	claudeBinPath?: string;
 }
 
 /**
@@ -38,6 +40,7 @@ export function applyLocalInteractiveSpawnDecision(
 		resolvedConfigDirKey,
 		claudeDecisionRealBinPath,
 		claudeResolvedRemote,
+		acceptWorkspaceTrust,
 	} = claudeContext;
 
 	if (
@@ -76,6 +79,8 @@ export function applyLocalInteractiveSpawnDecision(
 		command: claudeCommandForInteractive,
 		args: argsToSpawn,
 		customEnvVars: customEnvVarsToPass,
+		maxWaitSeconds: config.maestroPMaxWaitSeconds,
+		acceptWorkspaceTrust,
 	});
 
 	logger.debug('Spawning Claude Code in interactive mode (maestro-p)', LOG_CONTEXT, {
@@ -89,5 +94,6 @@ export function applyLocalInteractiveSpawnDecision(
 		commandToSpawn: applied.command,
 		argsToSpawn: applied.args,
 		customEnvVarsToPass: applied.customEnvVars,
+		claudeBinPath: claudeCommandForInteractive,
 	};
 }

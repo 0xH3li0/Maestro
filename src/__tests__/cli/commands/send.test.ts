@@ -110,7 +110,7 @@ describe('send command', () => {
 			'/path/to/project',
 			'Hello world',
 			undefined,
-			{ readOnlyMode: undefined }
+			{ readOnlyMode: undefined, acceptWorkspaceTrust: true }
 		);
 
 		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
@@ -159,13 +159,55 @@ describe('send command', () => {
 			'/path/to/project',
 			'Continue from before',
 			'session-xyz-789',
-			{ readOnlyMode: undefined }
+			{ readOnlyMode: undefined, acceptWorkspaceTrust: true }
 		);
 
 		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
 		expect(output.success).toBe(true);
 		expect(output.sessionId).toBe('session-xyz-789');
 		expect(output.usage.contextUsagePercent).toBe(4);
+	});
+
+	describe('New Session Message', () => {
+		const withMessage = () => mockAgent({ newSessionMessage: 'Always check linting' });
+
+		beforeEach(() => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			vi.mocked(detectAgent).mockResolvedValue({ available: true, path: '/usr/bin/claude' });
+			vi.mocked(spawnAgent).mockResolvedValue({
+				success: true,
+				response: 'ok',
+				agentSessionId: 'session-xyz-789',
+			});
+		});
+
+		it('prefixes the message when the send opens a new session', async () => {
+			vi.mocked(getSessionById).mockReturnValue(withMessage());
+
+			await send('agent-abc', 'Run the report', {});
+
+			expect(spawnAgent).toHaveBeenCalledWith(
+				'claude-code',
+				'/path/to/project',
+				'Always check linting\n\n---\n\nRun the report',
+				undefined,
+				expect.anything()
+			);
+		});
+
+		it('leaves the message alone when --session resumes a conversation', async () => {
+			vi.mocked(getSessionById).mockReturnValue(withMessage());
+
+			await send('agent-abc', 'Run the report', { session: 'session-xyz-789' });
+
+			expect(spawnAgent).toHaveBeenCalledWith(
+				'claude-code',
+				'/path/to/project',
+				'Run the report',
+				'session-xyz-789',
+				expect.anything()
+			);
+		});
 	});
 
 	it('should use the agent cwd from Maestro session', async () => {
@@ -185,7 +227,7 @@ describe('send command', () => {
 			'/custom/project/path',
 			'Do something',
 			undefined,
-			{ readOnlyMode: undefined }
+			{ readOnlyMode: undefined, acceptWorkspaceTrust: true }
 		);
 	});
 
@@ -206,6 +248,7 @@ describe('send command', () => {
 		expect(detectAgent).toHaveBeenCalledWith('codex');
 		expect(spawnAgent).toHaveBeenCalledWith('codex', expect.any(String), 'Use codex', undefined, {
 			readOnlyMode: undefined,
+			acceptWorkspaceTrust: true,
 		});
 	});
 
@@ -226,7 +269,7 @@ describe('send command', () => {
 			'/path/to/project',
 			'Analyze this code',
 			undefined,
-			{ readOnlyMode: true }
+			{ readOnlyMode: true, acceptWorkspaceTrust: true }
 		);
 	});
 

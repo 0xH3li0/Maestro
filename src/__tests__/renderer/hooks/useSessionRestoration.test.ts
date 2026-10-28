@@ -30,6 +30,7 @@ vi.mock('../../../renderer/utils/ids', () => ({
 }));
 
 import { useSessionRestoration } from '../../../renderer/hooks/session/useSessionRestoration';
+import { buildUnifiedTabs } from '../../../renderer/utils/tabHelpers';
 import {
 	updateAiTab,
 	updateSessionWith,
@@ -630,6 +631,47 @@ describe('restoreSession - Corruption recovery', () => {
 		expect(log.source).toBe('system');
 	});
 
+	// MAESTRO-16B: a tabGroups persisted as an object (not an array) slipped past
+	// every `?? []` / `|| []` default, threw inside restoreSession, and the error
+	// fallback put the raw session in the store, where the tab strip's
+	// `(session.tabGroups || []).map` threw on every render.
+	it('coerces a non-array tabGroups to an empty array instead of failing the restore', async () => {
+		const session = createMockSession({ tabGroups: { 0: 'not-a-group' } as any });
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.tabGroups).toEqual([]);
+		expect(restored!.state).not.toBe('error');
+		expect(restored!.aiTabs.map((t) => t.id)).toEqual(['tab-1']);
+		expect(() => buildUnifiedTabs(restored!)).not.toThrow();
+		expect(buildUnifiedTabs(restored!).map((t) => t.id)).toEqual(['tab-1']);
+	});
+
+	it('coerces non-array tab collections on the error fallback too', async () => {
+		const session = createMockSession({
+			tabGroups: {} as any,
+			unifiedTabOrder: { ai: 'tab-1' } as any,
+			// A null tab with no createdAt makes the createdAt backfill throw, which
+			// sends restoreSession down its error fallback.
+			createdAt: undefined,
+			aiTabs: [null] as any,
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.state).toBe('error');
+		expect(restored!.tabGroups).toEqual([]);
+		expect(restored!.unifiedTabOrder).toEqual([]);
+	});
+
 	it('creates default tab when aiTabs is undefined', async () => {
 		const session = createMockSession({ aiTabs: undefined as any, activeTabId: null });
 		const { result } = renderHook(() => useSessionRestoration());
@@ -680,6 +722,41 @@ describe('restoreSession - Corruption recovery', () => {
 
 		expect(restored!.aiTabs).toHaveLength(0);
 		expect(restored!.terminalTabs).toHaveLength(1);
+		expect(restored!.state).not.toBe('error');
+	});
+
+	// An older build let closing the last file/terminal/browser tab strand an
+	// agent holding only a hidden consult tab: no chip, and the consult rendered.
+	it('heals an agent left with only a hidden consult tab', async () => {
+		const session = createMockSession({
+			aiTabs: [
+				{
+					id: 'consult-1',
+					agentSessionId: null,
+					name: null,
+					starred: false,
+					logs: [],
+					inputValue: '',
+					stagedImages: [],
+					createdAt: 0,
+					state: 'idle',
+					hidden: true,
+				},
+			],
+			activeTabId: '',
+			unifiedTabOrder: [{ type: 'ai', id: 'consult-1' }],
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.aiTabs).toHaveLength(2);
+		const fresh = restored!.aiTabs.find((t) => t.id !== 'consult-1')!;
+		expect(fresh.hidden).toBeFalsy();
+		expect(restored!.activeTabId).toBe(fresh.id);
 		expect(restored!.state).not.toBe('error');
 	});
 

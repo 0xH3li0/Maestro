@@ -50,6 +50,7 @@ import { registerDocumentGraphHandlers, DocumentGraphHandlerDependencies } from 
 import { registerSshRemoteHandlers, SshRemoteHandlerDependencies } from './ssh-remote';
 import { registerFilesystemHandlers } from './filesystem';
 import { registerParquetHandlers } from './parquet';
+import { registerCodexVisualizationHandlers } from './codexVisualization';
 import { registerAttachmentsHandlers, AttachmentsHandlerDependencies } from './attachments';
 import {
 	registerWebHandlers,
@@ -60,6 +61,7 @@ import {
 } from './web';
 import { registerWebLoginHandlers } from './webLogin';
 import { registerLeaderboardHandlers, LeaderboardHandlerDependencies } from './leaderboard';
+import { registerNotificationHistoryHandlers } from './notification-history';
 import { registerNotificationsHandlers } from './notifications';
 import { registerSymphonyHandlers, SymphonyHandlerDependencies } from './symphony';
 import { registerAgentErrorHandlers } from './agent-error';
@@ -95,6 +97,7 @@ import type { WindowManager } from '../../app-lifecycle/window-manager';
 import { tunnelManager as tunnelManagerInstance } from '../../tunnel-manager';
 import { createSafeSend } from '../../utils/safe-send';
 import { getSshRemoteById } from '../../stores/getters';
+import { MAX_ENTRIES_PER_SESSION } from '../../../shared/history';
 
 // Type for tunnel manager instance
 type TunnelManagerType = typeof tunnelManagerInstance;
@@ -127,6 +130,7 @@ export { registerDocumentGraphHandlers };
 export { registerSshRemoteHandlers };
 export { registerFilesystemHandlers };
 export { registerParquetHandlers };
+export { registerCodexVisualizationHandlers };
 export { registerAttachmentsHandlers };
 export type { AttachmentsHandlerDependencies };
 export {
@@ -139,7 +143,7 @@ export type { WebHandlerDependencies };
 export { registerWebLoginHandlers };
 export { registerLeaderboardHandlers };
 export type { LeaderboardHandlerDependencies };
-export { registerNotificationsHandlers };
+export { registerNotificationsHandlers, registerNotificationHistoryHandlers };
 export { registerSymphonyHandlers };
 export { registerAgentErrorHandlers };
 export { registerTabNamingHandlers };
@@ -240,7 +244,7 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		);
 	registerHistoryHandlers({
 		safeSend: createSafeSend(() => BrowserWindow.getAllWindows()),
-		getMaxEntries: () => deps.settingsStore.get('maxLogBuffer', 5000) as number,
+		getMaxEntries: () => deps.settingsStore.get('maxLogBuffer', MAX_ENTRIES_PER_SESSION) as number,
 		getSshRemoteById,
 		getSessionById: (id: string) => readSessionRecords().find((s) => s.id === id),
 		getAllSessions: readSessionRecords,
@@ -346,6 +350,7 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		app: deps.app,
 		settingsStore: deps.settingsStore,
 	});
+	registerNotificationHistoryHandlers();
 	// Register notification handlers (OS notifications and TTS). The window
 	// registry getter lets a notification click focus the window that owns the
 	// completing agent rather than always the primary window (multi-window).

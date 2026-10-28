@@ -79,6 +79,7 @@ import type { WizardState } from '../../components/Wizard/WizardContext';
 import type { HistoryEntryInput } from '../agent/useAgentSessionManagement';
 import type { AgentSpawnResult } from '../agent/useAgentExecution';
 import { logger } from '../../utils/logger';
+import { getClaudeTokenSourceFields } from '../../../shared/claudeTokenMode';
 
 // ============================================================================
 // Dependencies interface
@@ -861,6 +862,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 					customArgs: currentSession.customArgs,
 					customEnvVars: currentSession.customEnvVars,
 					customModel: currentSession.customModel,
+					claudeTokenSource: getClaudeTokenSourceFields(currentSession),
 				}
 			);
 
@@ -953,6 +955,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 					customArgs: currentSession.customArgs,
 					customEnvVars: currentSession.customEnvVars,
 					customModel: currentSession.customModel,
+					claudeTokenSource: getClaudeTokenSourceFields(currentSession),
 				}
 			);
 

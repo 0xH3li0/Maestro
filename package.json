@@ -1,8 +1,9 @@
 {
 	"name": "maestro",
-	"version": "1.0.1",
+	"version": "1.0.3",
 	"description": "Maestro hones fractured attention into focused intent.",
 	"main": "dist/main/index.js",
+	"desktopName": "maestro.desktop",
 	"author": {
 		"name": "Pedram Amini",
 		"email": "pedram@runmaestro.ai"
@@ -97,6 +98,7 @@
 		},
 		"files": [
 			"dist/**/*",
+			"!dist/renderer/**/*.map",
 			"package.json"
 		],
 		"asarUnpack": [
@@ -242,7 +244,12 @@
 			"artifactName": "${name}-${version}-${arch}.${ext}",
 			"category": "Development",
 			"icon": "build/icon.png",
+			"syncDesktopName": true,
 			"extraResources": [
+				{
+					"from": "build/icon.png",
+					"to": "icon.png"
+				},
 				{
 					"from": "dist/cli/maestro-cli.js",
 					"to": "maestro-cli.js"
@@ -316,7 +323,8 @@
 			"artifactName": "${productName}-Setup-${version}-${arch}.${ext}"
 		},
 		"portable": {
-			"artifactName": "${productName}-Portable-${version}-${arch}.${ext}"
+			"artifactName": "${productName}-Portable-${version}-${arch}.${ext}",
+			"unpackDirName": true
 		}
 	},
 	"dependencies": {
@@ -383,7 +391,7 @@
 		"js-tiktoken": "^1.0.21",
 		"js-yaml": "^4.2.0",
 		"katex": "^0.19.0",
-		"markdown-it": "^14.3.2",
+		"markdown-it": "^14.3.3",
 		"marked": "^17.0.1",
 		"mermaid": "^11.12.1",
 		"node-pty": "1.2.0-beta.12",
@@ -463,7 +471,7 @@
 		"tailwindcss": "^3.4.1",
 		"typescript": "^6.0.3",
 		"typescript-eslint": "^8.59.2",
-		"vite": "^8.0.11",
+		"vite": "^8.3.4",
 		"vitest": "^4.1.11"
 	},
 	"overrides": {

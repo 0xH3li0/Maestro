@@ -117,6 +117,16 @@ To report to your own Sentry project (a fork, or local debugging), set
 `MAESTRO_SENTRY_DSN` before `npm run build`. Those builds are tagged
 `build: unofficial`.
 
+Renderer source maps: the release workflow builds the renderer with
+`MAESTRO_RENDERER_SOURCEMAPS=1` (hidden maps, no `sourceMappingURL` in the bundle),
+runs `sentry-cli sourcemaps inject` + `upload` against `dist/renderer` when the
+`SENTRY_AUTH_TOKEN` secret is present (release = the tag version, url prefix
+`app://app/`), then deletes every `.map` before packaging. The token needs the
+`project:releases` scope. Without it the step skips and renderer frames stay minified.
+The `vendor-xterm` chunk is the one exception: `skip-xterm-minify` swaps in the
+unminified code after the map is built, so it drops that chunk's map rather than upload
+one that points at the wrong lines.
+
 Also starts memory monitoring for crash diagnostics (breadcrumbs every 60s, warns above 500MB heap).
 
 #### 8. Convenience Store References
@@ -160,7 +170,7 @@ Intercepts `before-quit` to check for busy agents and run cleanup.
 ```typescript
 const logLevel = store.get('logLevel', 'info');
 logger.setLogLevel(logLevel);
-const maxLogBuffer = store.get('maxLogBuffer', 1000);
+const maxLogBuffer = store.get('maxLogBuffer', MAX_ENTRIES_PER_SESSION);
 logger.setMaxLogBuffer(maxLogBuffer);
 ```
 
@@ -273,15 +283,15 @@ The `createWindowManager()` factory returns a `WindowManager` with a `createWind
 
 The window manager sets up multiple crash detection handlers:
 
-| Event                       | Action                                                                             |
-| --------------------------- | ---------------------------------------------------------------------------------- |
-| `render-process-gone`       | Logs, reports to Sentry, auto-reloads (unless intentionally killed)                |
-| `unresponsive`              | Warns, reports to Sentry with memory usage                                         |
-| `responsive`                | Logs recovery                                                                      |
-| `crashed`                   | Logs, reports to Sentry                                                            |
-| `did-fail-load`             | Logs, reports to Sentry (ignores aborted loads)                                    |
-| `preload-error`             | Logs, reports to Sentry as fatal                                                   |
-| `console-message` (level 3) | Forwards renderer errors to main process logger; reports critical errors to Sentry |
+| Event                       | Action                                                                                                                                                                                                                                                                                                     |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `render-process-gone`       | Logs; reports to Sentry unless the renderer was `killed` or exited cleanly; reloads it after 1 s unless it exited cleanly or the app is quitting. Bounded per window: at most 3 reloads in 60 s, exits during a pending reload share it, then it stops reloading and reports the crash loop to Sentry once |
+| `unresponsive`              | Warns, reports to Sentry with memory usage                                                                                                                                                                                                                                                                 |
+| `responsive`                | Logs recovery                                                                                                                                                                                                                                                                                              |
+| `crashed`                   | Logs, reports to Sentry                                                                                                                                                                                                                                                                                    |
+| `did-fail-load`             | Logs, reports to Sentry (ignores aborted loads)                                                                                                                                                                                                                                                            |
+| `preload-error`             | Logs, reports to Sentry as fatal                                                                                                                                                                                                                                                                           |
+| `console-message` (level 3) | Forwards renderer errors to main process logger; reports critical errors to Sentry                                                                                                                                                                                                                         |
 
 ### Auto-Updater Initialization
 
@@ -512,7 +522,7 @@ Each file contains a `HistoryFileData` object with version info and an array of 
 
 ### Benefits Over Legacy Format
 
-- Higher limits: 5,000 entries per session (up from 1,000 global)
+- Higher limits: a per-session cap set by the `maxLogBuffer` setting (default 10,000, up from 1,000 global)
 - Context passing: History files can be passed directly to AI agents via `{{AGENT_HISTORY_PATH}}`
 - Better isolation: Sessions don't pollute each other's history
 - Simpler queries: No filtering needed when reading a session's history

@@ -314,7 +314,9 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 				dynamic: true,
 				// Static fallback used when ~/.codex/models_cache.json hasn't been
 				// written yet (e.g. fresh install) so the dropdown still renders.
-				options: ['', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+				// No `minimal`: no model in the catalogue accepts it any more, and the
+				// API answers it with a 400, so offering it here fails every turn.
+				options: ['', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
 				default: '',
 				// The config key is `model_reasoning_effort`. Codex 0.162 answers the
 				// old `reasoning.effort` with "`reasoning` is ignored" and runs at the

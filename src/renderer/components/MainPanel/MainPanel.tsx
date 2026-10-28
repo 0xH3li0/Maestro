@@ -8,6 +8,7 @@ import { MemoryViewer } from '../MemoryViewer';
 import { TabBar } from '../TabBar';
 import type { BrowserTabViewHandle } from './BrowserTabView';
 import { gitService } from '../../services/git';
+import { jumpToAgent } from '../../services/agentNavigation';
 import { useAgentCapabilities } from '../../hooks';
 import {
 	useAgentModelEffortOptions,
@@ -318,6 +319,7 @@ export const MainPanel = React.memo(
 			onCloseOtherTabs,
 			onCloseTabsLeft,
 			onCloseTabsRight,
+			onCloseTabGroup,
 			// Unified tab system: paint state is derived below from self-sourced session
 			onFileTabSelect,
 			onFileTabClose,
@@ -1316,6 +1318,7 @@ export const MainPanel = React.memo(
 									onGroupRename={handleGroupRename}
 									onGroupSetEmoji={setGroupEmojiAction}
 									onGroupBreakApart={handleGroupBreakApart}
+									onGroupClose={onCloseTabGroup}
 									// Accessibility
 									colorBlindMode={colorBlindMode}
 									// Hide local-only OS actions (Reveal in Finder) when the agent runs over SSH
@@ -1328,7 +1331,13 @@ export const MainPanel = React.memo(
 						    Chat view (and every non-Pianola agent) renders the normal content. */}
 						{showPianolaWorkspace && pianolaView === 'dashboard' ? (
 							<ErrorBoundary>
-								<PianolaDashboard theme={theme} onJumpToAgent={setActiveSessionId} />
+								<PianolaDashboard
+									theme={theme}
+									onJumpToAgent={(sessionId, tabId) => {
+										if (tabId) jumpToAgent(sessionId, { tabId });
+										else setActiveSessionId(sessionId);
+									}}
+								/>
 							</ErrorBoundary>
 						) : (
 							<>

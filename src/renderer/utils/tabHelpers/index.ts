@@ -22,6 +22,9 @@ import { generateId } from '../ids';
 import { getAutoRunFolderPath } from '../existingDocsDetector';
 import { createTerminalTab, nextTerminalCoworkingId } from '../terminalTabHelpers';
 import {
+	agentHasVisibleTab,
+	createBlankAiTab,
+	ensureAgentHasVisibleTab,
 	findActiveUnifiedTabIndex,
 	getNavigableUnifiedTabOrder,
 	hasUnreadVisibleTab,
@@ -56,7 +59,15 @@ import {
 // Both live in unifiedTabOrderUtils so terminalTabHelpers can reach them without a
 // circular import; re-exported here because tabHelpers is where callers look for
 // tab visibility rules.
-export { getNavigableUnifiedTabOrder, hasUnreadVisibleTab, isAiTabHidden, visibleAiTabs };
+export {
+	agentHasVisibleTab,
+	createBlankAiTab,
+	ensureAgentHasVisibleTab,
+	getNavigableUnifiedTabOrder,
+	hasUnreadVisibleTab,
+	isAiTabHidden,
+	visibleAiTabs,
+};
 export {
 	aiTabFocusFields,
 	fileTabFocusFields,
@@ -889,6 +900,25 @@ export function resolveQueuedItemTarget(
 }
 
 /**
+ * True when the tab a queued item would run on is already mid-turn.
+ *
+ * The agent process is keyed per tab (`${sessionId}-ai-${tabId}`), so an agent can
+ * read idle - or a parallel `-batch-` Auto Run task can exit - while that exact tab
+ * is still running its own turn. Dispatching onto it makes main refuse the spawn
+ * ("Agent process already running for session ...-ai-<tabId>", MAESTRO-ZS). Every
+ * drain path checks this first and leaves the item queued; the busy tab's own exit
+ * drains it.
+ */
+export function isQueuedItemTargetBusy(session: Session, item: Pick<QueuedItem, 'tabId'>): boolean {
+	const target = resolveQueuedItemTarget(session, item);
+	if (!target) return false;
+	const tab =
+		session.aiTabs?.find((candidate) => candidate.id === target.tabId) ??
+		session.orphanedThinkingTabs?.find((candidate) => candidate.id === target.tabId);
+	return tab?.state === 'busy';
+}
+
+/**
  * Mark a tab as running a dequeued queue item: set it busy/thinking and, for message
  * items, append the user-visible log entry. Shared by every dispatch path so the
  * busy-state + log construction stays identical (and lands on the resolved target tab,
@@ -1251,17 +1281,7 @@ export function closeTab(
 	let createdFreshTab = false;
 	let freshTabId = '';
 	if (visibleUpdatedTabs.length === 0 && otherTabCount === 0) {
-		const freshTab: AITab = {
-			id: generateId(),
-			agentSessionId: null,
-			name: null,
-			starred: false,
-			logs: [],
-			inputValue: '',
-			stagedImages: [],
-			createdAt: Date.now(),
-			state: 'idle',
-		};
+		const freshTab = createBlankAiTab();
 		// Hidden consult tabs survive alongside the replacement - they are the
 		// user's data, and revealing one later is still their call.
 		updatedTabs = [...updatedTabs, freshTab];
@@ -1628,6 +1648,8 @@ export interface CloseFileTabResult {
 /**
  * Close a file preview tab and add it to the unified closed tab history.
  * When the closed tab was active, selects the next tab in unifiedTabOrder.
+ * Closing the agent's last visible tab lands on a fresh AI chat
+ * (see ensureAgentHasVisibleTab).
  *
  * @param session - The Maestro session containing the file tab
  * @param tabId - The ID of the file tab to close
@@ -1747,7 +1769,8 @@ export function closeFileTab(session: Session, tabId: string): CloseFileTabResul
 				newInputMode = 'ai';
 			}
 		} else {
-			// No tabs left - shouldn't happen as AI tabs should always exist
+			// Nothing left in the strip: ensureAgentHasVisibleTab below mints the
+			// blank AI chat and focuses it.
 			newActiveFileTabId = null;
 			newActiveBrowserTabId = null;
 			newActiveTerminalTabId = null;
@@ -1763,7 +1786,7 @@ export function closeFileTab(session: Session, tabId: string): CloseFileTabResul
 
 	return {
 		closedTabEntry,
-		session: {
+		session: ensureAgentHasVisibleTab({
 			...session,
 			filePreviewTabs: updatedFilePreviewTabs,
 			unifiedTabOrder: updatedUnifiedTabOrder,
@@ -1773,7 +1796,7 @@ export function closeFileTab(session: Session, tabId: string): CloseFileTabResul
 			activeTabId: newActiveTabId,
 			inputMode: newInputMode,
 			unifiedClosedTabHistory: updatedUnifiedHistory,
-		},
+		}),
 	};
 }
 
@@ -1854,7 +1877,7 @@ export function closeBrowserTab(session: Session, tabId: string): CloseBrowserTa
 
 	return {
 		closedTabEntry,
-		session: {
+		session: ensureAgentHasVisibleTab({
 			...session,
 			browserTabs: updatedBrowserTabs,
 			unifiedTabOrder: updatedUnifiedTabOrder,
@@ -1864,7 +1887,7 @@ export function closeBrowserTab(session: Session, tabId: string): CloseBrowserTa
 			activeTerminalTabId: nextActiveTerminalTabId,
 			inputMode: nextInputMode,
 			unifiedClosedTabHistory: updatedUnifiedHistory,
-		},
+		}),
 	};
 }
 
@@ -2284,7 +2307,10 @@ export function reopenUnifiedClosedTab(session: Session): ReopenUnifiedClosedTab
  *      tab living inside a tiled group focuses its pane instead of being orphaned.
  *   2. The tab was closed - restore it from the closed-tab history so the jump
  *      lands on that conversation rather than whatever tab happens to be active.
- *   3. No tabId (or it aged out of history) - just force the AI view.
+ *      A tab closed mid-turn that aged out of that history is still parked in
+ *      `orphanedThinkingTabs` while its process runs, so it is restored from
+ *      there (same id, so the running process re-attaches to the visible tab).
+ *   3. No tabId (or it is gone everywhere) - just force the AI view.
  *
  * @param session - The session to update
  * @param tabId - The AI tab to land on. Omit to force the AI view only.
@@ -2298,6 +2324,10 @@ export function focusAiTabInSession(session: Session, tabId?: string): Session {
 		const reopened = reopenClosedAiTabById(session, tabId);
 		if (reopened) {
 			return { ...reopened.session, ...aiTabFocusFields(reopened.tabId) };
+		}
+		const restored = restoreOrphanedTab(session, tabId);
+		if (restored) {
+			return { ...restored.session, ...aiTabFocusFields(restored.tab.id) };
 		}
 	}
 	return { ...session, ...aiTabFocusFields() };
@@ -2481,6 +2511,24 @@ export function getBusyTabs(session: Session, options: { includeOrphans?: boolea
 		: (session.aiTabs ?? []);
 
 	return tabs.filter((tab) => tab.state === 'busy');
+}
+
+/**
+ * The AI tab a "jump to this running agent" lands on: the tab doing the work.
+ * Prefers the active tab when it is the busy one (the jump then changes nothing
+ * but the agent), then the first busy tab in the strip, then a busy tab the user
+ * closed mid-turn (`orphanedThinkingTabs`), which the jump reopens through
+ * `focusAiTabInSession`. Hidden consult tabs are skipped: they answer in the
+ * background, and a palette jump must not surface one.
+ *
+ * @returns undefined when no tab is busy (idle agent, or legacy agent-level busy).
+ */
+export function getRunningJumpTab(session: Session): AITab | undefined {
+	const isRunning = (tab: AITab) => tab.state === 'busy' && !isAiTabHidden(tab);
+	const openTabs = session.aiTabs ?? [];
+	const activeTab = openTabs.find((tab) => tab.id === session.activeTabId);
+	if (activeTab && isRunning(activeTab)) return activeTab;
+	return openTabs.find(isRunning) ?? (session.orphanedThinkingTabs ?? []).find(isRunning);
 }
 
 /**

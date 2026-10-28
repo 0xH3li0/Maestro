@@ -9,6 +9,7 @@ import { estimateContextUsage } from '../../main/parsers/usage-aggregator';
 import { getAgentDefinition } from '../../main/agents/definitions';
 import { withMaestroClient } from '../services/maestro-client';
 import type { ToolType } from '../../shared/types';
+import { prependNewSessionMessageOnFirstTurn } from '../../shared/newSessionMessage';
 
 interface SendOptions {
 	session?: string;
@@ -131,6 +132,15 @@ export async function send(
 		? await prepareMaestroSystemPromptCli(agent)
 		: undefined;
 
+	// A send without `--session` opens a new provider session, so it carries the
+	// agent's New Session Message like the first message of a desktop tab does.
+	// Agent-only: the run ledger below records the message as it was sent.
+	const agentPrompt = prependNewSessionMessageOnFirstTurn(
+		message,
+		agent.newSessionMessage,
+		agentSessionId
+	);
+
 	// Spawn agent - spawnAgent handles --resume vs fresh session internally.
 	// Wrapped in captureCliRun so the send lands in the agent-run ledger.
 	const result = await captureCliRun(
@@ -142,7 +152,7 @@ export async function send(
 			source: 'cli:send',
 		},
 		() =>
-			spawnAgent(agent.toolType, agent.cwd, message, agentSessionId, {
+			spawnAgent(agent.toolType, agent.cwd, agentPrompt, agentSessionId, {
 				readOnlyMode: options.readOnly,
 				customModel: agent.customModel,
 				customEffort: agent.customEffort,
@@ -155,6 +165,8 @@ export async function send(
 				enableMaestroP: agent.enableMaestroP,
 				maestroPMode: agent.maestroPMode,
 				maestroPPath: agent.maestroPPath,
+				// The turn runs in the agent's own cwd (#1872).
+				acceptWorkspaceTrust: true,
 			}),
 		(r) => (r.success ? 0 : 1)
 	);
