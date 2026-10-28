@@ -741,7 +741,10 @@ export function useSessionRestoration(): SessionRestorationReturn {
 			let gitTags = correctedSession.gitTags;
 			let gitRefsCacheTime = correctedSession.gitRefsCacheTime;
 
-			if (!isRemoteSession && !isDormant) {
+			// Browser bootstrap carries the host's cached git metadata. Reusing it
+			// avoids a scan per agent and excess bridge traffic that can delay
+			// WebSocket heartbeats during startup.
+			if (!isWebDesktop() && !isRemoteSession && !isDormant) {
 				const GIT_TIMEOUT_MS = 5000;
 				// NOTE: On timeout, the inner git operations continue running in the
 				// background until the OS/filesystem eventually resolves/rejects them.

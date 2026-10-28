@@ -1328,6 +1328,28 @@ describe('restoreSession - Runtime state reset', () => {
 // ============================================================================
 
 describe('restoreSession - Git info (local sessions)', () => {
+	it('uses host git metadata in the web client without starting a git scan per agent', async () => {
+		runtime.web = true;
+		const session = createMockSession({
+			isGitRepo: true,
+			gitBranches: ['main', 'host-branch'],
+			gitTags: ['v1.0'],
+			gitRefsCacheTime: 1234,
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+		expect(mockGitService.isRepo).not.toHaveBeenCalled();
+		expect(mockGitService.getBranches).not.toHaveBeenCalled();
+		expect(mockGitService.getTags).not.toHaveBeenCalled();
+		expect(restored!.isGitRepo).toBe(true);
+		expect(restored!.gitBranches).toEqual(['main', 'host-branch']);
+		expect(restored!.gitTags).toEqual(['v1.0']);
+		expect(restored!.gitRefsCacheTime).toBe(1234);
+	});
+
 	it('fetches git info synchronously for local sessions', async () => {
 		const session = createMockSession({
 			sshRemoteId: undefined,
@@ -2206,13 +2228,6 @@ describe('Session & Group loading effect', () => {
 		await vi.waitFor(() => expect(useSessionStore.getState().sessionsLoaded).toBe(true));
 		const added = createMockSession({ id: 'added' });
 		mockGetBootstrap.mockResolvedValueOnce([kept, added]);
-		let finishRestore!: (value: boolean) => void;
-		mockGitService.isRepo.mockImplementationOnce(
-			() =>
-				new Promise<boolean>((resolve) => {
-					finishRestore = resolve;
-				})
-		);
 		const work: Promise<void>[] = [];
 		act(() =>
 			window.dispatchEvent(
@@ -2225,10 +2240,10 @@ describe('Session & Group loading effect', () => {
 				})
 			)
 		);
-		await vi.waitFor(() => expect(finishRestore).toEqual(expect.any(Function)));
-		act(() => useSessionStore.getState().setSessions([]));
 		await act(async () => {
-			finishRestore(false);
+			// The snapshot settles first; remove the current session while the
+			// additions' Promise.all is pending, independent of git I/O.
+			queueMicrotask(() => queueMicrotask(() => useSessionStore.getState().setSessions([])));
 			await Promise.all(work);
 		});
 		expect(useSessionStore.getState().sessions.map((session) => session.id)).toEqual(['added']);
