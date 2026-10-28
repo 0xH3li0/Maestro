@@ -7,10 +7,12 @@ import { createPianolaFsStore } from '../../../shared/pianola/fs-store';
 import {
 	runPianolaScopeCycle,
 	pianolaScopeSnapshotFromDesktop,
+	pianolaScopeConfigurationFingerprint,
 	type PianolaScopeCycleDeps,
 	type PianolaScopeSnapshot,
 	type PianolaScopeSnapshotTab,
 } from '../../../shared/pianola/pianola-scope-cycle';
+import { resolvePianolaScopeOwnership } from '../../../shared/pianola/pianola-scope';
 import { MAX_DISPATCH_ATTEMPTS } from '../../../shared/pianola/pianola-watcher';
 import { updatePianolaDecision } from '../../../shared/pianola/pianola-decision-lifecycle';
 import type { PianolaMessage, PianolaRule } from '../../../shared/pianola/types';
@@ -975,4 +977,132 @@ describe('current coverage failure producers', () => {
 			expect(f.deps.dispatch).not.toHaveBeenCalled();
 		}
 	);
+});
+
+
+describe('RF review regressions', () => {
+	it('RF01 rebinds a pending human ask after an unrelated selection edit', async () => {
+		const f = fixture();
+		f.rules.splice(0);
+		const tab = f.tab();
+		await f.cycle();
+		f.history(tab, [message('pending')]);
+		await f.cycle();
+		const original = f.store.readDecisions()[0];
+		expect(original.lifecycle?.status).toBe('waiting_human');
+		f.scope.selection.agentIds.push('another-owner');
+		f.saveScopes(f.scope);
+		await f.cycle();
+		const records = f.store.readDecisions();
+		expect(records).toHaveLength(1);
+		expect(records[0].id).toBe(original.id);
+		expect(records[0].lifecycle?.guard.configurationFingerprint).toBe(
+			pianolaScopeConfigurationFingerprint(f.scope)
+		);
+		expect(f.deps.dispatch).not.toHaveBeenCalled();
+	});
+
+	it('RF01 retains the accepted manager handoff after selection changes', async () => {
+		const f = fixture();
+		f.rules.splice(0);
+		f.deps.watch.resolveProfile = () => ({ profile: 'Use task authority.', updatedAt: 1 });
+		vi.mocked(f.deps.requestJudgment!).mockImplementation(async (_request, guard) => {
+			const record = f.store.readDecisions().find((entry) => entry.id === guard.decisionId)!;
+			f.store.appendDecision(updatePianolaDecision(record, {
+				delivery: 'accepted', managerTabId: 'manager-tab', deadlineAt: Date.parse('2026-10-29T00:00:00Z'),
+			}, f.deps.watch.now()));
+			return { status: 'accepted' };
+		});
+		const tab = f.tab();
+		await f.cycle();
+		f.history(tab, [message('manager-ask')]);
+		await f.cycle();
+		f.scope.selection.agentIds.push('another-owner');
+		f.saveScopes(f.scope);
+		await f.cycle();
+		const record = f.store.readDecisions()[0];
+		expect(record.lifecycle).toMatchObject({ status: 'mira_processing', managerTabId: 'manager-tab' });
+		expect(record.lifecycle?.guard.configurationFingerprint).toBe(pianolaScopeConfigurationFingerprint(f.scope));
+		expect(f.deps.requestJudgment).toHaveBeenCalledTimes(1);
+	});
+
+	it('RF01 keeps an unknown delivery claim across a selection edit', async () => {
+		const f = fixture();
+		const tab = f.tab();
+		await f.cycle();
+		vi.mocked(f.deps.dispatch).mockResolvedValue({ status: 'unknown', error: 'receipt lost' });
+		f.history(tab, [message('unknown-ask')]);
+		await f.cycle();
+		f.scope.selection.agentIds.push('another-owner');
+		f.saveScopes(f.scope);
+		await f.cycle();
+		expect(f.checkpoint().tabs[0].unresolvedIntent).toMatchObject({ messageId: 'unknown-ask' });
+		expect(f.deps.dispatch).toHaveBeenCalledTimes(1);
+	});
+
+	it('RF03 persists an oversized question without its optional display text', async () => {
+		const f = fixture();
+		f.rules.splice(0);
+		const tab = f.tab();
+		await f.cycle();
+		f.history(tab, [{ ...message('huge', 'x'.repeat(70000) + ' Should I continue?'),
+			awaitingInput: { kind: 'question', prompt: 'Should I continue?' } }]);
+		const result = await f.cycle();
+		expect(result.issues.join(' ')).not.toContain('oversized Pianola decision lifecycle');
+		const records = f.store.readDecisions();
+		expect(records).toHaveLength(1);
+		expect(records[0].classification.questionText).toBeUndefined();
+		expect(records[0].lifecycle?.status).toBe('waiting_human');
+	});
+
+	it('RF02 preserves a host suspension after a resumed checkpoint is written', async () => {
+		const f = fixture();
+		const tab = f.tab();
+		await f.cycle();
+		const checkpoint = f.checkpoint();
+		checkpoint.status = 'suspended';
+		f.store.writeScopeCheckpoint(checkpoint);
+		const read = f.store.readScopeCheckpoint;
+		const write = f.store.writeScopeCheckpoint;
+		let armedWritten = false;
+		f.deps.store = {
+			...f.store,
+			writeScopeCheckpoint(value) {
+				write(value);
+				if (value.status === 'armed') armedWritten = true;
+			},
+			readScopeCheckpoint(id) {
+				const value = read(id);
+				if (armedWritten && value) {
+					value.status = 'suspended';
+					write(value);
+				}
+				return value;
+			},
+		};
+		tab.busy = true;
+		f.history(tab, [message('during-resume')]);
+		await f.cycle();
+		expect(f.checkpoint().status).toBe('suspended');
+		expect(f.deps.dispatch).not.toHaveBeenCalled();
+	});
+
+	it.each([true, false])('RF06 ignores unrelated scope exclusions when enabled=%s', (enabled) => {
+		const f = fixture();
+		const tab = f.tab();
+		const unrelated = {
+			...f.scope,
+			id: otherScopeId,
+			enabled,
+			selection: { ...f.scope.selection, agentIds: ['other'], excludedAgentIds: ['owner'] },
+		};
+		expect(resolvePianolaScopeOwnership(tab, f.snapshot.owners, [f.scope, unrelated], []))
+			.toEqual({ kind: 'scope', scopeId });
+		f.scope.selection.excludedAgentIds.push('owner');
+		expect(resolvePianolaScopeOwnership(tab, f.snapshot.owners, [f.scope, unrelated], []).kind)
+			.toBe('excluded');
+		expect(resolvePianolaScopeOwnership(tab, f.snapshot.owners, [f.scope, unrelated], [
+			{ agentId: 'owner', tabId: tab.tabId, enabled: true },
+		])).toEqual({ kind: 'explicit-watch' });
+	});
 });

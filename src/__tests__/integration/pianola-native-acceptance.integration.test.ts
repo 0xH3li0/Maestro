@@ -1314,6 +1314,34 @@ describe('R03 explicit desktop resolution admission', () => {
 		}
 	);
 
+	 it.each(['rejected', 'unknown'] as const)(
+		'RF04 permits a human retry only after a definitive %s receipt',
+		async (receipt) => {
+			await fixture.select();
+			await fixture.pump('baseline');
+			const ask = fixture.log(TAB, 'Should I deploy to production?');
+			await fixture.pump('human decision');
+			const id = fixture.decision(ask.id).id;
+			fixture.receipt = receipt;
+			expect(await fixture.ipc('resolve-decision', { decisionId: id, answer: ANSWER }))
+				.toMatchObject({ status: receipt });
+			expect(fixture.decision(ask.id).lifecycle).toMatchObject(
+				receipt === 'rejected'
+					? { status: 'waiting_human', nextActor: 'human', delivery: 'rejected' }
+					: { status: 'blocked', nextActor: 'operator', delivery: 'unknown' }
+			);
+			fixture.receipt = 'accepted';
+			const retry = fixture.ipc('resolve-decision', { decisionId: id, answer: ANSWER });
+			if (receipt === 'rejected') {
+				expect(await retry).toMatchObject({ status: 'accepted' });
+				expect(fixture.sends).toHaveLength(2);
+			} else {
+				await expect(retry).rejects.toThrow();
+				expect(fixture.sends).toHaveLength(1);
+			}
+		}
+	);
+
 	it('binds explicit human provenance at native IPC and prevents a duplicate desktop send', async () => {
 		await fixture.select();
 		await fixture.pump('baseline');
