@@ -112,21 +112,35 @@ describe('RuleEditor save round-trip', () => {
 		expect(onSave.mock.calls[0][0].match).toEqual(rule.match);
 	});
 
-	it('requires a scope id for a non-global rule before Save', () => {
+	 it.each([
+		['project', 'Project path', '/path/to/project', 'project path', '/repo/project'],
+		['tab', 'Tab id', 'tab-id', 'tab id', 'tab-1'],
+		['agent', 'Agent id', 'agent-id', 'agent id', 'agent-1'],
+		['group', 'Group id', 'group-id', 'group id', 'group-1'],
+	] as const)('requires and saves the %s scope identifier', (scope, label, placeholder, description, id) => {
 		const onSave = vi.fn();
 		render(<RuleEditor theme={theme} rule={null} onCancel={vi.fn()} onSave={onSave} />);
-
-		// Switch to project scope; the scope-id field is now required. The scope
-		// select is the first combobox in the form.
-		fireEvent.change(screen.getAllByRole('combobox')[0], { target: { value: 'project' } });
-		fireEvent.change(screen.getByPlaceholderText('The exact text Pianola sends to the agent.'), {
-			target: { value: 'Use tabs.' },
-		});
-
-		expect(screen.getByText(/needs a project path/i)).toBeInTheDocument();
-		const save = screen.getByText('Save rule').closest('button');
+		fireEvent.change(screen.getAllByRole('combobox')[0], { target: { value: scope } });
+		fireEvent.change(screen.getByPlaceholderText('The exact text Pianola sends to the agent.'), { target: { value: 'Use tabs.' } });
+		expect(screen.getByText(label)).toBeInTheDocument();
+		const identifier = screen.getByPlaceholderText(placeholder);
+		expect(screen.getByText(`A ${scope} rule needs a ${description}.`)).toBeInTheDocument();
+		const save = screen.getByRole('button', { name: 'Save rule' });
 		expect(save).toBeDisabled();
-		fireEvent.click(screen.getByText('Save rule'));
-		expect(onSave).not.toHaveBeenCalled();
+		fireEvent.change(identifier, { target: { value: `  ${id}  ` } });
+		expect(save).toBeEnabled();
+		fireEvent.click(save);
+		expect(onSave).toHaveBeenCalledOnce();
+		expect(onSave.mock.calls[0][0]).toMatchObject({ scope, scopeId: id });
+	});
+
+	it('does not require or save an identifier for global scope', () => {
+		const onSave = vi.fn();
+		render(<RuleEditor theme={theme} rule={null} onCancel={vi.fn()} onSave={onSave} />);
+		fireEvent.change(screen.getByPlaceholderText('The exact text Pianola sends to the agent.'), { target: { value: 'Use tabs.' } });
+		expect(screen.queryByPlaceholderText('/path/to/project')).not.toBeInTheDocument();
+		fireEvent.click(screen.getByRole('button', { name: 'Save rule' }));
+		expect(onSave.mock.calls[0][0]).toMatchObject({ scope: 'global' });
+		expect(onSave.mock.calls[0][0].scopeId).toBeUndefined();
 	});
 });

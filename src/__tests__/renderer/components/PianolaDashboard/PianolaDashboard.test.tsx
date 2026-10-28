@@ -286,18 +286,18 @@ describe('scope decision rendered lifecycle and guarded human controls', () => {
 	});
 
 	it.each([
-		['mira_processing', 'manager', 'Mira bearbeitet', 'Mira', 'Review the bounded naming question'],
-		['waiting_human', 'human', 'Wartet auf Chris', 'Chris', 'Choose count or total'],
+		['mira_processing', 'manager', 'Manager processing', 'Manager', 'Review the bounded naming question'],
+		['waiting_human', 'human', 'Waiting for human', 'Human', 'Choose count or total'],
 		[
 			'agent_running',
 			'recipient',
-			'Agent arbeitet weiter',
+			'Agent continuing',
 			'Agent',
 			'Continue the acknowledged task',
 		],
-		['blocked', 'operator', 'Technisch blockiert', 'Betreiber', 'Restore native transcript access'],
-		['paused', 'none', 'Pausiert', 'Niemand', 'Explicitly resume the scope'],
-		['done', 'none', 'Erledigt', 'Niemand', 'Completion confirmed in transcript'],
+		['blocked', 'operator', 'Blocked', 'Operator', 'Restore native transcript access'],
+		['paused', 'none', 'Paused', 'None', 'Explicitly resume the scope'],
+		['done', 'none', 'Done', 'None', 'Completion confirmed in transcript'],
 	] as const)(
 		'renders %s with its responsible actor and concrete next action',
 		(status, nextActor, label, actor, nextAction) => {
@@ -366,7 +366,7 @@ describe('scope decision rendered lifecycle and guarded human controls', () => {
 		expect(screen.getByRole('status')).toHaveTextContent(
 			'Answer accepted for delivery; awaiting agent acknowledgment.'
 		);
-		expect(screen.queryByText(/Agent arbeitet weiter/)).not.toBeInTheDocument();
+		expect(screen.queryByText(/Agent continuing/)).not.toBeInTheDocument();
 		expect(refresh).toHaveBeenCalledTimes(1);
 	});
 
@@ -397,4 +397,30 @@ describe('scope decision rendered lifecycle and guarded human controls', () => {
 			expect(refresh).toHaveBeenCalledTimes(1);
 		}
 	);
+	it('allows a human to retry a persisted definitive rejection after refresh', async () => {
+		const rejected = structuredClone(pendingRecord);
+		rejected.lifecycle = { ...rejected.lifecycle!, phase: 'answer', delivery: 'rejected' };
+		rejected.deliveryStatus = 'admitted';
+		vi.mocked(window.maestro.pianola.resolveDecision).mockResolvedValueOnce({ status: 'accepted' });
+		const view = render(<PianolaDashboard theme={theme} onJumpToAgent={vi.fn()} />);
+		hookMock.usePianolaDashboardData.mockReturnValue({ data: emptyData(), decisions: [rejected], refresh });
+		view.rerender(<PianolaDashboard theme={theme} onJumpToAgent={vi.fn()} />);
+		fireEvent.change(screen.getByRole('textbox', { name: 'Human answer' }), { target: { value: 'Try again' } });
+		fireEvent.click(screen.getByRole('button', { name: 'Send human answer' }));
+		await waitFor(() => expect(window.maestro.pianola.resolveDecision).toHaveBeenCalledWith({ decisionId: rejected.id, answer: 'Try again' }));
+		expect(await screen.findByRole('status')).toHaveTextContent('Answer accepted for delivery');
+	});
+
+	it('shows the handler message without the Electron IPC wrapper', async () => {
+		vi.mocked(window.maestro.pianola.resolveDecision).mockRejectedValueOnce(
+			new Error("Error invoking remote method 'pianola:resolveDecision': Error: Pending question changed")
+		);
+		render(<PianolaDashboard theme={theme} onJumpToAgent={vi.fn()} />);
+		fireEvent.change(screen.getByRole('textbox', { name: 'Human answer' }), { target: { value: 'Use count' } });
+		fireEvent.click(screen.getByRole('button', { name: 'Send human answer' }));
+		await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Pending question changed'));
+		expect(screen.getByRole('status')).not.toHaveTextContent('Error invoking remote method');
+		expect(screen.getByRole('textbox', { name: 'Human answer' })).toHaveValue('Use count');
+	});
+
 });

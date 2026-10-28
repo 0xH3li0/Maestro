@@ -278,7 +278,7 @@ describe('R08 rendered Suggestions review and persisted reload', () => {
 		const close = vi.fn();
 		render(<PianolaModal theme={theme} onClose={close} />);
 		fireEvent.click(await screen.findByText('Suggestions (1)'));
-		expect(screen.getByText(/Pending proposal.*owner: human/)).toHaveTextContent(
+		expect(screen.getByText(/Pending proposal.*Owner: human/)).toHaveTextContent(
 			'Not active until approved'
 		);
 		expect(screen.getByText(/Scope: agent/)).toHaveTextContent('fixture-agent');
