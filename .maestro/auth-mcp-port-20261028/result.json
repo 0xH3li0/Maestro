@@ -3,8 +3,8 @@
 	"branch": "fix/auth-mcp-supervision-rc-20261028",
 	"head": {
 		"delivery_commit": "the commit containing this result.json; resolve git rev-parse HEAD after checkout",
-		"previous_published_head": "d287a9a444991297aafac8931bcf0ba5103eeea7",
-		"source_tree": "6932c0aff9345a29cff19784dc882fd1cf09a4ff"
+		"previous_published_head": "b9aa0447d2a8047f8962ed6cb675d5d8aa9adf45",
+		"source_tree": "ded0c3241ef19eba6dd007f3b054c2d1b9e7c74c"
 	},
 	"upstream_basis": "1fe7a03b072f63a0f0ced53b1f5eb1b8f8f3fe06",
 	"review_disposition": {
@@ -14,7 +14,8 @@
 		"human_reviews_at_capture": [],
 		"coderabbit_4405401116": "JSON artifact formatted, content preserved, Prettier verified",
 		"coderabbit_4405401127": "already corrected in c1e62a7500, Prettier verified",
-		"coderabbit_4405568024": "fixed in d287a9a444991297aafac8931bcf0ba5103eeea7, 487 focused tests green, independent reviewers accepted, replied after push"
+		"coderabbit_4405568024": "fixed in d287a9a444991297aafac8931bcf0ba5103eeea7, 487 focused tests green, independent reviewers accepted, replied after push",
+		"coderabbit_4405751238": "valid fixture stability issue; exit from completed stdout write callback in late-output and success paths; two lifecycle suites 10 tests passed; reply/resolve after publication"
 	},
 	"ci": {
 		"checks_url": "https://github.com/RunMaestro/Maestro/pull/1944/checks",
@@ -28,7 +29,8 @@
 		"lint": "passed; repository ignores test/fixture files",
 		"main_cli_types": "blocked by missing shared dependencies, upstream clean CI typecheck passed on initial product head",
 		"full_suite": "intentionally omitted",
-		"validate_push": "intentionally omitted"
+		"validate_push": "intentionally omitted",
+		"fixture_final": "2 suites, 10 tests passed after callback correction"
 	},
 	"publication": {
 		"target": "origin HEAD:refs/heads/fix/auth-mcp-supervision-rc-20261028",

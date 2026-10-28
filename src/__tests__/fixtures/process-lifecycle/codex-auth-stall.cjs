@@ -13,18 +13,18 @@ if (phase === 'late-output' || phase === 'after-model-late-output')
 			JSON.stringify({
 				type: 'item.completed',
 				item: { id: 'late', type: 'agent_message', text: 'Last answer' },
-			})
+			}),
+			() => process.exit(0)
 		);
-		process.exit(0);
 	});
 if (phase === 'success') {
-	console.log(
+	return process.stdout.write(
 		JSON.stringify({
 			type: 'item.completed',
 			item: { id: 'answer', type: 'agent_message', text: 'Done' },
-		})
+		}) + '\n',
+		() => process.exit(0)
 	);
-	process.exit(0);
 }
 const mcp = spawn(process.execPath, ['-e', "setInterval(() => {}, 1000); console.log('ready')"], {
 	stdio: ['ignore', 'pipe', 'inherit'],

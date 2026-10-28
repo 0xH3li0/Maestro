@@ -113,5 +113,13 @@
 			"logs": ["check-logs/delivery-drain-eslint.log", "check-logs/delivery-drain-prettier.log"]
 		}
 	],
-	"delivery_source_tree": "6932c0aff9345a29cff19784dc882fd1cf09a4ff"
+	"delivery_source_tree": "6932c0aff9345a29cff19784dc882fd1cf09a4ff",
+	"delivery_fixture_final": {
+		"command": "vitest run CLI and desktop auth lifecycle suites",
+		"exit": 0,
+		"tests": 10,
+		"log": "check-logs/delivery-fixture-final.log",
+		"format": "scoped Prettier passed",
+		"source_tree": "ded0c3241ef19eba6dd007f3b054c2d1b9e7c74c"
+	}
 }
