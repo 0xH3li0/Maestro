@@ -327,13 +327,13 @@ Maestro spawns each provider's own CLI, so it does not have a "model gateway" se
 
 Set these in **Edit Agent → Environment Variables (optional)** (`Alt+Cmd+,` / `Alt+Ctrl+,`) so they apply to that agent alone, or in **Settings → Environment** to apply them everywhere.
 
-| Provider          | Variables that redirect it                                                                                                            | Notes                                                                            |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| **Claude Code**   | `ANTHROPIC_BASE_URL` plus `ANTHROPIC_AUTH_TOKEN` (gateway token) or `ANTHROPIC_API_KEY`. `CLAUDE_CONFIG_DIR` picks a different login. | The endpoint must speak the Anthropic Messages API. See the warning below.       |
-| **Codex**         | `OPENAI_API_KEY`, and `CODEX_HOME` to point at a config directory with its own `base_url`                                             | Codex reads a custom model provider from its own config file.                    |
-| **OpenCode**      | `OPENCODE_CONFIG_DIR`, plus the provider key var for whichever backend you configure (`ANTHROPIC_API_KEY`, `GROQ_API_KEY`, and so on) | OpenCode recognizes roughly a hundred `*_API_KEY` vars and stores them together. |
-| **Copilot CLI**   | `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN` (the CLI's own precedence order)                                                   | Consulted only when there is no stored login. The backend is not redirectable.   |
-| **Factory Droid** | Configured in Droid's own settings                                                                                                    | Maestro passes the environment through but does not define the vars.             |
+| Provider          | Variables that redirect it                                                                                                              | Notes                                                                            |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| **Claude Code**   | `ANTHROPIC_BASE_URL` plus `ANTHROPIC_AUTH_TOKEN` (gateway token) or `ANTHROPIC_API_KEY`. `CLAUDE_CONFIG_DIR` picks a different login.   | The endpoint must speak the Anthropic Messages API. See the warning below.       |
+| **Codex**         | `OPENAI_API_KEY`, and `CODEX_HOME` to point at a config directory with its own `base_url`                                               | Codex reads a custom model provider from its own config file.                    |
+| **OpenCode**      | `OPENCODE_CONFIG_DIR`, plus the provider key var for whichever backend you configure (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and so on) | OpenCode recognizes roughly a hundred `*_API_KEY` vars and stores them together. |
+| **Copilot CLI**   | `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN` (the CLI's own precedence order)                                                     | Consulted only when there is no stored login. The backend is not redirectable.   |
+| **Factory Droid** | Configured in Droid's own settings                                                                                                      | Maestro passes the environment through but does not define the vars.             |
 
 Claude Code also honors `CLAUDE_CODE_USE_BEDROCK=1` and `CLAUDE_CODE_USE_VERTEX=1`, which route it to AWS Bedrock or Google Vertex AI. Those take credentials from the cloud SDK chain rather than from an Anthropic key, and they override the variables above.
 
@@ -347,10 +347,10 @@ maestro-cli update-agent <agent-id> --env ANTHROPIC_AUTH_TOKEN=sk-gateway-...
 #### What Will Not Work
 
 <Warning>
-An OpenAI-compatible gateway cannot back Claude Code directly. OpenRouter, Together, and similar routers expose an OpenAI-shaped `/chat/completions` endpoint, while Claude Code speaks the Anthropic Messages API. Pointing `ANTHROPIC_BASE_URL` straight at one of them produces request failures, not a working agent. Put a translating proxy (LiteLLM, `claude-code-router`, or the router's own Anthropic-compatible route if it publishes one) in between, and point `ANTHROPIC_BASE_URL` at that. Codex and OpenCode have no such problem, because they are OpenAI-shaped already.
+An OpenAI-compatible gateway cannot back Claude Code directly. Many routers expose only an OpenAI-shaped `/chat/completions` endpoint, while Claude Code speaks the Anthropic Messages API. Pointing `ANTHROPIC_BASE_URL` straight at one of them produces request failures, not a working agent. Put a translating proxy in between, and point `ANTHROPIC_BASE_URL` at that. Codex and OpenCode have no such problem, because they are OpenAI-shaped already.
 </Warning>
 
-When a router does publish an Anthropic-compatible route, a Claude Code agent can use it with nothing in between. Set `ANTHROPIC_BASE_URL` to the route's root with no `/v1` suffix (the CLI appends `/v1/messages` itself), set `ANTHROPIC_AUTH_TOKEN` to the router's key, and set `ANTHROPIC_MODEL` to a model ID that key can use. Codex and OpenCode take the same router's `/v1` URL as usual. Maestro does not vet third-party routers: every prompt, file, and key the agent sends goes to that operator, and a router may serve a different model from the one you named. Check who runs it before you point an agent at it.
+A gateway that serves the Anthropic Messages API itself needs no proxy. For a Claude Code agent, set `ANTHROPIC_BASE_URL` to the gateway's base URL without a `/v1` suffix (the CLI appends `/v1/messages`), and `ANTHROPIC_AUTH_TOKEN` to your gateway key. If the gateway uses its own model IDs, set `ANTHROPIC_MODEL` to one of them; the gateway's documentation lists them. Codex and OpenCode take the gateway's OpenAI-compatible URL, which usually ends in `/v1`. Maestro does not vet third-party gateways: every prompt, file, and key the agent sends goes to that operator, and a gateway may serve a different model from the one you named. Check who runs it before you point an agent at it.
 
 Two more things that surprise people:
 

@@ -2257,8 +2257,8 @@ describe('Session & Group loading effect', () => {
 			)
 		);
 		await act(async () => {
-			// Remove while additions restore, independent of git discovery (which
-			// browser restoration skips).
+			// The snapshot settles first; remove the current session while the
+			// additions' Promise.all is pending, independent of git I/O.
 			queueMicrotask(() => queueMicrotask(() => useSessionStore.getState().setSessions([])));
 			await Promise.all(work);
 		});
