@@ -1101,6 +1101,74 @@ describe('process IPC handlers', () => {
 				expect(spawnCall.customEnvVars?.NODE_PATH).toBeUndefined();
 			});
 
+			// An agent that only ran `claude --print` never saw claude's trust prompt,
+			// so after a switch to TUI every turn failed with exit 7 (#1872).
+			it.each([
+				['accepts', '/projects/app', '1'],
+				['does not accept', '/Users/me', undefined],
+			])("%s claude's folder trust when the TUI spawn cwd is %s", async (_label, cwd, expected) => {
+				const maestroPPath = path.join(process.cwd(), 'src', 'maestro-p', 'index.ts');
+				mockAgentDetector.getAgent.mockResolvedValue(claudeCodeAgent);
+				mockProcessManager.spawn.mockReturnValue({ pid: 4246, success: true });
+				mockSessionsStore.get.mockImplementation((key: string, defaultValue: unknown) => {
+					if (key === 'sessions') {
+						return [
+							{
+								id: 'session-tui',
+								cwd: '/projects/app',
+								enableMaestroP: true,
+								maestroPMode: 'interactive',
+								maestroPPath,
+							},
+						];
+					}
+					return defaultValue;
+				});
+
+				const handler = handlers.get('process:spawn');
+				await handler!({} as any, {
+					sessionId: 'session-tui-ai-tab-1',
+					toolType: 'claude-code',
+					cwd,
+					command: '/usr/local/bin/claude',
+					args: claudeCodeAgent.args,
+					prompt: 'hi',
+				});
+
+				const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+				expect(spawnCall.args[0]).toBe(maestroPPath);
+				expect(spawnCall.customEnvVars?.MAESTRO_P_ACCEPT_WORKSPACE_TRUST).toBe(expected);
+			});
+
+			// Agents persist on a debounce, so a just-created agent's first turn can
+			// spawn before its record lands. TUI resolves from the payload there, and
+			// trust has to follow or the turn exits 7 in the folder just picked.
+			it("accepts claude's folder trust for an agent whose record has not landed yet", async () => {
+				const maestroPPath = path.join(process.cwd(), 'src', 'maestro-p', 'index.ts');
+				mockAgentDetector.getAgent.mockResolvedValue(claudeCodeAgent);
+				mockProcessManager.spawn.mockReturnValue({ pid: 4247, success: true });
+				mockSessionsStore.get.mockImplementation((key: string, defaultValue: unknown) =>
+					key === 'sessions' ? [] : defaultValue
+				);
+
+				const handler = handlers.get('process:spawn');
+				await handler!({} as any, {
+					sessionId: 'session-new-ai-tab-1',
+					toolType: 'claude-code',
+					cwd: '/projects/new-app',
+					command: '/usr/local/bin/claude',
+					args: claudeCodeAgent.args,
+					prompt: 'hi',
+					enableMaestroP: true,
+					maestroPMode: 'interactive',
+					maestroPPath,
+				});
+
+				const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+				expect(spawnCall.args[0]).toBe(maestroPPath);
+				expect(spawnCall.customEnvVars?.MAESTRO_P_ACCEPT_WORKSPACE_TRUST).toBe('1');
+			});
+
 			// Auto Run (and goal iterations) spawn as `{agentId}-batch-{ts}` and send no
 			// token fields inline, so the TUI setting has to resolve from the id alone.
 			it('runs an Auto Run batch spawn through maestro-p with its idle budget', async () => {

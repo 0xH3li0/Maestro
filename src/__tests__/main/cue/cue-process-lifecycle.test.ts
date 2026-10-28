@@ -24,6 +24,19 @@ vi.mock('../../../main/utils/sentry', () => ({
 	captureException: (...args: unknown[]) => mockCaptureException(...args),
 }));
 
+const { mockLoggerDebug, mockLoggerError } = vi.hoisted(() => ({
+	mockLoggerDebug: vi.fn(),
+	mockLoggerError: vi.fn(),
+}));
+vi.mock('../../../main/utils/logger', () => ({
+	logger: {
+		debug: mockLoggerDebug,
+		info: vi.fn(),
+		warn: vi.fn(),
+		error: mockLoggerError,
+	},
+}));
+
 // Platform is mockable per-test. Default is the POSIX kill path
 // (child.kill('SIGTERM')) so the SIGTERM → SIGKILL assertions hold regardless
 // of host OS - mirroring what CI exercises on Unix. The Windows process-tree
@@ -48,10 +61,11 @@ class MockChildProcess extends EventEmitter {
 	pid = 12345;
 	exitCode: number | null = null;
 	signalCode: string | null = null;
-	stdin = {
+	// An EventEmitter, like a real pipe: emitting 'error' with no listener throws.
+	stdin = Object.assign(new EventEmitter(), {
 		write: vi.fn(),
 		end: vi.fn(),
-	};
+	});
 	stdout = new EventEmitter();
 	stderr = new EventEmitter();
 	killed = false;
@@ -333,6 +347,91 @@ describe('cue-process-lifecycle', () => {
 				);
 
 				mockChild.emit('close', 143);
+				await resultPromise;
+			});
+
+			it('starts a Windows .cmd shim through the shell and writes its prompt on stdin (MAESTRO-R0)', async () => {
+				const spec = createSpec({
+					command: 'C:\\Users\\dev\\AppData\\Roaming\\npm\\codex.cmd',
+					args: ['exec', '--json'],
+					shell: true,
+					stdinPrompt: 'line one\nline two',
+				});
+				const resultPromise = runProcess(
+					'run-1',
+					spec,
+					createOptions({ stdinPrompt: 'line one\nline two' })
+				);
+				await vi.advanceTimersByTimeAsync(0);
+
+				expect(mockSpawn).toHaveBeenCalledWith(
+					'C:\\Users\\dev\\AppData\\Roaming\\npm\\codex.cmd',
+					['exec', '--json'],
+					expect.objectContaining({ shell: true, stdio: ['pipe', 'pipe', 'pipe'] })
+				);
+				expect(mockChild.stdin.write).toHaveBeenCalledWith('line one\nline two');
+				expect(mockChild.stdin.end).toHaveBeenCalled();
+
+				mockChild.emit('close', 0);
+				await resultPromise;
+			});
+
+			it('absorbs stdin EPIPE when the child exits mid-write, and settles on the exit', async () => {
+				const spec = createSpec({
+					command: 'C:\\Users\\dev\\AppData\\Roaming\\npm\\codex.cmd',
+					shell: true,
+					stdinPrompt: 'x'.repeat(2_000_000),
+				});
+				const resultPromise = runProcess(
+					'run-1',
+					spec,
+					createOptions({ stdinPrompt: spec.stdinPrompt })
+				);
+				await vi.advanceTimersByTimeAsync(0);
+
+				const epipe = Object.assign(new Error('write EPIPE'), { code: 'EPIPE' });
+				expect(() => mockChild.stdin.emit('error', epipe)).not.toThrow();
+				expect(mockLoggerDebug).toHaveBeenCalledWith(
+					expect.stringContaining('stdin EPIPE'),
+					'Cue',
+					{ runId: 'run-1' }
+				);
+
+				mockChild.emit('close', 1);
+				const result = await resultPromise;
+				expect(result.status).toBe('failed');
+			});
+
+			it('logs a stdin error other than EPIPE without throwing', async () => {
+				const resultPromise = runProcess(
+					'run-1',
+					createSpec({ stdinPrompt: 'prompt' }),
+					createOptions({ stdinPrompt: 'prompt' })
+				);
+				await vi.advanceTimersByTimeAsync(0);
+
+				const reset = Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' });
+				expect(() => mockChild.stdin.emit('error', reset)).not.toThrow();
+				expect(mockLoggerError).toHaveBeenCalledWith('[CUE] stdin error', 'Cue', {
+					runId: 'run-1',
+					error: 'Error: read ECONNRESET',
+				});
+
+				mockChild.emit('close', 0);
+				await resultPromise;
+			});
+
+			it('spawns without a shell when the spec does not ask for one', async () => {
+				const resultPromise = runProcess('run-1', createSpec(), createOptions());
+				await vi.advanceTimersByTimeAsync(0);
+
+				expect(mockSpawn).toHaveBeenCalledWith(
+					'claude',
+					expect.any(Array),
+					expect.objectContaining({ shell: false })
+				);
+
+				mockChild.emit('close', 0);
 				await resultPromise;
 			});
 

@@ -40,6 +40,7 @@ vi.mock('electron', () => ({
 	},
 	BrowserWindow: {
 		getFocusedWindow: vi.fn(),
+		getAllWindows: vi.fn(() => []),
 	},
 	app: {
 		getVersion: vi.fn(),
@@ -145,6 +146,15 @@ vi.mock('fs', () => ({
 	copyFileSync: vi.fn(),
 }));
 
+// shell.openPath never settles on Linux (MAESTRO-QH), so the handlers branch on
+// the platform. Default to "not Linux" so the rest of the suite is platform-neutral
+// on every CI leg; the Linux cases flip it explicitly.
+const { mockIsLinux } = vi.hoisted(() => ({ mockIsLinux: vi.fn(() => false) }));
+vi.mock('../../../../shared/platformDetection', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../shared/platformDetection')>()),
+	isLinux: mockIsLinux,
+}));
+
 // Import mocked modules for test control
 import { logger } from '../../../../main/utils/logger';
 import { detectShells } from '../../../../main/utils/shellDetector';
@@ -170,6 +180,7 @@ describe('system IPC handlers', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mockIsLinux.mockReturnValue(false);
 
 		// Capture all registered handlers
 		handlers = new Map();
@@ -208,13 +219,24 @@ describe('system IPC handlers', () => {
 			delete: vi.fn(),
 		};
 
+		vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([]);
+
 		// Setup mock web server
 		mockWebServer = {
 			getSecureUrl: vi.fn().mockReturnValue('http://localhost:3000/token-path'),
+			// Live Mode on: the LAN server is up. The tunnel refuses anything else.
+			isActive: vi.fn().mockReturnValue(true),
+			isLanAccessible: vi.fn().mockReturnValue(true),
 		};
 
-		// Setup mock tunnel manager (use the imported mock)
+		// Setup mock tunnel manager (use the imported mock). Starting and
+		// stopping read the status back for the live:stateChanged push.
 		mockTunnelManager = tunnelManager;
+		vi.mocked(mockTunnelManager.getStatus).mockReturnValue({
+			isRunning: false,
+			url: null,
+			error: null,
+		});
 
 		// Create dependencies
 		deps = {
@@ -993,6 +1015,28 @@ describe('system IPC handlers', () => {
 			// Should not throw - logs warning instead
 			await expect(handler!({} as any, '/path/to/file.xyz')).resolves.toBeUndefined();
 		});
+
+		// MAESTRO-QH: Electron's Linux openPath never runs its completion callback,
+		// so awaiting it left the invoke unanswered ("reply was never sent").
+		it('replies on Linux even though shell.openPath never settles there', async () => {
+			mockIsLinux.mockReturnValue(true);
+			vi.mocked(fsSync.existsSync).mockReturnValue(true);
+			vi.mocked(shell.openPath).mockReturnValue(new Promise<string>(() => {}));
+
+			const handler = handlers.get('shell:openPath');
+			await expect(handler!({} as any, '/path/to/file.txt')).resolves.toBeUndefined();
+			expect(shell.openPath).toHaveBeenCalledWith(path.resolve('/path/to/file.txt'));
+		});
+
+		it('openExternal with a file:// URL also replies on Linux', async () => {
+			mockIsLinux.mockReturnValue(true);
+			vi.mocked(fsSync.existsSync).mockReturnValue(true);
+			vi.mocked(shell.openPath).mockReturnValue(new Promise<string>(() => {}));
+
+			const handler = handlers.get('shell:openExternal');
+			await expect(handler!({} as any, 'file:///tmp/report.pdf')).resolves.toBeUndefined();
+			expect(shell.openPath).toHaveBeenCalledWith('/tmp/report.pdf');
+		});
 	});
 
 	describe('tunnel:isCloudflaredInstalled', () => {
@@ -1043,19 +1087,52 @@ describe('system IPC handlers', () => {
 
 			expect(result).toEqual({
 				success: false,
-				error: 'Web server not running',
+				error: 'Live mode is off. Turn on the web interface before starting the tunnel.',
 			});
+			expect(mockTunnelManager.start).not.toHaveBeenCalled();
 		});
 
-		it('should return error when web server URL not available', async () => {
-			mockWebServer.getSecureUrl.mockReturnValue(null);
+		it('should refuse to tunnel the loopback CLI server while Live mode is off', async () => {
+			// Only the CLI server is running: tunneling it would publish the CLI's
+			// control channel to the internet.
+			mockWebServer.isLanAccessible.mockReturnValue(false);
 
 			const handler = handlers.get('tunnel:start');
 			const result = await handler!({} as any);
 
 			expect(result).toEqual({
 				success: false,
-				error: 'Web server not running',
+				error: 'Live mode is off. Turn on the web interface before starting the tunnel.',
+			});
+			expect(mockTunnelManager.start).not.toHaveBeenCalled();
+		});
+
+		it('should push the new state to every window after starting', async () => {
+			const send = vi.fn();
+			vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([
+				{ isDestroyed: () => false, webContents: { isDestroyed: () => false, send } },
+			] as any);
+			vi.mocked(mockTunnelManager.start).mockResolvedValue({
+				success: true,
+				url: 'https://abc.trycloudflare.com',
+			});
+			vi.mocked(mockTunnelManager.getStatus).mockReturnValue({
+				isRunning: true,
+				url: 'https://abc.trycloudflare.com',
+				error: null,
+			});
+
+			const handler = handlers.get('tunnel:start');
+			await handler!({} as any);
+
+			expect(send).toHaveBeenCalledWith('live:stateChanged', {
+				live: true,
+				url: 'http://localhost:3000/token-path',
+				tunnel: {
+					isRunning: true,
+					url: 'https://abc.trycloudflare.com/token-path',
+					error: null,
+				},
 			});
 		});
 

@@ -15,6 +15,7 @@ import Store from 'electron-store';
 import * as path from 'path';
 import * as fs from 'fs/promises';
 import { logger } from '../../utils/logger';
+import { noteSentryAgentInventory } from '../../utils/sentry';
 import { isWebContentsAvailable } from '../../utils/safe-send';
 import { broadcastBridgeEvent } from '../../web-server/handlers/bridgeHandlers';
 import { forgetAgentActors } from '../../web-server/auth/turn-attribution';
@@ -37,6 +38,7 @@ import { backupSessionsBeforeWipe } from '../../stores/sessions-backup';
 import { createKeyedWriteQueue } from '../../utils/atomic-json-store';
 import { clearGhCache } from '../../utils/cliDetection';
 import { mergeUsagePeaks, type UsagePeaks } from '../../../shared/usagePeaks';
+import { mergeAutoRunStats } from '../../../shared/autoRunStatsMerge';
 import { compactSessionToolOutputs } from '../../../shared/toolOutput';
 import {
 	mergeDeferredSessionContent,
@@ -368,13 +370,17 @@ export function registerPersistenceHandlers(
 		// no matter who writes: a renderer that has not finished hydrating (its
 		// copy is still zeroed), a second window with a staler copy, or the web
 		// client. See src/shared/usagePeaks.ts for the incidents this prevents.
+		// `autoRunStats` (Conductor time, runs, badges) is the same shape of
+		// invariant and was lost the same way - see src/shared/autoRunStatsMerge.ts.
 		const toPersist =
 			key === 'usageStats'
 				? mergeUsagePeaks(
 						settingsStore.get('usageStats') as Partial<UsagePeaks> | undefined,
 						value as Partial<UsagePeaks>
 					)
-				: value;
+				: key === 'autoRunStats'
+					? mergeAutoRunStats(settingsStore.get('autoRunStats'), value)
+					: value;
 		try {
 			settingsStore.set(key, toPersist);
 		} catch (err) {
@@ -682,6 +688,9 @@ export function registerPersistenceHandlers(
 				throw err;
 			}
 
+			// Crash-report context (agent count + provider types); no-op unless changed.
+			noteSentryAgentInventory(sessionsToPersist);
+
 			// Tell the other clients (desktop windows + web-desktop) what entered and
 			// left, so an agent created or closed in one of them stops being
 			// invisible to - and resurrectable by - the rest.
@@ -803,6 +812,9 @@ export function registerPersistenceHandlers(
 				logger.warn(`Failed to persist sessions: ${code || (err as Error).message}`, 'Sessions');
 				return false;
 			}
+
+			// Crash-report context (agent count + provider types); no-op unless changed.
+			noteSentryAgentInventory(sessionsToPersist);
 
 			// Tell the other clients about agents this bootstrap flush introduced.
 			// Only ADDITIONS travel from here: setAll is a client's opening statement

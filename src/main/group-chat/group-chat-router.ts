@@ -53,6 +53,7 @@ import {
 	wasParticipantRecentlyRemoved,
 } from './group-chat-agent';
 import { AgentDetector } from '../agents';
+import { isAgentOwnWorkingDirectory } from '../agents/claudeSpawnCore';
 import { powerManager } from '../power-manager';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
@@ -2002,6 +2003,12 @@ export async function routeModeratorResponse(
 				prompt: participantPrompt,
 				cwd,
 				readOnlyMode: readOnly ?? false,
+				// Group Chat participant turns run unattended in batch mode (no
+				// interactive permission relay), so non-read-only delegations must
+				// explicitly request 'full' access; otherwise buildAgentArgs selects
+				// its 'standard' branch and omits fullAccessArgs (e.g. Claude Code's
+				// --dangerously-skip-permissions).
+				permissionMode: readOnly ? 'readonly' : 'full',
 				agentSessionId: participant.agentSessionId,
 			});
 			const configResolution = applyAgentConfigOverrides(agent, baseArgs, {
@@ -2054,6 +2061,9 @@ export async function routeModeratorResponse(
 					processManager: activeProcessManager,
 					readOnlyMode: readOnly ?? false, // Propagate read-only mode from caller
 					debugLabel: `participant: ${participantName}`,
+					// A participant runs in its own agent's cwd (the home-dir fallback is not),
+					// so a TUI participant may accept claude's folder-trust prompt there (#1872).
+					acceptWorkspaceTrust: isAgentOwnWorkingDirectory(cwd, matchingSession),
 					// Match maestro-p's idle budget to the participant supervising timeout
 					// so a still-working participant isn't killed at maestro-p's 300s default.
 					maxWaitSeconds: Math.ceil(PARTICIPANT_RESPONSE_TIMEOUT_MS / 1000),
@@ -2641,6 +2651,7 @@ export async function respawnParticipantWithRecovery(
 		prompt: fullPrompt,
 		cwd,
 		readOnlyMode: readOnly ?? false,
+		permissionMode: readOnly ? 'readonly' : 'full',
 		// No agentSessionId - we're starting fresh after session recovery
 	});
 
@@ -2678,6 +2689,9 @@ export async function respawnParticipantWithRecovery(
 		processManager,
 		readOnlyMode: readOnly ?? false,
 		debugLabel: `recovery of ${participantName}`,
+		// A participant runs in its own agent's cwd (the home-dir fallback is not),
+		// so a TUI participant may accept claude's folder-trust prompt there (#1872).
+		acceptWorkspaceTrust: isAgentOwnWorkingDirectory(cwd, matchingSession),
 		// Match maestro-p's idle budget to the participant supervising timeout
 		// so a still-working recovery turn isn't killed at maestro-p's 300s default.
 		maxWaitSeconds: Math.ceil(PARTICIPANT_RESPONSE_TIMEOUT_MS / 1000),

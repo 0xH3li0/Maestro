@@ -157,7 +157,11 @@ import { notifyCenterFlash } from './stores/centerFlashStore';
 import { useComposerInputStore } from './stores/composerInputStore';
 import { useModalActions, useModalStore } from './stores/modalStore';
 import { GitStatusProvider } from './contexts/GitStatusContext';
-import { WindowProvider, useWindowContextOptional } from './contexts/WindowContext';
+import {
+	WindowProvider,
+	useIsLifecycleOwner,
+	useWindowContextOptional,
+} from './contexts/WindowContext';
 import { GitShortcutActionsBridge } from './components/GitShortcutActionsBridge';
 import { InputProvider, useInputContext } from './contexts/InputContext';
 import {
@@ -810,6 +814,7 @@ function MaestroConsoleInner() {
 	// the single-window app / web / isolation tests fall back to "show here".
 	const windowCtx = useWindowContextOptional();
 	const currentWindowId = windowCtx?.windowId ?? null;
+	const isLifecycleOwner = useIsLifecycleOwner();
 
 	// Stable actions from groupChatStore (non-reactive)
 	const {
@@ -1372,7 +1377,7 @@ function MaestroConsoleInner() {
 		handlePRCreated,
 	} = useWorktreeHandlers({
 		rightPanelRef,
-		isLifecycleOwner: !isWebDesktop() && (windowCtx?.isMainWindow ?? true),
+		isLifecycleOwner,
 	});
 
 	// --- APP HANDLERS (drag, file, folder operations) ---
@@ -2043,7 +2048,7 @@ function MaestroConsoleInner() {
 	useHandsOnTimeTracker(addTotalActiveTimeMs);
 
 	// Auto Run achievement tracking (progress intervals, peak usage stats)
-	useAutoRunAchievements({ activeBatchSessionIds });
+	useAutoRunAchievements({ activeBatchSessionIds, isLifecycleOwner });
 
 	// "Quit when idle" watcher - quits the app once all operations finish once armed
 	useQuitWhenIdle();
