@@ -1783,7 +1783,7 @@ export async function spawnAgent(
 	if (toolType === 'codex')
 		options = {
 			...options,
-			timeoutMs: options?.timeoutMs ?? HEADLESS_RUN_TIMEOUT_MS,
+			timeoutMs: options?.timeoutMs ?? (options?.idle ? undefined : HEADLESS_RUN_TIMEOUT_MS),
 			idle: options?.idle ?? HEADLESS_IDLE_PROFILE,
 		};
 	assertHeadlessIdleProfile(options?.idle, options?.timeoutMs);

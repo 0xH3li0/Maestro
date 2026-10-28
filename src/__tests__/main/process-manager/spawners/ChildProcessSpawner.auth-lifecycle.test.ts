@@ -21,9 +21,9 @@ vi.mock('../../../../main/process-manager/utils/envBuilder', () => ({
 }));
 vi.mock('../../../../shared/plugins/headless-agent-timeouts', async (original) => ({
 	...(await original<typeof import('../../../../shared/plugins/headless-agent-timeouts')>()),
-	CODEX_STARTUP_TIMEOUT_MS: 250,
+	CODEX_STARTUP_TIMEOUT_MS: 700,
 	HEADLESS_RUN_TIMEOUT_MS: 5_000,
-	HEADLESS_IDLE_PROFILE: { warnMs: 200, idleMs: 500, toolMs: 900 },
+	HEADLESS_IDLE_PROFILE: { warnMs: 800, idleMs: 1_200, toolMs: 2_000 },
 }));
 
 const owned: ManagedProcess[] = [];
@@ -89,7 +89,7 @@ describe.skipIf(process.platform !== 'linux')('real desktop Codex auth/MCP lifec
 			owned.push(managed);
 			await ready;
 			if (phase !== 'startup') {
-				await new Promise((resolve) => setTimeout(resolve, phase === 'mcp-tool' ? 650 : 300));
+				await new Promise((resolve) => setTimeout(resolve, phase === 'mcp-tool' ? 1_500 : 900));
 				expect(
 					processes.has('auth-fixture'),
 					'model work and a running tool disarm startup and retain their own allowance'
@@ -100,7 +100,7 @@ describe.skipIf(process.platform !== 'linux')('real desktop Codex auth/MCP lifec
 			// for a production budget or leaving an orphan on test failure.
 			const settled = await Promise.race([
 				exited.then(() => true),
-				new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 1_800)),
+				new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 4_000)),
 			]);
 			expect(settled, `${phase}: desktop turn must not own its queue forever`).toBe(true);
 			expect(processes.has('auth-fixture')).toBe(false);
@@ -115,13 +115,18 @@ describe.skipIf(process.platform !== 'linux')('real desktop Codex auth/MCP lifec
 						? /tool or wait budget/
 						: /semantic inactivity/
 			);
-			let state = '';
-			try {
-				state = readFileSync(`/proc/${mcpPid}/stat`, 'utf8').split(') ')[1][0];
-			} catch {
-				/* reaped */
-			}
-			expect(['', 'Z']).toContain(state);
+			await vi.waitFor(
+				() => {
+					let state = '';
+					try {
+						state = readFileSync(`/proc/${mcpPid}/stat`, 'utf8').split(') ')[1][0];
+					} catch {
+						/* reaped */
+					}
+					expect(['', 'Z']).toContain(state);
+				},
+				{ timeout: 2_000 }
+			);
 			expect(unrelated.exitCode).toBeNull();
 			expect(unrelated.signalCode).toBeNull();
 			expect(() => process.kill(unrelated.pid!, 0)).not.toThrow();

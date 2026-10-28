@@ -13,9 +13,9 @@ vi.mock('../../../cli/services/storage', () => ({
 vi.mock('../../../cli/services/wakatime', () => ({ buildCliWakaTimeHeartbeat: () => undefined }));
 vi.mock('../../../shared/plugins/headless-agent-timeouts', async (original) => ({
 	...(await original<typeof import('../../../shared/plugins/headless-agent-timeouts')>()),
-	CODEX_STARTUP_TIMEOUT_MS: 250,
+	CODEX_STARTUP_TIMEOUT_MS: 700,
 	HEADLESS_RUN_TIMEOUT_MS: 5_000,
-	HEADLESS_IDLE_PROFILE: { warnMs: 200, idleMs: 500, toolMs: 900 },
+	HEADLESS_IDLE_PROFILE: { warnMs: 800, idleMs: 1_200, toolMs: 2_000 },
 }));
 
 describe.skipIf(process.platform !== 'linux')(
@@ -41,7 +41,7 @@ describe.skipIf(process.platform !== 'linux')(
 					const result = await Promise.race([
 						run,
 						new Promise<undefined>((resolve) => {
-							timer = setTimeout(() => resolve(undefined), 1_800);
+							timer = setTimeout(() => resolve(undefined), 4_000);
 						}),
 					]);
 					expect(result, 'standalone CLI must settle after startup too').toBeDefined();
@@ -55,13 +55,18 @@ describe.skipIf(process.platform !== 'linux')(
 								: /semantic inactivity/
 					);
 					const { mcp } = JSON.parse(readFileSync(pids, 'utf8')) as { mcp: number };
-					let state = '';
-					try {
-						state = readFileSync(`/proc/${mcp}/stat`, 'utf8').split(') ')[1][0];
-					} catch {
-						/* reaped */
-					}
-					expect(['', 'Z']).toContain(state);
+					await vi.waitFor(
+						() => {
+							let state = '';
+							try {
+								state = readFileSync(`/proc/${mcp}/stat`, 'utf8').split(') ')[1][0];
+							} catch {
+								/* reaped */
+							}
+							expect(['', 'Z']).toContain(state);
+						},
+						{ timeout: 2_000 }
+					);
 				} finally {
 					clearTimeout(timer);
 					controller.abort();

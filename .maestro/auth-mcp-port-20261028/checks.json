@@ -1,0 +1,42 @@
+{
+  "base": "1fe7a03b072f63a0f0ced53b1f5eb1b8f8f3fe06",
+  "scope": "Exact git diff upstream/rc -- src captured in check-logs/source-diff.json; no unrelated product files observed.",
+  "checks": [
+    {
+      "command": "vitest run six focused lifecycle, consult, supervisor and spawner suites (see files in vitest-final.log)",
+      "exit": 0,
+      "result": "6 suites, 308 tests passed",
+      "log": "check-logs/vitest-final.log"
+    },
+    {
+      "command": "prettier --check changed source and test files",
+      "exit": 0,
+      "log": "check-logs/prettier-final.log"
+    },
+    {
+      "command": "eslint changed source and test files",
+      "exit": 0,
+      "log": "check-logs/eslint-final.log"
+    },
+    {
+      "command": "tsc -p tsconfig.main.json --noEmit",
+      "exit": 2,
+      "log": "check-logs/ts-main.log"
+    },
+    {
+      "command": "tsc -p tsconfig.cli.json --noEmit",
+      "exit": 2,
+      "log": "check-logs/ts-cli.log"
+    },
+    {
+      "command": "git diff --check upstream/rc",
+      "exit": 0,
+      "log": "check-logs/diff-check.log"
+    }
+  ],
+  "typecheck_blocker": "Shared read-only node_modules lacks declared papaparse, parsimmon and luxon dependencies and their types, causing Dataview errors; no reported errors in changed files. No shared installation attempted.",
+  "initial_failures": "See check-logs/vitest.log and vitest-rerun.log. Restored explicit idle profile validation when timeout omitted; increased compressed budgets and waited boundedly for descendant termination.",
+  "omitted": "Full test suite and validate:push intentionally omitted per task. No live providers, credentials, MCP, installation or restart.",
+  "model": "/proc/228109 command line: gpt-6.1-terra, model_reasoning_effort=medium.",
+  "images_analyzed": 0
+}
