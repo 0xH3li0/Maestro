@@ -85,6 +85,10 @@ export const PATH_PATTERN = new RegExp(
  * That is a deliberate tradeoff: a real folder or file whose name holds a
  * file name and a space (`/a/node.js backup/b.md`) is the same text as that
  * prose, and stops at `/a/node.js` too. Stopping early is the safer error.
+ *
+ * A match with whitespace in it is still only the pattern's guess, so
+ * remarkFileLinks links it only once the file is confirmed to exist (its
+ * `pathExists` option, backed by `pathExistence.ts`).
  */
 /** The root directory: no whitespace at all, and no fullwidth sentence break. */
 const ABSOLUTE_PATH_ROOT_SEGMENT = `(?:(?![。！？；])[^/\\s]){1,255}`;
