@@ -1,0 +1,55 @@
+{
+  "title": "Pianola PR1942 Linux Lite data path repair and rc integration",
+  "rootCause": "The Lite control test asserted capitalized Maestro on Linux although the canonical resolver and startup contract use lowercase maestro; the test used a nonunique temporary XDG path.",
+  "contract": "Linux defaults to lowercase maestro; MAESTRO_USER_DATA and explicit paths retain precedence, with read-only legacy spelling detection.",
+  "changedFiles": [
+    "src/__tests__/shared/lite-control.test.ts"
+  ],
+  "finalHead": "c9d202bc6f473658954442ac7d5ce44558b7a8f5",
+  "integration": {
+    "mergeCommit": "c9d202bc6f473658954442ac7d5ce44558b7a8f5",
+    "previousPublishedHead": "0d0a0b7ce82647d641b8f9cf8e03ea0263570754",
+    "upstreamRc": "1fe7a03b072f63a0f0ced53b1f5eb1b8f8f3fe06",
+    "bothAncestors": true,
+    "resolution": "Lite test conflict; preserved isolated fixture, lowercase default, legacy-state coverage, and override assertions."
+  },
+  "tests": [
+    {
+      "command": "TMPDIR=/proc/self/cwd/.tmp-ci ./node_modules/.bin/vitest run src/__tests__/shared/lite-control.test.ts src/shared/maestro-lib/paths/__tests__/userDataDir.test.ts",
+      "files": 2,
+      "tests": 35,
+      "exitCode": 0,
+      "receipt": "checks/rs01-lite-canonical.log"
+    },
+    {
+      "command": "TMPDIR=/proc/self/cwd/.tmp-ci ./node_modules/.bin/vitest run src/__tests__/shared/lite-control.test.ts src/shared/maestro-lib/paths/__tests__/userDataDir.test.ts src/shared/maestro-lib/client/__tests__/discovery.test.ts src/__tests__/main/lite/control-server.test.ts src/__tests__/main/lite/lite.test.ts",
+      "files": 5,
+      "tests": 111,
+      "exitCode": 0,
+      "receipt": "checks/rs02-affected.log"
+    }
+  ],
+  "pr": {
+    "number": 1942,
+    "url": "https://github.com/RunMaestro/Maestro/pull/1942",
+    "head": "c9d202bc6f473658954442ac7d5ce44558b7a8f5",
+    "base": "1fe7a03b072f63a0f0ced53b1f5eb1b8f8f3fe06",
+    "reviewDecision": "none"
+  },
+  "ci": {
+    "runId": 40755290077,
+    "url": "https://github.com/RunMaestro/Maestro/actions/runs/40755290077",
+    "head": "c9d202bc6f473658954442ac7d5ce44558b7a8f5",
+    "recorded": "queued",
+    "current": "unverified due to GitHub context mismatch/404",
+    "green": false
+  },
+  "models": {
+    "actual": "unknown",
+    "provider": "Codex",
+    "markersAreHintsOnly": true
+  },
+  "nextActor": "Mira via existing completion callback",
+  "nextAction": "Verify exact-head GitHub Actions run in RunMaestro/Maestro and respond to any confirmed failure; do not merge, install, restart, or activate.",
+  "imagesAnalyzed": 0
+}

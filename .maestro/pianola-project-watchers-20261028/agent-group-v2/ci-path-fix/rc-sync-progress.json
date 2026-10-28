@@ -1,0 +1,132 @@
+{
+  "RS01": {
+    "status": "completed",
+    "recordedAt": "2026-10-28T19:32:24.117518+00:00",
+    "actor": "e28c91e9-3a1f-43ae-a54e-7f4561e7a0aa",
+    "sourceHead": "c9d202bc6f473658954442ac7d5ce44558b7a8f5",
+    "fetchedUpstreamRc": "1fe7a03b072f63a0f0ced53b1f5eb1b8f8f3fe06",
+    "checks": {
+      "tests": 35,
+      "files": 2,
+      "exitCode": 0,
+      "receipt": "checks/rs01-lite-canonical.log",
+      "format": "prettier --check passed",
+      "whitespace": "git diff --cached --check passed"
+    },
+    "nextActor": "same registered owner via next Auto Run task RS02",
+    "nextAction": "Run remaining affected checks then normal fast-forward push to existing PR1942 branch and verify exact-head CI launch.",
+    "receipt": "rc-sync.json"
+  },
+  "RS02": {
+    "task": "RS02",
+    "status": "completed",
+    "recordedAt": "2026-10-28T19:33:18.540821+00:00",
+    "actor": "e28c91e9-3a1f-43ae-a54e-7f4561e7a0aa",
+    "actualExecutionModel": "unknown",
+    "sourceHead": "c9d202bc6f473658954442ac7d5ce44558b7a8f5",
+    "upstreamRc": "1fe7a03b072f63a0f0ced53b1f5eb1b8f8f3fe06",
+    "checks": {
+      "command": "TMPDIR=/proc/self/cwd/.tmp-ci ./node_modules/.bin/vitest run src/__tests__/shared/lite-control.test.ts src/shared/maestro-lib/paths/__tests__/userDataDir.test.ts src/shared/maestro-lib/client/__tests__/discovery.test.ts src/__tests__/main/lite/control-server.test.ts src/__tests__/main/lite/lite.test.ts",
+      "exitCode": 0,
+      "files": 5,
+      "tests": 111,
+      "log": "checks/rs02-affected.log",
+      "priorReceipt": "checks.json; 110 tests at 0d0a0b7, supplemented by merged Lite regression",
+      "fullLocalSuite": "not run, per scope"
+    },
+    "push": {
+      "command": "HUSKY=0 git -c core.hooksPath=/dev/null push origin HEAD:fix/pianola-agent-group-supervision-20261028",
+      "exitCode": 0,
+      "previousHead": "0d0a0b7ce82647d641b8f9cf8e03ea0263570754",
+      "fastForward": true,
+      "hookOverride": "per-command; full pre-push suite skipped per scope"
+    },
+    "pr": {
+      "number": 1942,
+      "url": "https://github.com/RunMaestro/Maestro/pull/1942",
+      "head": "c9d202bc6f473658954442ac7d5ce44558b7a8f5",
+      "base": "1fe7a03b072f63a0f0ced53b1f5eb1b8f8f3fe06",
+      "mergeable": "MERGEABLE",
+      "reviewDecision": "none",
+      "ci": {
+        "runId": 40755290077,
+        "url": "https://github.com/RunMaestro/Maestro/actions/runs/40755290077",
+        "event": "pull_request",
+        "headSha": "c9d202bc6f473658954442ac7d5ce44558b7a8f5",
+        "status": "queued",
+        "conclusion": null,
+        "note": "Direct run API confirms exact head; initial head_sha filtered query returned zero during indexing."
+      }
+    },
+    "nextActor": "same registered owner via RS03; Mira follows CI via existing callback",
+    "nextAction": "Package evidence and reconcile prior playbook; monitor exact-head CI without claiming success."
+  },
+  "RS03": {
+    "task": "RS03",
+    "status": "completed",
+    "recordedAt": "2026-10-28T19:40:00Z",
+    "actor": "e28c91e9-3a1f-43ae-a54e-7f4561e7a0aa",
+    "actualExecutionModel": "unknown",
+    "sourceHead": "c9d202bc6f473658954442ac7d5ce44558b7a8f5",
+    "previousPublishedHead": "0d0a0b7ce82647d641b8f9cf8e03ea0263570754",
+    "upstreamRc": "1fe7a03b072f63a0f0ced53b1f5eb1b8f8f3fe06",
+    "ancestry": {
+      "previousPublishedHeadIsAncestor": true,
+      "upstreamRcIsAncestor": true,
+      "mergeParents": [
+        "0d0a0b7ce82647d641b8f9cf8e03ea0263570754",
+        "1fe7a03b072f63a0f0ced53b1f5eb1b8f8f3fe06"
+      ]
+    },
+    "contract": "contract.md; Linux default is lowercase maestro; canonical resolver and CLI use same authority, preserving explicit overrides and read-only legacy detection.",
+    "changedCode": "test-only correction in src/__tests__/shared/lite-control.test.ts; no production path change.",
+    "tests": {
+      "RS01": {
+        "files": 2,
+        "tests": 35,
+        "exitCode": 0,
+        "receipt": "checks/rs01-lite-canonical.log"
+      },
+      "RS02": {
+        "files": 5,
+        "tests": 111,
+        "exitCode": 0,
+        "receipt": "checks/rs02-affected.log"
+      },
+      "CP02prior": {
+        "testsExecuted": false,
+        "note": "implementation-only task"
+      }
+    },
+    "publication": {
+      "repository": "RunMaestro/Maestro",
+      "pr": 1942,
+      "url": "https://github.com/RunMaestro/Maestro/pull/1942",
+      "head": "c9d202bc6f473658954442ac7d5ce44558b7a8f5",
+      "base": "1fe7a03b072f63a0f0ced53b1f5eb1b8f8f3fe06",
+      "mergeableAtPublication": "MERGEABLE",
+      "push": "fast-forward to same branch, recorded exit 0"
+    },
+    "ci": {
+      "runId": 40755290077,
+      "url": "https://github.com/RunMaestro/Maestro/actions/runs/40755290077",
+      "headSha": "c9d202bc6f473658954442ac7d5ce44558b7a8f5",
+      "recordedStatus": "queued",
+      "conclusion": null,
+      "currentStatus": "unverified; configured chr1syy/Maestro gh context returns PR-not-found and run-404",
+      "allGreen": false
+    },
+    "models": {
+      "actualExecutionModel": "unknown",
+      "provider": "Codex",
+      "tierHints": "low Luna6 / medium Terra6.1 / high Sol6.1 are hints only"
+    },
+    "followUp": {
+      "status": "GitHub run pending/unverified",
+      "nextActor": "Mira via existing completion callback",
+      "nextAction": "inspect exact-head CI run 40755290077 in RunMaestro/Maestro; handle any confirmed failure before considering merge readiness",
+      "noMergeInstallRestartOrActivation": true
+    },
+    "priorPlaybook": "PIANOLA-CI-PATH-01 CP03/CP04 reconciled to RS01/RS02 evidence; obsolete merge-conflict halt removed because local current-rc integration and publication completed."
+  }
+}
