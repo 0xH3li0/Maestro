@@ -5,6 +5,8 @@ import { createPluginHeadlessAgentRunner } from '../../../../main/plugins/plugin
 import { RelayConversations } from '../../../../main/plugins/relay-conversations';
 import fs from 'node:fs';
 import { EventEmitter } from 'node:events';
+import { createInteractiveReplayController } from '../../../../main/agents/claude-interactive-replay';
+import type { ProcessConfig } from '../../../../main/process-manager/types';
 const writerGate = vi.hoisted(() => ({ enabled: false }));
 vi.mock('../../../../main/utils/provider-session-writer', async (importOriginal) => {
 	const actual =
@@ -648,6 +650,8 @@ describe('process IPC handlers', () => {
 				expect(await handlers.get('process:interrupt')!({}, processId)).toBe(true);
 				expect(mockProcessManager.interrupt).toHaveBeenCalledWith(processId);
 				expect(owner.aiTabs[0].relayConversation?.status).toBe('queued');
+				// Match ExitHandler: the managed process is removed before exit listeners run.
+				mockProcessManager.get.mockReturnValue(undefined);
 				events.emit('exit', processId, 0);
 				await pending;
 				expect(run).toHaveBeenCalledTimes(1);
@@ -1584,6 +1588,170 @@ describe('process IPC handlers', () => {
 				interactiveModeArgs: ['--dangerously-skip-permissions'],
 				requiresPty: true,
 			};
+
+			it.each([
+				'complete',
+				'duplicate',
+				'rotate',
+				'interrupt',
+				'kill',
+				'cleared',
+				'skip',
+				'build-error',
+				'spawn-error',
+				'spawn-refused',
+			] as const)('keeps the writer lease through interactive replay: %s', async (outcome) => {
+				writerGate.enabled = true;
+				const events = new EventEmitter();
+				const managed = new Map<string, { sessionId: string; pid: number }>();
+				const processId = 'replay-agent-ai-replay-tab';
+				const owner = {
+					id: 'replay-agent',
+					enableMaestroP: true,
+					maestroPMode: 'interactive',
+					maestroPPath: path.join(process.cwd(), 'src', 'maestro-p', 'index.ts'),
+					aiTabs: [{ id: 'replay-tab', agentSessionId: 'original-provider' }],
+				};
+				Object.assign(mockProcessManager, {
+					on: events.on.bind(events),
+					off: events.off.bind(events),
+				});
+				mockProcessManager.get.mockImplementation((id) => managed.get(id));
+				mockProcessManager.spawn.mockImplementation((config) => {
+					if (outcome === 'spawn-refused' && mockProcessManager.spawn.mock.calls.length > 1)
+						return { success: false, pid: -1 };
+					const entry = { sessionId: config.sessionId, pid: 4243 };
+					managed.set(config.sessionId, entry);
+					return { success: true, pid: entry.pid };
+				});
+				mockProcessManager.interrupt.mockImplementation((id) => {
+					managed.delete(id);
+					events.emit('exit', id, 130);
+					return true;
+				});
+				mockProcessManager.kill.mockImplementation((id) => {
+					managed.delete(id);
+					events.emit('exit', id, 2);
+					return true;
+				});
+				mockAgentDetector.getAgent.mockResolvedValue(claudeCodeAgent);
+				mockSessionsStore.get.mockImplementation((key, fallback) =>
+					key === 'sessions' ? [owner] : fallback
+				);
+				const replay = createInteractiveReplayController<ProcessConfig>({
+					emitter: events,
+					sampleUsage: async () => {},
+					updateSessionInteractive: vi.fn(),
+					emitModeResolved: vi.fn(),
+					spawnReplay: (_id, config) => {
+						if (outcome === 'spawn-error') throw new Error('replay spawn failed');
+						mockProcessManager.spawn(config);
+					},
+				});
+				const registerReplay = replay.registerInteractiveReplay;
+				replay.registerInteractiveReplay = (id, context) =>
+					registerReplay(id, {
+						...context,
+						buildApiSpawnConfig: (request) => {
+							if (outcome === 'skip') return null;
+							if (outcome === 'build-error') throw new Error('replay config failed');
+							return context.buildApiSpawnConfig(request);
+						},
+					});
+				deps.interactiveReplayController = replay;
+				const releases: Array<() => void> = [];
+				let pending: Promise<void> | undefined;
+				let rotated: Promise<void> | undefined;
+				try {
+					await handlers.get('process:spawn')!(
+						{},
+						{
+							sessionId: processId,
+							tabId: 'replay-tab',
+							agentSessionId: 'original-provider',
+							toolType: 'claude-code',
+							cwd: '/test',
+							command: 'claude',
+							args: claudeCodeAgent.args,
+							prompt: 'continue',
+						}
+					);
+					expect(replay.hasInteractiveReplay(processId)).toBe(true);
+					owner.aiTabs[0].agentSessionId = 'replay-provider';
+					events.emit('session-id', processId, 'replay-provider');
+					let acquired = false;
+					pending = acquireProviderSessionWriter(
+						'claude-code',
+						'competing-tab',
+						'replay-provider'
+					).then((release) => {
+						acquired = true;
+						releases.push(release);
+					});
+					await new Promise(setImmediate);
+					expect(acquired).toBe(false);
+					if (outcome === 'cleared') replay.clearInteractiveReplay(processId);
+					// The real ExitHandler removes its process before emitting exit.
+					managed.delete(processId);
+					events.emit('exit', processId, 2);
+					await new Promise(setImmediate);
+					const noReplay = [
+						'cleared',
+						'skip',
+						'build-error',
+						'spawn-error',
+						'spawn-refused',
+					].includes(outcome);
+					if (noReplay) {
+						await pending;
+						expect(acquired).toBe(true);
+						expect(managed.has(processId)).toBe(false);
+						return;
+					}
+					expect(mockProcessManager.spawn).toHaveBeenCalledTimes(2);
+					expect(mockProcessManager.spawn.mock.calls[1][0].args).toContain('--print');
+					expect(managed.has(processId)).toBe(true);
+					expect(acquired).toBe(false);
+					if (outcome === 'duplicate') {
+						events.emit('exit', processId, 2);
+						await new Promise(setImmediate);
+						expect(mockProcessManager.spawn).toHaveBeenCalledTimes(2);
+						expect(acquired).toBe(false);
+					}
+					if (outcome === 'rotate') {
+						events.emit('session-id', processId, 'rotated-replay-provider');
+						let rotatedAcquired = false;
+						rotated = acquireProviderSessionWriter(
+							'claude-code',
+							'rotated-tab',
+							'rotated-replay-provider'
+						).then((release) => {
+							rotatedAcquired = true;
+							releases.push(release);
+						});
+						await new Promise(setImmediate);
+						expect(rotatedAcquired).toBe(false);
+					}
+					if (outcome === 'kill' || outcome === 'interrupt') {
+						await expect(handlers.get(`process:${outcome}`)!({}, processId)).resolves.toBe(true);
+						expect(mockProcessManager[outcome]).toHaveBeenCalledWith(processId);
+					} else {
+						managed.delete(processId);
+						events.emit('exit', processId, 0);
+					}
+					await pending;
+					await rotated;
+					expect(acquired).toBe(true);
+					expect(mockProcessManager.spawn).toHaveBeenCalledTimes(2);
+				} finally {
+					replay.clearInteractiveReplay(processId);
+					managed.delete(processId);
+					events.emit('exit', processId, 0);
+					await pending;
+					await rotated;
+					for (const release of releases) release();
+				}
+			});
 
 			it('leaves API-mode args intact when Batch Mode is off (default)', async () => {
 				mockAgentDetector.getAgent.mockResolvedValue(claudeCodeAgent);

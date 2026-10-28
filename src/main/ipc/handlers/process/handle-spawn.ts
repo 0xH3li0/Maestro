@@ -172,13 +172,21 @@ export async function handleProcessSpawn(
 		const onSessionId = (id: string, providerId: string) => {
 			if (id === config.sessionId) bindProviderSessionWriter(id, providerId);
 		};
-		const onExit = (id: string) => {
+		const onExit = (id: string, code?: number) => {
 			if (id !== config.sessionId) return;
-			if (config.toolType !== 'terminal') {
-				manager.off('exit', onExit);
-				manager.off('session-id', onSessionId);
-			}
-			release();
+			queueMicrotask(() => {
+				// ExitHandler removes the old process before emitting exit. The
+				// interactive replay listener can synchronously claim that same key;
+				// retain its writer and provider-id binding until its final exit.
+				// Skipped/failed replay leaves no replacement. Preflight cleanup
+				// calls this without an exit code and must release unconditionally.
+				if (code !== undefined && manager.get(config.sessionId)) return;
+				if (config.toolType !== 'terminal') {
+					manager.off('exit', onExit);
+					manager.off('session-id', onSessionId);
+				}
+				release();
+			});
 		};
 		if (config.toolType !== 'terminal') {
 			manager.on('exit', onExit);
