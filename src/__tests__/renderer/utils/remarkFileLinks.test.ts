@@ -513,6 +513,29 @@ describe('remarkFileLinks', () => {
 			expect(result).not.toContain('file:///handoff');
 		});
 
+		// A slash command in prose followed, much later, by a URL ending in a
+		// file name read as one path whose root directory was the whole sentence.
+		it('does not link a slash command that runs into a URL ending in a file name', async () => {
+			const result = await processMarkdown(
+				"let's modify the /maestro-build command so that we upload it to example.com/dropbox/maestro.zip then offer it",
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project'
+			);
+			expect(result).not.toContain('file://');
+			expect(result).not.toContain('maestro-build command](');
+		});
+
+		it('still links spaces below the root directory', async () => {
+			const result = await processMarkdown(
+				'Synced to /Volumes/My Drive/notes/plan.md today.',
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project'
+			);
+			expect(result).toContain('(<file:///Volumes/My Drive/notes/plan.md>)');
+		});
+
 		// Chinese and Japanese put no space between words, so a path written
 		// straight after one is still a path, not the middle of a word.
 		it('links an absolute path written straight after CJK text', async () => {
