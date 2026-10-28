@@ -48,51 +48,65 @@ afterEach(() => {
 });
 
 describe.skipIf(process.platform !== 'linux')('real desktop Codex auth/MCP lifecycle', () => {
-	it('terminates a timed-out resistant predecessor before disposing its supervision', async () => {
-		const processes = new Map<string, ManagedProcess>();
-		const emitter = new EventEmitter();
-		const spawner = new ChildProcessSpawner(
-			processes,
-			emitter,
-			new DataBufferManager(processes, emitter)
-		);
-		const failed = new Promise<void>((resolve) =>
-			emitter.on('raw-stdout', (_id, text: string) => {
-				if (text.includes('STOPPING')) resolve();
-			})
-		);
-		const config = {
-			sessionId: 'resistant-fixture',
-			toolType: 'codex',
-			cwd: process.cwd(),
-			command: process.execPath,
-			args: [
-				resolve('src/__tests__/fixtures/process-lifecycle/codex-auth-stall.cjs'),
-				'--fixture-phase=resistant',
-			],
-			prompt: 'fixture',
-			promptAlreadyInArgs: true,
-		};
-		expect(spawner.spawn(config).success).toBe(true);
-		const predecessor = processes.get(config.sessionId)!;
-		owned.push(predecessor);
-		await failed;
-		// Model ProcessManager.kill(): reuse the existing stop ladder and remove
-		// the map entry before registering the next turn under the same id.
-		stopProcess({ child: predecessor.childProcess }, { from: 'terminate', graceMs: 2_000 });
-		processes.delete(config.sessionId);
-		expect(spawner.spawn({ ...config, args: ['-e', 'setInterval(() => {}, 1000)'] }).success).toBe(
-			true
-		);
-		const successor = processes.get(config.sessionId)!;
-		owned.push(successor);
-		await vi.waitFor(() => expect(predecessor.childProcess?.signalCode).toBe('SIGKILL'), {
-			timeout: 1_000,
-		});
-		expect(processes.get(config.sessionId)).toBe(successor);
-		expect(successor.childProcess?.exitCode).toBeNull();
-		expect(successor.childProcess?.signalCode).toBeNull();
-	});
+	it.each(['replacement', 'interrupt'] as const)(
+		'settles a timed-out resistant predecessor during %s',
+		async (action) => {
+			const processes = new Map<string, ManagedProcess>();
+			const emitter = new EventEmitter();
+			const spawner = new ChildProcessSpawner(
+				processes,
+				emitter,
+				new DataBufferManager(processes, emitter)
+			);
+			const errors = vi.fn();
+			emitter.on('agent-error', errors);
+			const exited = new Promise<void>((resolve) => emitter.once('exit', () => resolve()));
+			const failed = new Promise<void>((resolve) =>
+				emitter.on('raw-stdout', (_id, text: string) => {
+					if (text.includes('STOPPING')) resolve();
+				})
+			);
+			const config = {
+				sessionId: 'resistant-fixture',
+				toolType: 'codex',
+				cwd: process.cwd(),
+				command: process.execPath,
+				args: [
+					resolve('src/__tests__/fixtures/process-lifecycle/codex-auth-stall.cjs'),
+					'--fixture-phase=resistant',
+				],
+				prompt: 'fixture',
+				promptAlreadyInArgs: true,
+			};
+			expect(spawner.spawn(config).success).toBe(true);
+			const predecessor = processes.get(config.sessionId)!;
+			owned.push(predecessor);
+			await failed;
+			if (action === 'interrupt') {
+				predecessor.interrupted = true;
+				stopProcess({ child: predecessor.childProcess }, { from: 'terminate', immediate: true });
+				await exited;
+				expect(errors).not.toHaveBeenCalled();
+				await vi.waitFor(() => expect(emitter.listenerCount('exit')).toBe(0));
+				return;
+			}
+			// Model ProcessManager.kill(): reuse the existing stop ladder and remove
+			// the map entry before registering the next turn under the same id.
+			stopProcess({ child: predecessor.childProcess }, { from: 'terminate', graceMs: 2_000 });
+			processes.delete(config.sessionId);
+			expect(
+				spawner.spawn({ ...config, args: ['-e', 'setInterval(() => {}, 1000)'] }).success
+			).toBe(true);
+			const successor = processes.get(config.sessionId)!;
+			owned.push(successor);
+			await vi.waitFor(() => expect(predecessor.childProcess?.signalCode).toBe('SIGKILL'), {
+				timeout: 1_000,
+			});
+			expect(processes.get(config.sessionId)).toBe(successor);
+			expect(successor.childProcess?.exitCode).toBeNull();
+			expect(successor.childProcess?.signalCode).toBeNull();
+		}
+	);
 	it.each([
 		'startup',
 		'after-model',

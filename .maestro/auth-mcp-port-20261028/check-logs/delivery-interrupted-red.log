@@ -1,0 +1,54 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vitest.config.mts:135:22). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vitest.config.mts:135:22). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vitest.config.mts:135:22). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v4.1.11 /home/chris/code/worktrees/fix/auth-mcp-supervision-rc-20261028
+
+ ❯ |node| src/__tests__/main/process-manager/spawners/ChildProcessSpawner.auth-lifecycle.test.ts (7 tests | 1 failed | 6 skipped) 787ms
+     × settles a timed-out resistant predecessor during interrupt 785ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |node| src/__tests__/main/process-manager/spawners/ChildProcessSpawner.auth-lifecycle.test.ts > real desktop Codex auth/MCP lifecycle > settles a timed-out resistant predecessor during interrupt
+AssertionError: expected "vi.fn()" to not be called at all, but actually been called 1 times
+
+Received:
+
+  1st vi.fn() call:
+
+    Array [
+      "resistant-fixture",
+      Object {
+        "agentId": "codex",
+        "message": "Codex produced no model activity within 0.7 seconds. Startup or authentication may be blocked, for example by an interactive keyring prompt. Check Codex login and the credential store on the agent host; after fixing them, retry the request. For a host already using file credentials, verify both cli_auth_credentials_store=file and mcp_oauth_credentials_store=file in the agent's effective Codex configuration.",
+        "recoverable": true,
+        "sessionId": "resistant-fixture",
+        "timestamp": 1793220449068,
+        "type": "agent_crashed",
+      },
+    ]
+
+
+Number of calls: 1
+
+ ❯ src/__tests__/main/process-manager/spawners/ChildProcessSpawner.auth-lifecycle.test.ts:89:24
+     87|     stopProcess({ child: predecessor.childProcess }, { from: 'terminat…
+     88|     await exited;
+     89|     expect(errors).not.toHaveBeenCalled();
+       |                        ^
+     90|     await vi.waitFor(() => expect(emitter.listenerCount('exit')).toBe(…
+     91|     return;
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 6 skipped (7)
+   Start at  21:47:26
+   Duration  2.34s (transform 1.03s, setup 0ms, import 1.35s, tests 787ms, environment 0ms)

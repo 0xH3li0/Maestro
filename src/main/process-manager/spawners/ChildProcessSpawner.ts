@@ -752,7 +752,7 @@ export class ChildProcessSpawner {
 				const onSupervisedExit = (sid: string): void => {
 					if (sid !== sessionId || isSuperseded()) return;
 					this.emitter.off('exit', onSupervisedExit);
-					if (!supervisionFailure) return;
+					if (!supervisionFailure || managedProcess.interrupted) return;
 					try {
 						emitAgentErrorAfterOutput(
 							this.emitter,
