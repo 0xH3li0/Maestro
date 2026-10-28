@@ -379,7 +379,7 @@ npm installs most agent CLIs on Windows as `.cmd` shims (`claude.cmd`, `codex.cm
 
 On other hosts the spec is unchanged.
 
-If you build a spec yourself, pass it through `applyWindowsShellRules(spec)` to apply the same rules. It returns the spec unchanged on other hosts, for a command that can start directly, and for a spec that already sets `shell`, so applying it twice is safe. `turnProcessSpecFromPlan` already applies it. Put the prompt in `spec.stdin` when the provider reads its prompt from stdin, and check other arguments with `cmdShellArgProblem(arg)`, which returns the reason cmd.exe cannot carry an argument, or `null` if it can.
+If you build a spec yourself, pass it through `applyWindowsShellRules(spec)` to apply the same rules. It returns the spec unchanged on other hosts, for a command that can start directly, and for a spec that already sets `shell`, so applying it twice is safe. `turnProcessSpecFromPlan` already applies it. Put the prompt in `spec.stdin` when the provider reads its prompt from stdin, and check other arguments with `cmdShellArgProblem(arg)`, which returns the reason cmd.exe cannot carry an argument, or `null` if it can. `cmdShellArgsRefusal(args, promptArgs)` checks a whole argument list and returns a refusal that names the first bad argument by its flag or position without quoting its value.
 
 ## Lower-level pieces
 
