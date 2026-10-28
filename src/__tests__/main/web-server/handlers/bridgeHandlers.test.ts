@@ -623,6 +623,21 @@ describe('handleBridgeInvoke denied channels', () => {
 		}
 	});
 
+	it('lets a browser record and read its User Journey', async () => {
+		for (const channel of ['journey:append', 'journey:read', 'journey:path']) {
+			const handler = vi.fn(async () => 'ok');
+			invokeHandlers.set(channel, handler);
+			const send = vi.fn();
+			await handleBridgeInvoke(
+				makeClient(),
+				{ type: 'bridge.invoke', requestId: channel, channel, args: ['agent-1'] },
+				send
+			);
+			expect(handler).toHaveBeenCalled();
+			expect((send.mock.calls[0][1] as Record<string, unknown>).ok).toBe(true);
+		}
+	});
+
 	it('refuses windows:setPanelState (a browser has no window of its own to persist)', async () => {
 		const handler = vi.fn();
 		invokeHandlers.set('windows:setPanelState', handler);

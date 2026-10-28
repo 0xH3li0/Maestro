@@ -47,6 +47,8 @@ const METHODS: Record<string, string> = {
 	history:
 		'add clear delete getAll getAllPaginated getCueGroupRuns getFilePath getGraphData getOffsetForTimestamp listSessions reload update updateSessionName',
 	images: 'resolve',
+	// The browser records what its user opens and browses, and reads it back for the prompt.
+	journey: 'append path read',
 	leaderboard: 'get getInstallationId getLongestRuns',
 	live: 'getLiveSessions getStatus',
 	logger: 'getLogLevel log',
