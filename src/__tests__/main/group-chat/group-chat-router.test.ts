@@ -1571,13 +1571,7 @@ describe('group-chat-router', () => {
 			expect(writableRecoverySpawn?.[0].args).not.toContain('plan');
 
 			// Switch the group chat to read-only and verify recovery honors it
-			await routeUserMessage(
-				chat.id,
-				'Inspect only',
-				mockProcessManager,
-				mockAgentDetector,
-				true
-			);
+			await routeUserMessage(chat.id, 'Inspect only', mockProcessManager, mockAgentDetector, true);
 			mockProcessManager.spawn.mockClear();
 
 			await respawnParticipantWithRecovery(
