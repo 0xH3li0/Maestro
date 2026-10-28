@@ -100,6 +100,56 @@ describe('plugin headless agent runner', () => {
 		expect(spawn).toHaveBeenCalledTimes(2);
 	});
 
+	it.each(['before', 'during'] as const)(
+		'returns a no-start cancellation when stopped %s the resumed writer wait',
+		async (when) => {
+			const controller = new AbortController();
+			const spawn = vi.fn(async () => ({ success: true, response: 'done' }));
+			const detectAgent = vi.fn(async () => ({ available: true }));
+			const run = createPluginHeadlessAgentRunner({
+				getAgent: () => agent,
+				detectAgent,
+				hasPluginTools: () => false,
+				spawn,
+				prepareSystemPrompt: async () => undefined,
+				issueRunToken: vi.fn(),
+				revokeRunToken: vi.fn(),
+				cliScriptPath: () => '/cli.js',
+				audit: vi.fn(),
+			});
+			const release = await acquireProviderSessionWriter(
+				'codex',
+				'desktop-writer',
+				'cancelled-provider'
+			);
+			try {
+				if (when === 'before') controller.abort();
+				const pending = run(agent.id, 'cancel me', 'cancelled-provider', controller.signal);
+				const cancelled = expect(pending).resolves.toEqual({
+					success: false,
+					executionStarted: false,
+					response: null,
+					sessionId: null,
+					error: 'Agent run cancelled',
+				});
+				if (when === 'during') {
+					await new Promise(setImmediate);
+					controller.abort();
+				}
+				await cancelled;
+				expect(detectAgent).not.toHaveBeenCalled();
+				expect(spawn).not.toHaveBeenCalled();
+				release();
+				await expect(run(agent.id, 'followup', 'cancelled-provider')).resolves.toMatchObject({
+					success: true,
+				});
+				expect(spawn).toHaveBeenCalledOnce();
+			} finally {
+				release();
+			}
+		}
+	);
+
 	it.each(['delay', 'expire', 'cancel'] as const)(
 		'counts original-audio staging against the absolute deadline on %s',
 		async (cause) => {

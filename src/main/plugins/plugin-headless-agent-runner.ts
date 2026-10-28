@@ -316,12 +316,24 @@ export function createPluginHeadlessAgentRunner(
 		if (!providerSessionId || args[8]) return run(...args);
 		const agent = deps.getAgent(agentId);
 		if (!agent) return run(...args);
-		const release = await acquireProviderSessionWriter(
-			agent.toolType,
-			`${agentId}-headless-${providerSessionId}`,
-			providerSessionId,
-			signal
-		);
+		let release: () => void;
+		try {
+			release = await acquireProviderSessionWriter(
+				agent.toolType,
+				`${agentId}-headless-${providerSessionId}`,
+				providerSessionId,
+				signal
+			);
+		} catch (error) {
+			if (!signal?.aborted) throw error;
+			return {
+				success: false,
+				executionStarted: false,
+				response: null,
+				sessionId: null,
+				error: 'Agent run cancelled',
+			};
+		}
 		try {
 			return await run(...args);
 		} finally {
