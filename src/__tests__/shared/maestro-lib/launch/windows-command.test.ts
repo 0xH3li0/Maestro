@@ -5,7 +5,9 @@ import {
 } from '../../../../shared/maestro-lib/launch/windows-command';
 
 // The cmd.exe behaviour these pin is read from documented parser rules, not run
-// here: only the windows-latest CI leg has a real cmd.exe.
+// here: only the windows-latest CI leg has a real cmd.exe. main has no
+// maestro-lib yet and keeps a private copy of this rule in cue-spawn-builder.ts,
+// whose tests run the same cases: change both together until main has it.
 describe('cmdShellArgProblem', () => {
 	it.each([
 		['a trailing percent', '100%'],
