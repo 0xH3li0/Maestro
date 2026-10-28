@@ -99,7 +99,7 @@ export function SuggestionsView({
 						>
 							<div className="text-sm">{candidate.rule.description ?? candidate.id}</div>
 							<div className="text-xs">
-								Pending proposal — owner: human; next action: accept, edit and approve, or reject.
+								Pending proposal. Owner: human; next action: accept, edit and approve, or reject.
 								Not active until approved.
 							</div>
 							<div className="text-xs select-text">
@@ -241,7 +241,7 @@ export function SuggestionsView({
 			)}
 			{hasProfile && (
 				<section className="space-y-2">
-					<h3 className="text-sm font-semibold">Proposed profile — owner: human</h3>
+					<h3 className="text-sm font-semibold">Proposed profile. Owner: human</h3>
 					<pre className="text-xs whitespace-pre-wrap select-text">{proposedProfile}</pre>
 					<button className="text-xs" onClick={() => onApplyProfile(proposedProfile)}>
 						Apply profile
