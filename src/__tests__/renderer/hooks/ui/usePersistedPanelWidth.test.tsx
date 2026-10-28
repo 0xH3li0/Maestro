@@ -10,6 +10,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { installLocalStorageMock } from '../../../helpers/mockLocalStorage';
 import {
+	livePanelMaxWidth,
 	usePersistedPanelSize,
 	usePersistedPanelWidth,
 } from '../../../../renderer/hooks/ui/usePersistedPanelWidth';
@@ -145,5 +146,23 @@ describe('usePersistedPanelSize', () => {
 		// The stored preference is untouched, so widening the bounds restores it.
 		rerender({ maxSize: 900 });
 		expect(result.current.size).toBe(800);
+	});
+});
+
+describe('livePanelMaxWidth', () => {
+	const LIVE = { minWidth: 300, maxWidth: 700, reserve: 320 };
+
+	it('leaves the reserve to the rest of the surface', () => {
+		expect(livePanelMaxWidth(900, LIVE)).toBe(900 - 320);
+	});
+
+	it('never goes below the minimum or above the stored bound', () => {
+		expect(livePanelMaxWidth(400, LIVE)).toBe(300);
+		expect(livePanelMaxWidth(4000, LIVE)).toBe(700);
+	});
+
+	it('keeps the stored bound until the container is measured', () => {
+		expect(livePanelMaxWidth(0, LIVE)).toBe(700);
+		expect(livePanelMaxWidth(Number.NaN, LIVE)).toBe(700);
 	});
 });

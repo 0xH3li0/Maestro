@@ -27,6 +27,7 @@ import { formatRelativeTime } from '../../../shared/formatters';
 import {
 	canKickRoomActor,
 	canUnlockRoomActor,
+	describeRoomMemberRole,
 	describeRoomStatsActor,
 	describeSketchAuditDecision,
 	SKETCH_KICK_NOTE,
@@ -34,7 +35,7 @@ import {
 	type SketchRoomAction,
 } from '../../../shared/sketch/room-admin';
 import type { SketchRoomStats } from '../../../shared/sketch/room-stats';
-import { sketchActorNameLabel, sketchActorRoleLabel } from '../../../shared/sketch/attribution';
+import { sketchActorNameLabel } from '../../../shared/sketch/attribution';
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { HeaderActionButton } from '../ui/HeaderActionButton';
 import { MiniBadge } from '../ui/MiniBadge';
@@ -172,7 +173,7 @@ export function SketchRoomMembers({ sketchId, theme, stats, busy, run }: SketchR
 							)}
 						</div>
 						<div className="break-words" style={dim}>
-							{sketchActorRoleLabel(actor)}
+							{describeRoomMemberRole(actor)}
 						</div>
 						<SketchMetaLine
 							theme={theme}

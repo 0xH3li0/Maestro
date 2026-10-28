@@ -42,6 +42,7 @@ import { useWindowOwnsSession } from '../contexts/WindowContext';
 import { notifyToast } from '../stores/notificationStore';
 import { isAutoRunDocumentLocked, reconcileDiskContent } from '../utils/autoRunDraft';
 import type { FileNode } from '../types/fileTree';
+import { PanelResizeHandle } from './ui/PanelResizeHandle';
 import type { FileClickOptions } from '../hooks/ui/useAppHandlers';
 import {
 	RIGHT_PANEL_MIN_WIDTH,
@@ -559,12 +560,7 @@ export const RightPanel = memo(
 				}}
 			>
 				{/* Resize Handle */}
-				{rightPanelOpen && (
-					<div
-						className="resize-handle absolute top-0 left-0 w-3 h-full cursor-col-resize border-l-4 border-transparent hover:border-blue-500 transition-colors z-20"
-						onPointerDown={onRightPanelResizeStart}
-					/>
-				)}
+				{rightPanelOpen && <PanelResizeHandle onResizeStart={onRightPanelResizeStart} />}
 
 				{/* Tab Header */}
 				<div className="flex border-b h-16" style={{ borderColor: theme.colors.border }}>

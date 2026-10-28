@@ -2042,6 +2042,47 @@ describe('agentStore', () => {
 			expect(spawnCall.permissionMode).toBe('readonly');
 		});
 
+		it('passes the Sketch Book restricted mark only on a read-only spawn', async () => {
+			const tab = {
+				id: 'tab-1',
+				agentSessionId: 'conv-1',
+				name: null,
+				starred: false,
+				logs: [],
+				inputValue: '',
+				stagedImages: [],
+				createdAt: Date.now(),
+				state: 'idle' as const,
+				permissionMode: 'full' as const,
+			};
+			useSessionStore
+				.getState()
+				.setSessions([createMockSession({ id: 'session-1', aiTabs: [tab], activeTabId: 'tab-1' })]);
+
+			await useAgentStore.getState().processQueuedItem(
+				'session-1',
+				createQueuedItem({
+					tabId: 'tab-1',
+					text: 'Guest asks',
+					readOnlyMode: true,
+					sketchRestricted: true,
+				}),
+				defaultDeps
+			);
+			expect(mockSpawn.mock.calls[0][0].sketchRestricted).toBe(true);
+			expect(mockSpawn.mock.calls[0][0].permissionMode).toBe('readonly');
+
+			// A stray mark on a full-access turn never reaches main.
+			await useAgentStore
+				.getState()
+				.processQueuedItem(
+					'session-1',
+					createQueuedItem({ tabId: 'tab-1', text: 'Conductor', sketchRestricted: true }),
+					defaultDeps
+				);
+			expect(mockSpawn.mock.calls[1][0].sketchRestricted).toBeUndefined();
+		});
+
 		it('sends permissionMode "full" for a queued item on a tab with no permissionMode set', async () => {
 			// Regression for the queued-spawn drift (Greptile P1): a fresh tab resolves
 			// to Full Access in the toolbar, so its queued non-interactive spawn must

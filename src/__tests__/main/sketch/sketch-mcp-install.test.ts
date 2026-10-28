@@ -10,6 +10,8 @@
  *   - **Small footprint**: a provider whose config directory does not exist is
  *     skipped, not created.
  *   - **Flag off removes the entries** and leaves `maestro-coworking` alone.
+ *   - **A restricted turn's own server** runs the same script, bound to the
+ *     owner agent, with every sketch tool but `sketch_export`.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -39,8 +41,10 @@ vi.mock('child_process', () => {
 import {
 	SKETCH_SERVER_SCRIPT_FILENAME,
 	installSketchMcpServer,
+	sketchRestrictedMcpServer,
 	uninstallSketchMcpServer,
 } from '../../../main/sketch/sketch-mcp-install';
+import { SKETCH_TOOL_NAMES } from '../../../main/sketch/sketch-mcp-types';
 import { getSketchServerScript } from '../../../main/sketch/sketch-mcp-server-script';
 import { claudeCodeInstaller } from '../../../main/coworking/installers/claude-code';
 
@@ -108,5 +112,18 @@ describe('sketch MCP install', () => {
 		expect(Object.keys(claude.mcpServers)).toEqual(['maestro-coworking']);
 		const codex = fs.readFileSync(path.join(tmp, 'home', '.codex', 'config.toml'), 'utf8');
 		expect(codex).not.toContain('maestro-sketch');
+	});
+
+	it('builds the server a restricted turn is handed, bound to the owner agent', async () => {
+		const server = await sketchRestrictedMcpServer('agent-7');
+
+		const scriptPath = path.join(paths.userData, SKETCH_SERVER_SCRIPT_FILENAME);
+		expect(server.name).toBe('maestro-sketch');
+		expect(server.args).toEqual([scriptPath]);
+		expect(fs.readFileSync(scriptPath, 'utf8')).toBe(getSketchServerScript());
+		expect(server.env.MAESTRO_SKETCH_AGENT_ID).toBe('agent-7');
+		expect(server.env.MAESTRO_SKETCH_SOCKET).toEqual(expect.any(String));
+		expect(server.tools).not.toContain('sketch_export');
+		expect(server.tools).toEqual(SKETCH_TOOL_NAMES.filter((tool) => tool !== 'sketch_export'));
 	});
 });

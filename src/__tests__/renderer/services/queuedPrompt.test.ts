@@ -216,6 +216,25 @@ describe('enqueuePromptForTab', () => {
 		expect(item.readOnlyMode).toBe(true);
 	});
 
+	it('marks a Sketch Book restricted turn only when it is read-only', () => {
+		seed();
+		enqueuePromptForTab({
+			sessionId: 'session-1',
+			tabId: 'a',
+			text: 'guest asks',
+			readOnlyMode: true,
+			sketchRestricted: true,
+		});
+		// A mark without read-only would claim a posture the turn does not run in.
+		enqueuePromptForTab({
+			sessionId: 'session-1',
+			tabId: 'a',
+			text: 'stray',
+			sketchRestricted: true,
+		});
+		expect(currentQueue().map((item) => item.sketchRestricted)).toEqual([true, undefined]);
+	});
+
 	it('queues the consult chain with the prompt', () => {
 		seed();
 		enqueuePromptForTab({

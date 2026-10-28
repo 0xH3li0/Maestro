@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	canKickRoomActor,
 	canUnlockRoomActor,
+	describeRoomMemberRole,
 	describeRoomStatsActor,
 	describeRoomStatsCap,
 	describeSketchAuditDecision,
@@ -123,6 +124,17 @@ describe('members and links', () => {
 		expect(describeRoomStatsActor(actor({ kind: 'conductor', role: 'conductor' }))).toBe(
 			'"Sam" · conductor'
 		);
+	});
+
+	it('says what a member is in plain words on the People tab', () => {
+		expect(describeRoomMemberRole(actor({ kind: 'conductor', role: 'conductor' }))).toBe(
+			'You, sharing from this desktop'
+		);
+		expect(describeRoomMemberRole(actor({ kind: 'bot', role: 'conductor' }))).toBe(
+			'The agent that owns this sketch: @bot asks it'
+		);
+		// A guest keeps the server-stamped line, link and "not verified" included.
+		expect(describeRoomMemberRole(actor())).toBe('guest, read-write link #3, not verified');
 	});
 
 	it('offers kick for guests only, and unlock only while a guest is locked or on a streak', () => {

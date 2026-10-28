@@ -56,6 +56,12 @@ export interface ModalTabStripProps<Id extends string> {
 	className?: string;
 	/** Keep the strip at the top of its scrolling panel, above the content. */
 	sticky?: boolean;
+	/**
+	 * 'compact' for a strip in a narrow side panel: smaller type and padding,
+	 * and the tabs share the strip's width equally. The strip still scrolls
+	 * sideways when even that does not fit.
+	 */
+	density?: 'regular' | 'compact';
 }
 
 function tabElementId(idPrefix: string, id: string): string {
@@ -90,7 +96,9 @@ export function ModalTabStrip<Id extends string>({
 	idPrefix,
 	className = '',
 	sticky = false,
+	density = 'regular',
 }: ModalTabStripProps<Id>) {
+	const compact = density === 'compact';
 	// The strip scrolls sideways and draws no scrollbar, so a selected tab past
 	// its edge would be invisible: nothing on screen would say which panel is
 	// showing. 'auto' because Left / Right can be held.
@@ -162,7 +170,11 @@ export function ModalTabStrip<Id extends string>({
 						aria-controls={panelElementId(idPrefix, tab.id)}
 						tabIndex={selected ? 0 : -1}
 						onClick={() => onChange(tab.id)}
-						className="relative flex items-center gap-2 px-4 py-2 mb-2 rounded-lg text-sm font-medium transition-colors outline-none whitespace-nowrap shrink-0 focus-visible:ring-2"
+						className={`relative flex items-center rounded-lg font-medium transition-colors outline-none whitespace-nowrap shrink-0 focus-visible:ring-2 ${
+							compact
+								? 'flex-1 justify-center gap-1.5 px-2 py-1.5 mb-1.5 text-xs'
+								: 'gap-2 px-4 py-2 mb-2 text-sm'
+						}`}
 						style={{
 							backgroundColor: selected ? `${theme.colors.accent}20` : 'transparent',
 							color: selected ? theme.colors.accent : theme.colors.textDim,
@@ -175,11 +187,11 @@ export function ModalTabStrip<Id extends string>({
 						}}
 						data-testid={`${idPrefix}-tab-${tab.id}`}
 					>
-						{Icon && <Icon className="w-4 h-4 flex-shrink-0" />}
+						{Icon && <Icon className={`${compact ? 'w-3.5 h-3.5' : 'w-4 h-4'} flex-shrink-0`} />}
 						<span>{tab.label}</span>
 						{tab.count !== undefined && (
 							<span
-								className="text-xs tabular-nums"
+								className={`${compact ? 'text-[10px]' : 'text-xs'} tabular-nums`}
 								style={{ color: theme.colors.textDim }}
 								data-testid={`${idPrefix}-tab-${tab.id}-count`}
 							>

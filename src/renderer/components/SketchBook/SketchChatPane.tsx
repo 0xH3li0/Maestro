@@ -13,6 +13,9 @@
  *
  * With `onSend`, the pane ends in the composer (`SketchChatComposer`): the
  * conductor chats with the room, or asks the agent with `@bot`.
+ *
+ * It is the Chat tab of the Collaborate panel (`SketchSharePanel`), so it has
+ * no frame of its own: it fills its parent, which sets the width.
  */
 
 import { ShieldOff } from 'lucide-react';
@@ -97,20 +100,7 @@ export function SketchChatPane({
 		messages.length + heldReplies.length + approvals.length
 	);
 	return (
-		<aside
-			className="w-72 shrink-0 flex flex-col min-h-0"
-			aria-label="Sketch chat"
-			style={{
-				borderLeft: `1px solid ${theme.colors.border}`,
-				backgroundColor: theme.colors.bgSidebar,
-			}}
-		>
-			<div
-				className="px-3 py-2 text-xs font-medium select-none"
-				style={{ color: theme.colors.textDim, borderBottom: `1px solid ${theme.colors.border}` }}
-			>
-				Chat
-			</div>
+		<div className="flex-1 flex flex-col min-h-0" data-sketch-chat="">
 			<div ref={listRef} className="flex-1 min-h-0 overflow-y-auto px-3 py-2 flex flex-col gap-3">
 				{messages.map((message) => (
 					<div key={message.id} className="flex flex-col gap-0.5">
@@ -166,6 +156,6 @@ export function SketchChatPane({
 				)}
 			</div>
 			{onSend && <SketchChatComposer theme={theme} shared={shared} onSend={onSend} />}
-		</aside>
+		</div>
 	);
 }

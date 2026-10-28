@@ -97,6 +97,7 @@ import {
 	tokenProxyLaunchGatewayUrl,
 } from '../../../local-models/proxy/service';
 import { preparePermissionRelayArgs } from '../../../permission-relay';
+import { resolveSketchRestrictedLaunch } from '../../../sketch/sketch-restricted-launch';
 import {
 	primeOmpModelCatalog,
 	computeOmpCatalogKey,
@@ -297,11 +298,29 @@ async function handleProcessSpawnImpl(
 		: launchAgent;
 	const launchRunOn = turnRunOnTarget({ runOn: config.runOnOverride }, providerAgent?.runOn);
 
+	// Derive effective read-only state, honoring the legacy boolean flag only
+	// when permissionMode wasn't explicitly set (back-compat for older configs).
+	const hasExplicitPermissionMode = config.permissionMode !== undefined;
+	const isReadOnly =
+		config.permissionMode === 'readonly' ||
+		(!hasExplicitPermissionMode && config.readOnlyMode === true);
+
+	// A Sketch Book restricted turn on a provider with its own recipe (Claude
+	// Code): the recipe replaces the read-only args, and custom args and
+	// Additional Directories stay off (sketch-restricted-launch.ts).
+	const sketchRestricted = await resolveSketchRestrictedLaunch({
+		sketchRestricted: config.sketchRestricted,
+		readOnly: isReadOnly,
+		toolType: config.toolType,
+		agentId: launchAgentId,
+	});
+
 	const claudeContext = await resolveClaudeSpawnContext(config, agent, {
 		sessionsStore: deps.sessionsStore,
 		settingsStore,
 		envLayers: claudeEnvLayers,
 		runOn: launchRunOn,
+		forceApiMode: sketchRestricted !== null,
 	});
 	const {
 		baseSessionId,
@@ -311,6 +330,17 @@ async function handleProcessSpawnImpl(
 		isClaudeCode,
 		isSshEnabled,
 	} = claudeContext;
+	// The one way a Claude turn still reaches the TUI in API mode: the Path
+	// field names a maestro-p binary. A restricted sketch turn's posture is its
+	// command line, so it never runs through anything that may rewrite it.
+	if (sketchRestricted && claudeResolvedMode === 'interactive') {
+		reportSpawnRefusal(
+			deps,
+			config.sessionId,
+			"Sketch Book runs a restricted turn on `claude --print`, and this agent's Path points at maestro-p. Point the agent's Path at claude to run restricted sketch turns."
+		);
+		return { success: false, pid: 0 };
+	}
 	// Codex transport (exec default, app-server opt-in), read from the persisted
 	// agent record so a stale renderer cannot route the turn differently from
 	// what is saved. Handed to ProcessManager.spawn() below.
@@ -327,11 +357,12 @@ async function handleProcessSpawnImpl(
 		prompt: config.prompt,
 		cwd: config.cwd,
 		readOnlyMode: config.readOnlyMode,
+		readOnlyArgsOverride: sketchRestricted?.readOnlyArgsOverride,
 		modelId: config.modelId,
 		yoloMode: config.yoloMode,
 		permissionMode: config.permissionMode,
 		agentSessionId: config.agentSessionId,
-		additionalDirectories: config.sessionAdditionalDirectories,
+		additionalDirectories: sketchRestricted ? undefined : config.sessionAdditionalDirectories,
 	});
 
 	// ========================================================================
@@ -344,6 +375,7 @@ async function handleProcessSpawnImpl(
 		sessionCustomEffort: config.sessionCustomEffort,
 		sessionCustomArgs: config.sessionCustomArgs,
 		sessionCustomEnvVars: config.sessionCustomEnvVars,
+		omitCustomArgs: sketchRestricted !== null,
 	});
 	finalArgs = configResolution.args;
 
@@ -359,13 +391,6 @@ async function handleProcessSpawnImpl(
 			LOG_CONTEXT
 		);
 	}
-
-	// Derive effective read-only state, honoring the legacy boolean flag only
-	// when permissionMode wasn't explicitly set (back-compat for older configs).
-	const hasExplicitPermissionMode = config.permissionMode !== undefined;
-	const isReadOnly =
-		config.permissionMode === 'readonly' ||
-		(!hasExplicitPermissionMode && config.readOnlyMode === true);
 
 	// Settings -> Environment (`globalShellEnvVars`, read above before
 	// resolveClaudeSpawnContext). Loaded for every process type: terminals get it

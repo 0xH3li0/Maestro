@@ -334,6 +334,17 @@ vi.mock('../../../../main/agents/claude-slash-command-probe', () => ({
 	probeClaudeSlashCommandsCached: vi.fn().mockResolvedValue(null),
 }));
 
+// A Sketch Book restricted turn's server, without writing its script to disk.
+vi.mock('../../../../main/sketch/sketch-mcp-install', () => ({
+	sketchRestrictedMcpServer: vi.fn(async (agentId: string) => ({
+		name: 'maestro-sketch',
+		command: 'node',
+		args: ['/data/sketch-mcp-server.js'],
+		env: { MAESTRO_SKETCH_AGENT_ID: agentId },
+		tools: ['sketch_list', 'sketch_add_elements'],
+	})),
+}));
+
 // Mock the prompt manager so the copilot-preamble injection has deterministic
 // content without bootstrapping the real prompt cache. Per-test overrides use
 // mockReturnValueOnce / mockImplementation.
@@ -555,6 +566,64 @@ describe('process IPC handlers', () => {
 				})
 			);
 			expect(result).toEqual({ pid: 12345, success: true });
+		});
+
+		describe('Sketch Book restricted turn', () => {
+			const spawnTurn = async (overrides: Record<string, unknown>) => {
+				mockAgentDetector.getAgent.mockResolvedValue({ id: 'claude-code', requiresPty: false });
+				mockProcessManager.spawn.mockReturnValue({ pid: 4100, success: true });
+				const handler = handlers.get('process:spawn');
+				await handler!({} as any, {
+					sessionId: 'sketch-owner-ai-tab-1',
+					toolType: 'claude-code',
+					cwd: '/test/project',
+					command: 'claude',
+					args: ['--print'],
+					permissionMode: 'readonly',
+					sessionCustomArgs: '--add-dir /',
+					sessionAdditionalDirectories: [{ path: '/elsewhere', read: true, write: false }],
+					...overrides,
+				});
+			};
+
+			it('runs the Claude recipe in place of plan mode, without custom args or extra directories', async () => {
+				const { buildAgentArgs, applyAgentConfigOverrides } =
+					await import('../../../../shared/maestro-lib/launch/agent-args');
+				const { sketchRestrictedMcpServer } =
+					await import('../../../../main/sketch/sketch-mcp-install');
+				await spawnTurn({ sketchRestricted: true });
+
+				expect(sketchRestrictedMcpServer).toHaveBeenCalledWith('sketch-owner');
+				const buildOptions = vi.mocked(buildAgentArgs).mock.calls.at(-1)![1];
+				expect(buildOptions.readOnlyArgsOverride).toContain('--restricted');
+				expect(buildOptions.additionalDirectories).toBeUndefined();
+				const overrides = vi.mocked(applyAgentConfigOverrides).mock.calls.at(-1)![2];
+				expect(overrides.omitCustomArgs).toBe(true);
+			});
+
+			it('leaves a read-only turn without the mark on the provider read-only mode', async () => {
+				const { buildAgentArgs, applyAgentConfigOverrides } =
+					await import('../../../../shared/maestro-lib/launch/agent-args');
+				await spawnTurn({});
+
+				const buildOptions = vi.mocked(buildAgentArgs).mock.calls.at(-1)![1];
+				expect(buildOptions.readOnlyArgsOverride).toBeUndefined();
+				expect(buildOptions.additionalDirectories).toEqual([
+					{ path: '/elsewhere', read: true, write: false },
+				]);
+				expect(vi.mocked(applyAgentConfigOverrides).mock.calls.at(-1)![2].omitCustomArgs).toBe(
+					false
+				);
+			});
+
+			it('ignores the mark on a turn that is not read-only', async () => {
+				const { buildAgentArgs } = await import('../../../../shared/maestro-lib/launch/agent-args');
+				await spawnTurn({ sketchRestricted: true, permissionMode: 'full' });
+
+				expect(
+					vi.mocked(buildAgentArgs).mock.calls.at(-1)![1].readOnlyArgsOverride
+				).toBeUndefined();
+			});
 		});
 
 		describe('dormant Pianola agent', () => {

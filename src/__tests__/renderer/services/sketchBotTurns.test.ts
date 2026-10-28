@@ -204,6 +204,7 @@ beforeEach(() => {
 				type: 'message',
 				text: options.text,
 				readOnlyMode: options.readOnlyMode === true,
+				...(options.sketchRestricted ? { sketchRestricted: true } : {}),
 			};
 			queued.push(item);
 			updateSessionWith(options.sessionId, (session) => ({
@@ -229,6 +230,7 @@ describe('turn delivery', () => {
 		expect(deps.prepare).toHaveBeenCalledWith(SKETCH_ID, 'full');
 		expect(queued).toHaveLength(1);
 		expect(queued[0]).toMatchObject({ tabId: tab?.id, readOnlyMode: false });
+		expect(queued[0].sketchRestricted).toBeUndefined();
 		expect(queued[0].text).toContain('No changes since your last read.');
 		expect(queued[0].text).not.toContain(SKETCH_UNTRUSTED_REQUEST_BEGIN);
 
@@ -247,6 +249,8 @@ describe('turn delivery', () => {
 		await settle();
 		const tabId = sketchTab()?.id;
 		expect(queued[0].readOnlyMode).toBe(true);
+		// Marked, so main runs it with the provider's restricted recipe.
+		expect(queued[0].sketchRestricted).toBe(true);
 		expect(queued[0].text).toContain(SKETCH_UNTRUSTED_REQUEST_BEGIN);
 		expect(queued[0].text).toContain('"Sam" · guest, read-write link #3, not verified');
 		playTurn(answer('Done.'));

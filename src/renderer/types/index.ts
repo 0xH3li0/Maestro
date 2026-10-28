@@ -579,6 +579,8 @@ export interface QueuedItem {
 	tabName?: string;
 	// Read-only mode tracking (for parallel execution bypass)
 	readOnlyMode?: boolean; // True if queued from a read-only tab
+	/** A Sketch Book restricted turn: runs read-only with the provider's sketch recipe (restricted-posture.ts). */
+	sketchRestricted?: boolean;
 	// Force parallel: dispatches immediately when this tab finishes, skipping cross-tab wait
 	forceParallel?: boolean;
 	// Held/paused: kept in the queue (preserving order) but skipped by every
@@ -1845,6 +1847,7 @@ export interface ProcessConfig {
 	// Agent-specific spawn options (used to build args via agent config)
 	agentSessionId?: string; // For session resume (uses agent's resumeArgs builder)
 	readOnlyMode?: boolean; // For read-only/plan mode (uses agent's readOnlyArgs)
+	sketchRestricted?: boolean; // A Sketch Book restricted turn: read-only with the provider's sketch recipe (restricted-posture.ts)
 	modelId?: string; // For model selection (uses agent's modelArgs builder)
 	yoloMode?: boolean; // For YOLO/full-access mode (uses agent's yoloModeArgs)
 	permissionMode?: 'full' | 'standard' | 'readonly'; // Preferred over readOnlyMode + yoloMode

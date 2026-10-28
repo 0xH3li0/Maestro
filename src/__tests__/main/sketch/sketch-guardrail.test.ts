@@ -658,7 +658,7 @@ describe('isB2Available', () => {
 	});
 
 	it('refuses a provider that cannot run restricted turns, with its reason', async () => {
-		postureBlocker = SKETCH_RESTRICTED_POSTURE_BLOCKERS['claude-code']!;
+		postureBlocker = SKETCH_RESTRICTED_POSTURE_BLOCKERS.opencode!;
 		expect(await guardrail.isB2Available({ agentId: 'agent-1' })).toEqual({
 			ok: false,
 			reason: postureBlocker,

@@ -10,6 +10,8 @@
  * Excalidraw itself loads lazily (`React.lazy` over `loadExcalidraw()`), so
  * no Excalidraw code ships until a sketch opens, and always with the bundled
  * fonts in place. Its main menu is `SketchMainMenu` (no Excalidraw links).
+ * Excalidraw's dialogs (Help, export, Mermaid) get Maestro's ESC pill from
+ * `ExcalidrawDialogEscHost`, since Excalidraw draws no close button on desktop.
  * On the canvas Excalidraw wins a key clash, except Maestro's tab switching,
  * Quick Actions and Switch Agent (`useSketchKeyboard.ts`).
  *
@@ -30,9 +32,13 @@
  * per link), a held reply on "Publish anyway", and a conductor message that
  * ran restricted offers "Run with full access" (Q2). Every button calls the
  * same relay functions `maestro-cli sketch approve|deny|escalate|publish|
- * discard` reach. It shows whenever the sketch has a room or holds anything,
- * and ends in the composer: plain messages go to the room, `@bot` asks the
- * agent (`sendSketchConductorChat()`, which `maestro-cli sketch chat` reaches).
+ * discard` reach. It is the Collaborate panel's Chat tab, offered whenever
+ * the sketch has a room or holds anything, and ends in the composer: plain
+ * messages go to the room, `@bot` asks the agent (`sendSketchConductorChat()`,
+ * which `maestro-cli sketch chat` reaches). The panel opens on Chat when the
+ * chat first has something to show, and again whenever a guest request or a
+ * held reply arrives, since both wait on the conductor; messages that arrive
+ * while Chat is not showing are counted on its tab.
  *
  * The Collaborate button at the canvas's top right, the main menu's
  * Collaborate item and its chord (`sketchBookCollaborate`) open the
@@ -68,10 +74,12 @@ import {
 } from '../../stores/sketchSessionStore';
 import { loadExcalidraw } from './excalidrawAssets';
 import { SketchMainMenu } from './SketchMainMenu';
+import { ExcalidrawDialogEscHost } from './ExcalidrawDialogClose';
 import { useSketchKeyboard } from './useSketchKeyboard';
 import { SketchFooter, SketchTopRightUI, type SketchCanvasChrome } from './SketchCanvasChrome';
 import { SketchChatPane } from './SketchChatPane';
-import { SketchSharePanel } from './SketchSharePanel';
+import { SketchSharePanel, type CollaborateTab } from './SketchSharePanel';
+import { useElementWidth } from '../../hooks/ui/useElementWidth';
 import { SketchScreenOutageBanner, SketchScreeningBadge } from './SketchRoomScreening';
 import { shortcutText } from '../ui/ShortcutHint';
 import { FIXED_SHORTCUTS } from '../../constants/shortcuts';
@@ -202,6 +210,32 @@ export function SketchTabView({ sketchId, theme }: SketchTabViewProps) {
 	const [canvas, setCanvas] = React.useState<HTMLDivElement | null>(null);
 	useSketchKeyboard(canvas);
 	const [collaborateOpen, setCollaborateOpen] = React.useState(false);
+	const [collaborateTab, setCollaborateTab] = React.useState<CollaborateTab>('chat');
+	const rowRef = React.useRef<HTMLDivElement>(null);
+	// The row mounts once the sketch is ready; measure from then on.
+	const rowWidth = useElementWidth(rowRef, status === 'ready');
+	const chatCount = chat?.length ?? 0;
+	const chatOffered =
+		roomConnection !== null || chatCount > 0 || heldReplies.length > 0 || approvals.length > 0;
+	const chatShowing = collaborateOpen && collaborateTab === 'chat';
+	const [chatSeen, setChatSeen] = React.useState(chatCount);
+	React.useEffect(() => {
+		if (chatShowing) setChatSeen(chatCount);
+	}, [chatShowing, chatCount]);
+	const chatUnread = chatShowing ? 0 : Math.max(0, chatCount - chatSeen);
+
+	// Bring Chat forward when it first has something, and on each new request
+	// or held reply: both wait on the conductor, who may have closed the panel.
+	const waitingOnConductor = approvals.length + heldReplies.length;
+	const shownChat = React.useRef({ offered: false, waiting: 0 });
+	React.useEffect(() => {
+		const previous = shownChat.current;
+		shownChat.current = { offered: chatOffered, waiting: waitingOnConductor };
+		if ((chatOffered && !previous.offered) || waitingOnConductor > previous.waiting) {
+			setCollaborateOpen(true);
+			setCollaborateTab('chat');
+		}
+	}, [chatOffered, waitingOnConductor]);
 
 	const toggleCollaborate = React.useCallback(() => setCollaborateOpen((open) => !open), []);
 	const chrome = React.useMemo<SketchCanvasChrome>(
@@ -411,7 +445,8 @@ export function SketchTabView({ sketchId, theme }: SketchTabViewProps) {
 				</div>
 			)}
 			<SketchScreenOutageBanner stats={roomStats} theme={theme} />
-			<div className="flex-1 min-h-0 flex">
+			<ExcalidrawDialogEscHost theme={theme} />
+			<div className="flex-1 min-h-0 flex" ref={rowRef}>
 				<div className="flex-1 min-w-0 relative">
 					<div className="absolute inset-0" ref={setCanvas}>
 						<React.Suspense fallback={spinner}>
@@ -428,31 +463,34 @@ export function SketchTabView({ sketchId, theme }: SketchTabViewProps) {
 						</React.Suspense>
 					</div>
 				</div>
-				{(roomConnection !== null ||
-					(chat && chat.length > 0) ||
-					heldReplies.length > 0 ||
-					approvals.length > 0) && (
-					<SketchChatPane
-						messages={chat ?? []}
-						theme={theme}
-						heldReplies={heldReplies}
-						onPublishHeld={(replyTo) => publishHeldSketchReply(sketchId, replyTo)}
-						onDiscardHeld={(replyTo) => discardHeldSketchReply(sketchId, replyTo)}
-						approvals={approvals}
-						waitingApprovals={waitingApprovals}
-						onRunRequest={(replyTo) => approveSketchBotRequest(sketchId, replyTo)}
-						onDenyRequest={(replyTo) => denySketchBotRequest(sketchId, replyTo)}
-						escalatable={escalatable}
-						onEscalate={(replyTo) => escalateSketchBotRequest(sketchId, replyTo)}
-						onSend={(text) => sendSketchConductorChat(sketchId, text)}
-						shared={roomConnection !== null}
-					/>
-				)}
 				{collaborateOpen && (
 					<SketchSharePanel
 						sketchId={sketchId}
 						theme={theme}
 						onClose={() => setCollaborateOpen(false)}
+						tab={collaborateTab}
+						onTabChange={setCollaborateTab}
+						chatUnread={chatUnread}
+						availableWidth={rowWidth}
+						chat={
+							chatOffered ? (
+								<SketchChatPane
+									messages={chat ?? []}
+									theme={theme}
+									heldReplies={heldReplies}
+									onPublishHeld={(replyTo) => publishHeldSketchReply(sketchId, replyTo)}
+									onDiscardHeld={(replyTo) => discardHeldSketchReply(sketchId, replyTo)}
+									approvals={approvals}
+									waitingApprovals={waitingApprovals}
+									onRunRequest={(replyTo) => approveSketchBotRequest(sketchId, replyTo)}
+									onDenyRequest={(replyTo) => denySketchBotRequest(sketchId, replyTo)}
+									escalatable={escalatable}
+									onEscalate={(replyTo) => escalateSketchBotRequest(sketchId, replyTo)}
+									onSend={(text) => sendSketchConductorChat(sketchId, text)}
+									shared={roomConnection !== null}
+								/>
+							) : undefined
+						}
 					/>
 				)}
 			</div>

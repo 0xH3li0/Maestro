@@ -9,6 +9,8 @@
  * resized down.
  */
 
+import { livePanelMaxWidth } from '../../hooks/ui/usePersistedPanelWidth';
+
 /** localStorage key for the width the user dragged the preview pane to. */
 export const PREVIEW_WIDTH_STORAGE_KEY = 'documentGraph.previewWidth';
 
@@ -31,9 +33,9 @@ export const PREVIEW_GRAPH_RESERVE = 200;
  * should honor the remembered width rather than snap to the minimum and jump.
  */
 export function previewMaxWidthForContainer(containerWidth: number): number {
-	if (!(containerWidth > 0)) return PREVIEW_MAX_WIDTH;
-	return Math.max(
-		PREVIEW_MIN_WIDTH,
-		Math.min(PREVIEW_MAX_WIDTH, containerWidth - PREVIEW_GRAPH_RESERVE)
-	);
+	return livePanelMaxWidth(containerWidth, {
+		minWidth: PREVIEW_MIN_WIDTH,
+		maxWidth: PREVIEW_MAX_WIDTH,
+		reserve: PREVIEW_GRAPH_RESERVE,
+	});
 }

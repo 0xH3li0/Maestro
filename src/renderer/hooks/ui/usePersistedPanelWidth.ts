@@ -89,6 +89,31 @@ export function usePersistedPanelSize(
 	};
 }
 
+export interface LivePanelMaxWidthOptions {
+	/** The pane's own smallest width; the result never goes below it. */
+	minWidth: number;
+	/** The pane's own largest width, the stored bound. */
+	maxWidth: number;
+	/** Width of the container a drag may never eat into, beside the pane. */
+	reserve: number;
+}
+
+/**
+ * The widest a pane may be right now, inside a container `containerWidth`
+ * wide: the stored bound, less the strip the rest of the surface keeps. This
+ * is the render-time clamp the header comment asks for. A container of 0 (or
+ * not finite) means "not measured yet" (`useElementWidth()` reports 0 before
+ * its first measurement), where the stored max is right: the first paint
+ * keeps the remembered width rather than snapping to the minimum and jumping.
+ */
+export function livePanelMaxWidth(
+	containerWidth: number,
+	{ minWidth, maxWidth, reserve }: LivePanelMaxWidthOptions
+): number {
+	if (!(containerWidth > 0)) return maxWidth;
+	return Math.max(minWidth, Math.min(maxWidth, containerWidth - reserve));
+}
+
 export interface UsePersistedPanelWidthOptions {
 	/** Width used when nothing is stored. */
 	defaultWidth: number;

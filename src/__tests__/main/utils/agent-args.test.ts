@@ -241,6 +241,27 @@ describe('buildAgentArgs', () => {
 		expect(result).toEqual(['--print', '--agent', 'plan']);
 	});
 
+	it('uses readOnlyArgsOverride instead of the agent readOnlyArgs on a read-only spawn', () => {
+		const agent = makeAgent({ readOnlyArgs: ['--permission-mode', 'plan'] });
+		const result = buildAgentArgs(agent, {
+			baseArgs: ['--print'],
+			readOnlyMode: true,
+			readOnlyArgsOverride: ['--restricted', '--tools', 'Read'],
+		});
+		expect(result).toEqual(['--print', '--restricted', '--tools', 'Read']);
+	});
+
+	it('ignores readOnlyArgsOverride when the spawn is not read-only', () => {
+		const agent = makeAgent({ readOnlyArgs: ['--permission-mode', 'plan'] });
+		expect(
+			buildAgentArgs(agent, {
+				baseArgs: ['--print'],
+				permissionMode: 'full',
+				readOnlyArgsOverride: ['--restricted'],
+			})
+		).toEqual(['--print']);
+	});
+
 	it('does not add readOnlyArgs when readOnlyMode is false', () => {
 		const agent = makeAgent({ readOnlyArgs: ['--agent', 'plan'] });
 		const result = buildAgentArgs(agent, {
@@ -1191,6 +1212,18 @@ describe('applyAgentConfigOverrides', () => {
 		});
 		expect(result.args).toContain('--from-agent');
 		expect(result.customArgsSource).toBe('agent');
+	});
+
+	it('leaves every custom arg off with omitCustomArgs', () => {
+		const agent = makeAgent();
+
+		const result = applyAgentConfigOverrides(agent, ['--print'], {
+			agentConfigValues: { customArgs: '--add-dir /' },
+			sessionCustomArgs: '--dangerously-skip-permissions',
+			omitCustomArgs: true,
+		});
+		expect(result.args).toEqual(['--print']);
+		expect(result.customArgsSource).toBe('none');
 	});
 
 	it('customArgsSource is none when no custom args exist', () => {

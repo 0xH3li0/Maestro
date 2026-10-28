@@ -11,9 +11,11 @@
  *    "Sketch: <name>" tab (`sketchOrigin`). The tab runs on the sketch's own
  *    provider session (Q3): a new tab starts a fresh one, and its id is kept
  *    on the sketch record (`botSessionId`) so a closed tab comes back on the
- *    same conversation. A restricted turn is queued read-only, so the spawn
- *    applies the provider's `readOnlyArgs`; the `maestro-sketch` MCP server
- *    is in every set-up provider's config while Sketch Book is on.
+ *    same conversation. A restricted turn is queued read-only and marked
+ *    `sketchRestricted`: the spawn applies the provider's sketch recipe where
+ *    it has one (Claude Code: `--restricted`, read and search tools, and
+ *    `maestro-sketch` as its only MCP server; `sketch-restricted-launch.ts`),
+ *    else its `readOnlyArgs` with the `maestro-sketch` server from its config.
  * 3. The turn is followed in the store (`readQueuedTurn()`) until it ends.
  *    Stop, an error, a removed queue item, a closed tab, or no answer at all
  *    is a failure (`bot.failed`, X5). There is no timeout: the server's
@@ -195,7 +197,15 @@ export function createSketchBotTurns(deps: SketchBotTurnDeps = {}): SketchBotTur
 		text: string,
 		readOnly: boolean
 	): Promise<QueuedTurnOutcome> {
-		const item = enqueue({ sessionId: agentId, tabId, text, readOnlyMode: readOnly });
+		// A restricted turn is marked as one, so main runs it with the provider's
+		// sketch recipe where its read-only mode would block the sketch tools.
+		const item = enqueue({
+			sessionId: agentId,
+			tabId,
+			text,
+			readOnlyMode: readOnly,
+			sketchRestricted: readOnly,
+		});
 		if (!item) return Promise.resolve({ ok: false, reason: 'The owner agent is gone.' });
 		return new Promise((resolve) => {
 			let settled = false;

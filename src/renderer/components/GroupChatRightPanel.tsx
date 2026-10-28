@@ -23,6 +23,7 @@ import { useResizablePanel } from '../hooks';
 import { useGroupChatStore } from '../stores/groupChatStore';
 import { usePhoneLayout } from '../hooks/ui/useViewportBreakpoint';
 import { logger } from '../utils/logger';
+import { PanelResizeHandle } from './ui/PanelResizeHandle';
 
 export type GroupChatRightTab = 'participants' | 'history';
 
@@ -348,12 +349,7 @@ export function GroupChatRightPanel({
 		>
 			{/* Resize Handle. Pointless on a phone, where the panel is full-screen,
 			    and it would sit under the user's thumb on the chat's left edge. */}
-			{!isPhone && (
-				<div
-					className="resize-handle absolute top-0 left-0 w-3 h-full cursor-col-resize border-l-4 border-transparent hover:border-blue-500 transition-colors z-20"
-					onPointerDown={onResizeStart}
-				/>
-			)}
+			{!isPhone && <PanelResizeHandle onResizeStart={onResizeStart} />}
 
 			{/* Tab Header - matches RightPanel styling */}
 			<div className="flex border-b h-16 shrink-0" style={{ borderColor: theme.colors.border }}>

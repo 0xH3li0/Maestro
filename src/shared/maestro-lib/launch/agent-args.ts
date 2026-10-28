@@ -17,6 +17,13 @@ export type BuildAgentArgsOptions = {
 	prompt?: string;
 	cwd?: string;
 	readOnlyMode?: boolean;
+	/**
+	 * Stands in for the agent's `readOnlyArgs` on this spawn, when it runs
+	 * read-only. A Sketch Book restricted turn on a provider whose read-only
+	 * mode blocks the sketch tools passes its own recipe here
+	 * (`sketchRestrictedReadOnlyArgs()`); every other caller leaves it unset.
+	 */
+	readOnlyArgsOverride?: string[];
 	modelId?: string;
 	yoloMode?: boolean;
 	permissionMode?: 'full' | 'standard' | 'readonly';
@@ -56,6 +63,12 @@ type AgentConfigOverrides = {
 	 * followed by a user's `--agent build`). When set, those args are dropped.
 	 */
 	readOnlyMode?: boolean;
+	/**
+	 * Leave the session's and the agent's custom args off this spawn. A Sketch
+	 * Book restricted turn sets it: its posture is the whole command line, and
+	 * a user's `--add-dir` or `--mcp-config` would widen it.
+	 */
+	omitCustomArgs?: boolean;
 };
 
 export type AgentConfigResolution = {
@@ -235,8 +248,9 @@ export function buildAgentArgs(
 			finalArgs = [...finalArgs, ...fullArgs];
 		}
 	} else if (isReadOnly) {
-		if (agent.readOnlyArgs) {
-			finalArgs = [...finalArgs, ...agent.readOnlyArgs];
+		const readOnlyArgs = options.readOnlyArgsOverride ?? agent.readOnlyArgs;
+		if (readOnlyArgs) {
+			finalArgs = [...finalArgs, ...readOnlyArgs];
 		}
 		if (agent.readOnlyCliEnforced === false) {
 			logger.warn(
@@ -416,12 +430,16 @@ export function applyAgentConfigOverrides(
 		}
 	}
 
-	const effectiveCustomArgs = overrides.sessionCustomArgs ?? agentConfigValues.customArgs;
-	let customArgsSource: AgentConfigResolution['customArgsSource'] = overrides.sessionCustomArgs
-		? 'session'
-		: agentConfigValues.customArgs
-			? 'agent'
-			: 'none';
+	const effectiveCustomArgs = overrides.omitCustomArgs
+		? undefined
+		: (overrides.sessionCustomArgs ?? agentConfigValues.customArgs);
+	let customArgsSource: AgentConfigResolution['customArgsSource'] = overrides.omitCustomArgs
+		? 'none'
+		: overrides.sessionCustomArgs
+			? 'session'
+			: agentConfigValues.customArgs
+				? 'agent'
+				: 'none';
 
 	const parsedCustomArgs = stripFlags(
 		parseCustomArgs(effectiveCustomArgs),

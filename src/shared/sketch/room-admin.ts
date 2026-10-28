@@ -19,7 +19,7 @@
  * Pure. Bundled into the renderer and the CLI: no Electron or Node imports.
  */
 
-import { describeSketchActor } from './attribution';
+import { describeSketchActor, sketchActorRoleLabel } from './attribution';
 import type { ClientFrame, RoomStatsActor, RoomStatsCap } from './protocol';
 import type { SketchRoomStats } from './room-stats';
 import {
@@ -139,6 +139,27 @@ export function describeRoomStatsActor(actor: RoomStatsActor): string {
 		...(actor.capId ? { capId: actor.capId } : {}),
 		...(actor.capLabel ? { capLabel: actor.capLabel } : {}),
 	});
+}
+
+/**
+ * What a member is, as the People tab says it under the name. A guest reads as
+ * `describeSketchActor()` has it (`guest, read-write link #3, not verified`).
+ * The two members on this desktop get a plain sentence instead of the bare
+ * kind, which read as jargon: the conductor is the person sharing, the bot is
+ * the agent that owns the sketch and answers `@bot`. Only the People tab uses
+ * this; the agent's prompt and the CLI keep `describeSketchActor()`.
+ */
+export function describeRoomMemberRole(
+	actor: Pick<RoomStatsActor, 'kind' | 'role' | 'capLabel'>
+): string {
+	switch (actor.kind) {
+		case 'conductor':
+			return 'You, sharing from this desktop';
+		case 'bot':
+			return 'The agent that owns this sketch: @bot asks it';
+		default:
+			return sketchActorRoleLabel(actor);
+	}
 }
 
 /** Only a guest can be kicked: the conductor and the bot are this desktop. */

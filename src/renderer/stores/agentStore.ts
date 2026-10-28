@@ -682,6 +682,9 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					appendSystemPrompt,
 					agentSessionId: tabAgentSessionId ?? undefined,
 					readOnlyMode: isReadOnly,
+					// A Sketch Book restricted turn: main swaps in the provider's
+					// sketch recipe for its read-only args (sketch-restricted-launch.ts).
+					...(isReadOnly && item.sketchRestricted === true ? { sketchRestricted: true } : {}),
 					permissionMode: effectivePermissionMode,
 					sessionCustomPath: session.customPath,
 					sessionCustomArgs: session.customArgs,

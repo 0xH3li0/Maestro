@@ -3,17 +3,26 @@
  *
  * Signed out, it is the RunMaestro.ai sign-in. Signed in on a sketch that is
  * not shared, it is one step: pick Can edit or Can view, then Share and copy
- * link. Once shared it splits into three tabs, so each holds one job:
+ * link. Its tabs each hold one job:
  *
- * - Share: a new link, and each live link with Copy, Reset and Revoke (plus
+ * - Chat (when the sketch has a room or holds anything): the session's chat
+ *   and composer (`SketchChatPane`), built by `SketchTabView` and passed in.
+ * - Share: the sign-in, a new link, and each live link with Copy, Reset and
+ *   Revoke (plus
  *   Unsuspend when the room suspended `@bot` on it).
- * - People: who is in the room, with Kick and Unlock (`SketchRoomMembers`).
- * - Safety: who may ask the agent (B2, `SketchBotPolicyToggle`), how guest text
+ * - People (once shared): who is in the room, with Kick and Unlock (`SketchRoomMembers`).
+ * - Safety (once shared): who may ask the agent (B2, `SketchBotPolicyToggle`), how guest text
  *   is screened, flagged elements (`SketchFlaggedElements`), and Reset all
  *   access.
  *
- * The footer names the signed-in account and holds Stop sharing. Reset all
+ * The tab strip shows once there are two tabs. `SketchTabView` owns which tab
+ * is showing, so a guest request can bring Chat forward. The footer, on every
+ * tab but Chat, names the signed-in account and holds Stop sharing. Reset all
  * access and Stop sharing ask again in place before they run.
+ *
+ * The panel's left edge drags to resize it (`PanelResizeHandle`); the width is
+ * remembered across sketches and restarts, and clamped at render so the canvas
+ * always keeps {@link COLLABORATE_CANVAS_RESERVE} pixels.
  *
  * Every action is a `window.maestro.sketch.*` call into the one SketchService
  * that `maestro-cli sketch share|unshare|link|reset-link|revoke-link|rotate|
@@ -36,10 +45,13 @@ import { formatFutureTime } from '../../../shared/formatters';
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { HeaderActionButton } from '../ui/HeaderActionButton';
 import { MiniBadge } from '../ui/MiniBadge';
-import { ModalTabStrip, tabPanelProps, useModalTabs, type ModalTab } from '../ui/ModalTabStrip';
+import { ModalTabStrip, tabPanelProps, type ModalTab } from '../ui/ModalTabStrip';
+import { PanelResizeHandle } from '../ui/PanelResizeHandle';
 import { SegmentedControl } from '../ui/SegmentedControl';
 import { Spinner } from '../ui/Spinner';
 import { ipcErrorMessage } from '../../utils/ipcErrorMessage';
+import { livePanelMaxWidth, usePersistedPanelWidth } from '../../hooks/ui/usePersistedPanelWidth';
+import { useResizablePanel } from '../../hooks/ui/useResizablePanel';
 import { useSketchSessionStore } from '../../stores/sketchSessionStore';
 import {
 	copyExistingSketchLink,
@@ -58,10 +70,21 @@ import {
 	useSketchRoomStats,
 } from './SketchRoomSections';
 
+export type CollaborateTab = 'chat' | 'share' | 'people' | 'safety';
+
 export interface SketchSharePanelProps {
 	sketchId: string;
 	theme: Theme;
 	onClose: () => void;
+	/** The tab asked for. One that is not offered right now shows the first that is. */
+	tab: CollaborateTab;
+	onTabChange: (tab: CollaborateTab) => void;
+	/** The Chat tab's content (`SketchChatPane`); no Chat tab without it. */
+	chat?: React.ReactNode;
+	/** Chat messages not seen yet, counted on the Chat tab. */
+	chatUnread?: number;
+	/** Width of the row the panel sits in, 0 while not measured. */
+	availableWidth: number;
 }
 
 const ROLE_OPTIONS = [
@@ -69,9 +92,16 @@ const ROLE_OPTIONS = [
 	{ value: 'ro' as const, label: 'Can view' },
 ];
 
-type CollaborateTab = 'share' | 'people' | 'safety';
-const TAB_IDS: readonly CollaborateTab[] = ['share', 'people', 'safety'];
 const TAB_PREFIX = 'sketch-collaborate';
+
+/** localStorage key for the width the user dragged the panel to. */
+export const COLLABORATE_WIDTH_STORAGE_KEY = 'sketchBook.collaborateWidth';
+/** Narrowest panel where the four tabs still fit in one row. */
+export const COLLABORATE_MIN_WIDTH = 288;
+export const COLLABORATE_DEFAULT_WIDTH = 320;
+export const COLLABORATE_MAX_WIDTH = 720;
+/** Canvas left of the panel that a drag may never eat into. */
+export const COLLABORATE_CANVAS_RESERVE = 320;
 
 const ROTATE_WARNING =
 	'Every link stops working and every guest is disconnected. The room history is cleared and the sketch is uploaded again under a new key.';
@@ -130,7 +160,16 @@ function ConfirmInPlace({
 	);
 }
 
-export function SketchSharePanel({ sketchId, theme, onClose }: SketchSharePanelProps) {
+export function SketchSharePanel({
+	sketchId,
+	theme,
+	onClose,
+	tab: requestedTab,
+	onTabChange,
+	chat,
+	chatUnread = 0,
+	availableWidth,
+}: SketchSharePanelProps) {
 	const [record, setRecord] = React.useState<SketchRecord | null>(null);
 	const [owner, setOwner] = React.useState<SketchOwnerStatus | null>(null);
 	const [email, setEmail] = React.useState('');
@@ -144,12 +183,28 @@ export function SketchSharePanel({ sketchId, theme, onClose }: SketchSharePanelP
 		const room = s.sessions[sketchId]?.room;
 		return room && room.connection !== 'stopped' ? room.screening.server : null;
 	});
-	const { activeTab, setActiveTab } = useModalTabs<CollaborateTab>({
-		tabs: TAB_IDS,
-		initialTab: 'share',
-		rememberKey: TAB_PREFIX,
-		// Cmd+Shift+[ / ] belongs to Maestro's own tab cycling here, not this panel.
-		enabled: false,
+	const {
+		width: storedWidth,
+		setWidth,
+		reset: resetWidth,
+	} = usePersistedPanelWidth(COLLABORATE_WIDTH_STORAGE_KEY, {
+		defaultWidth: COLLABORATE_DEFAULT_WIDTH,
+		minWidth: COLLABORATE_MIN_WIDTH,
+		maxWidth: COLLABORATE_MAX_WIDTH,
+	});
+	const maxWidth = livePanelMaxWidth(availableWidth, {
+		minWidth: COLLABORATE_MIN_WIDTH,
+		maxWidth: COLLABORATE_MAX_WIDTH,
+		reserve: COLLABORATE_CANVAS_RESERVE,
+	});
+	// The drag starts from the width on screen, which a narrow window clamps.
+	const width = Math.min(storedWidth, maxWidth);
+	const { panelRef, onResizeStart } = useResizablePanel({
+		width,
+		minWidth: COLLABORATE_MIN_WIDTH,
+		maxWidth,
+		setWidth,
+		side: 'right',
 	});
 	const mounted = React.useRef(true);
 	/** True while this panel waits on main's confirmation poll. */
@@ -244,13 +299,23 @@ export function SketchSharePanel({ sketchId, theme, onClose }: SketchSharePanelP
 	const dim = { color: theme.colors.textDim };
 	const liveLinks = shared?.links.filter((link) => !link.revoked) ?? [];
 	const signedIn = owner?.state === 'confirmed' && !owner.otherServer;
-	const tabbed = Boolean(shared && signedIn);
-	const tab: CollaborateTab = tabbed ? activeTab : 'share';
+	const roomTabs = Boolean(shared && signedIn);
 	const tabs: ModalTab<CollaborateTab>[] = [
+		...(chat
+			? [{ id: 'chat' as const, label: 'Chat', count: chatUnread > 0 ? chatUnread : undefined }]
+			: []),
 		{ id: 'share', label: 'Share' },
-		{ id: 'people', label: 'People', count: stats?.actors.length },
-		{ id: 'safety', label: 'Safety' },
+		...(roomTabs
+			? [
+					{ id: 'people' as const, label: 'People', count: stats?.actors.length },
+					{ id: 'safety' as const, label: 'Safety' },
+				]
+			: []),
 	];
+	const tab: CollaborateTab = tabs.some((entry) => entry.id === requestedTab)
+		? requestedTab
+		: tabs[0].id;
+	const tabbed = tabs.length > 1;
 
 	const newLink = (
 		<div className="flex flex-col gap-2">
@@ -369,14 +434,21 @@ export function SketchSharePanel({ sketchId, theme, onClose }: SketchSharePanelP
 
 	return (
 		<aside
-			className="w-80 shrink-0 flex flex-col min-h-0 select-none"
+			ref={panelRef}
+			className="relative shrink-0 flex flex-col min-h-0 select-none"
 			aria-label="Collaborate on this sketch"
 			data-sketch-share-panel=""
 			style={{
+				width,
 				borderLeft: `1px solid ${theme.colors.border}`,
 				backgroundColor: theme.colors.bgSidebar,
 			}}
 		>
+			<PanelResizeHandle
+				onResizeStart={onResizeStart}
+				onReset={resetWidth}
+				label="Resize the Collaborate panel"
+			/>
 			<div
 				className="px-3 py-2 flex items-center justify-between text-xs font-medium"
 				style={{ ...dim, borderBottom: tabbed ? undefined : `1px solid ${theme.colors.border}` }}
@@ -396,132 +468,141 @@ export function SketchSharePanel({ sketchId, theme, onClose }: SketchSharePanelP
 					theme={theme}
 					tabs={tabs}
 					activeTab={tab}
-					onChange={setActiveTab}
+					onChange={onTabChange}
 					label="Collaborate"
 					idPrefix={TAB_PREFIX}
 					className="px-2"
+					density="compact"
 				/>
 			)}
 
-			<div
-				className="flex-1 min-h-0 overflow-y-auto px-3 py-3 flex flex-col gap-3 text-xs"
-				{...(tabbed ? tabPanelProps(TAB_PREFIX, tab) : {})}
-			>
-				{owner === null && <Spinner size={16} color={theme.colors.accent} />}
+			{tab === 'chat' && (
+				<div className="flex-1 min-h-0 flex flex-col" {...tabPanelProps(TAB_PREFIX, tab)}>
+					{chat}
+				</div>
+			)}
 
-				{owner !== null && !signedIn && (
-					<div className="flex flex-col gap-2">
-						<div style={dim}>
-							{owner.state === 'pending' && !owner.otherServer
-								? `A confirmation email went to ${owner.email}. Open the link in it; this panel updates when it is clicked.`
-								: owner.otherServer
-									? `You are signed in on ${owner.serverUrl}, not the server Sketch Book uses now. Sign in again.`
-									: 'Sharing goes through RunMaestro.ai. Sign in with your email first: you get a link to confirm it.'}
-						</div>
-						<input
-							type="email"
-							value={email}
-							placeholder="you@example.com"
-							aria-label="Email"
-							className="px-2 py-1 rounded outline-none select-text"
-							style={{
-								backgroundColor: theme.colors.bgMain,
-								color: theme.colors.textMain,
-								border: `1px solid ${theme.colors.border}`,
-							}}
-							onChange={(event) => setEmail(event.target.value)}
-							onKeyDown={(event) => {
-								if (event.key === 'Enter' && email.trim() && !busy) void register();
-							}}
-						/>
-						<HeaderActionButton
-							theme={theme}
-							onClick={() => void register()}
-							disabled={busy || !email.trim()}
-						>
-							{owner.state === 'pending' ? 'Send it again' : 'Send confirmation link'}
-						</HeaderActionButton>
-					</div>
-				)}
+			{tab !== 'chat' && (
+				<div
+					className="flex-1 min-h-0 overflow-y-auto px-3 py-3 flex flex-col gap-3 text-xs"
+					{...(tabbed ? tabPanelProps(TAB_PREFIX, tab) : {})}
+				>
+					{tab === 'share' && owner === null && <Spinner size={16} color={theme.colors.accent} />}
 
-				{signedIn && tab === 'share' && newLink}
-
-				{uncopied && (
-					<div className="flex flex-col gap-1">
-						<div style={{ color: theme.colors.warning }}>
-							The clipboard refused the link. Copy it from here.
-						</div>
-						<textarea
-							readOnly
-							value={uncopied}
-							rows={3}
-							className="px-2 py-1 rounded resize-none select-text"
-							style={{
-								backgroundColor: theme.colors.bgMain,
-								color: theme.colors.textMain,
-								border: `1px solid ${theme.colors.border}`,
-							}}
-							onFocus={(event) => event.currentTarget.select()}
-						/>
-					</div>
-				)}
-
-				{shared && tab === 'share' && linkRows}
-
-				{tabbed && tab === 'people' && (
-					<SketchRoomMembers
-						sketchId={sketchId}
-						theme={theme}
-						stats={stats}
-						busy={busy}
-						run={run}
-					/>
-				)}
-
-				{tabbed && tab === 'safety' && record && (
-					<>
-						<SketchBotPolicyToggle sketchId={sketchId} sketchName={record.name} theme={theme} />
-						{stats?.guestEdited && (
+					{tab === 'share' && owner !== null && !signedIn && (
+						<div className="flex flex-col gap-2">
 							<div style={dim}>
-								A guest has edited the board, so your @bot turns run restricted.
+								{owner.state === 'pending' && !owner.otherServer
+									? `A confirmation email went to ${owner.email}. Open the link in it; this panel updates when it is clicked.`
+									: owner.otherServer
+										? `You are signed in on ${owner.serverUrl}, not the server Sketch Book uses now. Sign in again.`
+										: 'Sharing goes through RunMaestro.ai. Sign in with your email first: you get a link to confirm it.'}
 							</div>
-						)}
-						<SketchPanelSection title="Guest text" theme={theme}>
-							<div className="flex items-center justify-between gap-2">
-								<span style={dim}>Screened for prompt injection</span>
-								<SketchScreeningBadge screening={screening} theme={theme} />
+							<input
+								type="email"
+								value={email}
+								placeholder="you@example.com"
+								aria-label="Email"
+								className="px-2 py-1 rounded outline-none select-text"
+								style={{
+									backgroundColor: theme.colors.bgMain,
+									color: theme.colors.textMain,
+									border: `1px solid ${theme.colors.border}`,
+								}}
+								onChange={(event) => setEmail(event.target.value)}
+								onKeyDown={(event) => {
+									if (event.key === 'Enter' && email.trim() && !busy) void register();
+								}}
+							/>
+							<HeaderActionButton
+								theme={theme}
+								onClick={() => void register()}
+								disabled={busy || !email.trim()}
+							>
+								{owner.state === 'pending' ? 'Send it again' : 'Send confirmation link'}
+							</HeaderActionButton>
+						</div>
+					)}
+
+					{signedIn && tab === 'share' && newLink}
+
+					{uncopied && (
+						<div className="flex flex-col gap-1">
+							<div style={{ color: theme.colors.warning }}>
+								The clipboard refused the link. Copy it from here.
 							</div>
-						</SketchPanelSection>
-						<SketchFlaggedElements
+							<textarea
+								readOnly
+								value={uncopied}
+								rows={3}
+								className="px-2 py-1 rounded resize-none select-text"
+								style={{
+									backgroundColor: theme.colors.bgMain,
+									color: theme.colors.textMain,
+									border: `1px solid ${theme.colors.border}`,
+								}}
+								onFocus={(event) => event.currentTarget.select()}
+							/>
+						</div>
+					)}
+
+					{shared && tab === 'share' && linkRows}
+
+					{tab === 'people' && (
+						<SketchRoomMembers
 							sketchId={sketchId}
 							theme={theme}
 							stats={stats}
 							busy={busy}
 							run={run}
-							onError={setError}
 						/>
-						<SketchPanelSection title="Access" theme={theme}>
-							<ConfirmInPlace
+					)}
+
+					{tab === 'safety' && record && (
+						<>
+							<SketchBotPolicyToggle sketchId={sketchId} sketchName={record.name} theme={theme} />
+							{stats?.guestEdited && (
+								<div style={dim}>
+									A guest has edited the board, so your @bot turns run restricted.
+								</div>
+							)}
+							<SketchPanelSection title="Guest text" theme={theme}>
+								<div className="flex items-center justify-between gap-2">
+									<span style={dim}>Screened for prompt injection</span>
+									<SketchScreeningBadge screening={screening} theme={theme} />
+								</div>
+							</SketchPanelSection>
+							<SketchFlaggedElements
+								sketchId={sketchId}
 								theme={theme}
-								label="Reset all access"
-								warning={ROTATE_WARNING}
-								icon={<RotateCcw />}
+								stats={stats}
 								busy={busy}
-								onConfirm={() => void run(() => window.maestro.sketch.rotate(sketchId))}
+								run={run}
+								onError={setError}
 							/>
-						</SketchPanelSection>
-					</>
-				)}
+							<SketchPanelSection title="Access" theme={theme}>
+								<ConfirmInPlace
+									theme={theme}
+									label="Reset all access"
+									warning={ROTATE_WARNING}
+									icon={<RotateCcw />}
+									busy={busy}
+									onConfirm={() => void run(() => window.maestro.sketch.rotate(sketchId))}
+								/>
+							</SketchPanelSection>
+						</>
+					)}
 
-				{busy && <Spinner size={16} color={theme.colors.accent} />}
-				{error && (
-					<div className="select-text" role="alert" style={{ color: theme.colors.error }}>
-						{error}
-					</div>
-				)}
-			</div>
+					{busy && <Spinner size={16} color={theme.colors.accent} />}
+					{error && (
+						<div className="select-text" role="alert" style={{ color: theme.colors.error }}>
+							{error}
+						</div>
+					)}
+				</div>
+			)}
 
-			{signedIn && (
+			{signedIn && tab !== 'chat' && (
 				<div
 					className="px-3 py-2 flex flex-wrap items-center justify-between gap-2 text-xs"
 					data-sketch-collaborate-footer=""

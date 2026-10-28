@@ -109,6 +109,12 @@ export async function resolveClaudeSpawnContext(
 		 * keeps the turn on `claude --print` (`runOnHarnessMode`).
 		 */
 		runOn?: unknown;
+		/**
+		 * Keep this turn on `claude --print` whatever the token mode says. A
+		 * Sketch Book restricted turn sets it: its posture is a command line
+		 * the maestro-p TUI would not pass through unchanged.
+		 */
+		forceApiMode?: boolean;
 	}
 ): Promise<ClaudeSpawnContext> {
 	const isClaudeCode =
@@ -196,7 +202,7 @@ export async function resolveClaudeSpawnContext(
 			}
 		}
 
-		const tokenMode = runOnHarnessMode(
+		const chosenTokenMode = runOnHarnessMode(
 			deps.runOn,
 			getClaudeTokenMode(
 				{
@@ -213,6 +219,7 @@ export async function resolveClaudeSpawnContext(
 			),
 			'api'
 		);
+		const tokenMode = deps.forceApiMode ? 'api' : chosenTokenMode;
 
 		const decision = resolveClaudeSpawnMode({
 			agent,

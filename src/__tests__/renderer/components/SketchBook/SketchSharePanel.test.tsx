@@ -2,11 +2,14 @@
  * The Collaborate panel (SketchSharePanel, spec section 6): it waits on main's
  * confirmation poll whenever a confirmation is pending, also when it opens on
  * one, and turns to the signed-in state on its own. Once shared it splits
- * into Share, People and Safety tabs: each live link on Share offers Copy,
- * Reset, Revoke and (when suspended) Unsuspend with its room stats, Reset all
- * access on Safety asks again in place, and the footer holds Stop sharing.
+ * into Share, People and Safety tabs, after Chat when the sketch has a chat:
+ * each live link on Share offers Copy, Reset, Revoke and (when suspended)
+ * Unsuspend with its room stats, Reset all access on Safety asks again in
+ * place, and the footer holds Stop sharing. The left edge resizes the panel,
+ * within the room the canvas keeps.
  */
 
+import React from 'react';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -35,8 +38,16 @@ vi.mock(
 	})
 );
 
-import { SketchSharePanel } from '../../../../renderer/components/SketchBook/SketchSharePanel';
-import { __resetRememberedModalTabsForTests } from '../../../../renderer/components/ui/ModalTabStrip';
+import {
+	COLLABORATE_CANVAS_RESERVE,
+	COLLABORATE_DEFAULT_WIDTH,
+	COLLABORATE_MIN_WIDTH,
+	COLLABORATE_WIDTH_STORAGE_KEY,
+	SketchSharePanel,
+	type CollaborateTab,
+	type SketchSharePanelProps,
+} from '../../../../renderer/components/SketchBook/SketchSharePanel';
+import { installLocalStorageMock } from '../../../helpers/mockLocalStorage';
 import type { SketchOwnerStatus } from '../../../../shared/sketch/server';
 import type { SketchMintedLink } from '../../../../shared/sketch/commands';
 import type { SketchRecord } from '../../../../shared/sketch/types';
@@ -96,8 +107,31 @@ function record(links: { capId: string; revoked: boolean }[] | null): SketchReco
 	} as SketchRecord;
 }
 
-function renderPanel() {
-	return render(<SketchSharePanel sketchId={SKETCH_ID} theme={mockTheme} onClose={vi.fn()} />);
+/** The panel with its tab held the way `SketchTabView` holds it. */
+function Harness({
+	initialTab = 'share',
+	...props
+}: Partial<SketchSharePanelProps> & { initialTab?: CollaborateTab }) {
+	const [tab, setTab] = React.useState<CollaborateTab>(initialTab);
+	return (
+		<SketchSharePanel
+			sketchId={SKETCH_ID}
+			theme={mockTheme}
+			onClose={vi.fn()}
+			tab={tab}
+			onTabChange={setTab}
+			availableWidth={0}
+			{...props}
+		/>
+	);
+}
+
+function renderPanel(props: Partial<SketchSharePanelProps> & { initialTab?: CollaborateTab } = {}) {
+	return render(<Harness {...props} />);
+}
+
+function panel(): HTMLElement {
+	return document.querySelector('[data-sketch-share-panel]') as HTMLElement;
 }
 
 describe('SketchSharePanel', () => {
@@ -111,8 +145,8 @@ describe('SketchSharePanel', () => {
 		sketchApi.rotate = vi.fn(async () => record([]));
 		sketchApi.roomAction = vi.fn(async () => ({ sketchId: SKETCH_ID, stats: null }));
 		room.stats = null;
-		// The panel remembers its tab for the app session; each test opens on Share.
-		__resetRememberedModalTabsForTests();
+		// The panel width is remembered in localStorage; each test starts unset.
+		installLocalStorageMock();
 	});
 
 	it('waits for the click when it opens on a pending confirmation', async () => {
@@ -245,7 +279,8 @@ describe('SketchSharePanel', () => {
 		room.stats = { caps: [], actors: [{}, {}, {}] } as unknown as SketchRoomStats;
 		renderPanel();
 
-		const tabs = await screen.findAllByRole('tab');
+		await screen.findByRole('tab', { name: /People/ });
+		const tabs = screen.getAllByRole('tab');
 		expect(tabs.map((tab) => tab.textContent)).toEqual(['Share', 'People3', 'Safety']);
 		expect(screen.queryByTestId('room-members')).toBeNull();
 
@@ -292,6 +327,73 @@ describe('SketchSharePanel', () => {
 		expect(screen.getByText(/Every link stops working/)).toBeTruthy();
 		fireEvent.click(screen.getByRole('button', { name: /Reset all access/ }));
 		await waitFor(() => expect(sketchApi.rotate).toHaveBeenCalledWith(SKETCH_ID));
+	});
+
+	it('puts Chat first, before the sign-in, and shows it without the footer', async () => {
+		sketchApi.ownerStatus = vi.fn(async () => confirmed);
+		renderPanel({ initialTab: 'chat', chat: <div data-testid="chat-pane" />, chatUnread: 2 });
+
+		await screen.findByRole('button', { name: 'Close the Collaborate panel' });
+		await waitFor(() =>
+			expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['Chat2', 'Share'])
+		);
+		expect(screen.getByTestId('chat-pane')).toBeTruthy();
+		expect(document.querySelector('[data-sketch-collaborate-footer]')).toBeNull();
+
+		fireEvent.click(screen.getByRole('tab', { name: 'Share' }));
+		expect(screen.queryByTestId('chat-pane')).toBeNull();
+		expect(await screen.findByRole('button', { name: /Share and copy link/ })).toBeTruthy();
+		expect(document.querySelector('[data-sketch-collaborate-footer]')).toBeTruthy();
+	});
+
+	it('offers four tabs once shared, and counts no unread chat as nothing', async () => {
+		sketchApi.ownerStatus = vi.fn(async () => confirmed);
+		sketchApi.get = vi.fn(async () => record([{ capId: LINK.capId, revoked: false }]));
+		room.stats = { caps: [], actors: [{}] } as unknown as SketchRoomStats;
+		renderPanel({ initialTab: 'chat', chat: <div data-testid="chat-pane" /> });
+
+		await screen.findByRole('tab', { name: /People/ });
+		expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
+			'Chat',
+			'Share',
+			'People1',
+			'Safety',
+		]);
+		expect(screen.getByRole('tablist')).toBeTruthy();
+	});
+
+	it('shows Share when the tab asked for is not offered', async () => {
+		sketchApi.ownerStatus = vi.fn(async () => confirmed);
+		renderPanel({ initialTab: 'people' });
+
+		expect(await screen.findByRole('button', { name: /Share and copy link/ })).toBeTruthy();
+		// One tab is no strip.
+		expect(screen.queryByRole('tablist')).toBeNull();
+	});
+
+	it('opens at the remembered width, clamped to what the canvas leaves', async () => {
+		renderPanel();
+		await screen.findByRole('separator', { name: 'Resize the Collaborate panel' });
+		expect(panel().style.width).toBe(`${COLLABORATE_DEFAULT_WIDTH}px`);
+	});
+
+	it('keeps the canvas reserve when the stored width does not fit', async () => {
+		localStorage.setItem(COLLABORATE_WIDTH_STORAGE_KEY, '700');
+		const availableWidth = COLLABORATE_CANVAS_RESERVE + 400;
+		renderPanel({ availableWidth });
+		await screen.findByRole('separator', { name: 'Resize the Collaborate panel' });
+		expect(panel().style.width).toBe('400px');
+	});
+
+	it('forgets the width on a double-click of the edge', async () => {
+		localStorage.setItem(COLLABORATE_WIDTH_STORAGE_KEY, String(COLLABORATE_MIN_WIDTH + 100));
+		renderPanel();
+		const handle = await screen.findByRole('separator', { name: 'Resize the Collaborate panel' });
+		expect(panel().style.width).toBe(`${COLLABORATE_MIN_WIDTH + 100}px`);
+
+		fireEvent.doubleClick(handle);
+		await waitFor(() => expect(panel().style.width).toBe(`${COLLABORATE_DEFAULT_WIDTH}px`));
+		expect(localStorage.getItem(COLLABORATE_WIDTH_STORAGE_KEY)).toBeNull();
 	});
 });
 

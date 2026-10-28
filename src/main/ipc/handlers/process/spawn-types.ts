@@ -21,6 +21,7 @@ export interface SpawnProcessConfig {
 	// Agent-specific spawn options (used to build args via agent config)
 	agentSessionId?: string; // For session resume
 	readOnlyMode?: boolean; // For read-only/plan mode
+	sketchRestricted?: boolean; // A Sketch Book restricted turn: read-only with the provider's sketch recipe (restricted-posture.ts)
 	modelId?: string; // For model selection
 	yoloMode?: boolean; // For YOLO/full-access mode (bypasses confirmations)
 	permissionMode?: 'full' | 'standard' | 'readonly'; // 3-way permission mode (overrides readOnlyMode/yoloMode)

@@ -33,8 +33,14 @@ import { buildMcpServerSpec, ensureBundledServerScript } from '../coworking/cowo
 import { COWORKING_SUPPORTED_AGENTS, getInstaller } from '../coworking/installers';
 import { getSketchServerScript } from './sketch-mcp-server-script';
 import {
+	sketchRestrictedToolNames,
+	type SketchRestrictedMcpServer,
+} from '../../shared/sketch/restricted-posture';
+import {
+	SKETCH_AGENT_ID_ENV_VAR,
 	SKETCH_MCP_SERVER_NAME,
 	SKETCH_SOCKET_ENV_VAR,
+	SKETCH_TOOL_NAMES,
 	getSketchBridgeSocketPath,
 } from './sketch-mcp-types';
 
@@ -69,16 +75,8 @@ function errorMessage(err: unknown): string {
  * each outcome.
  */
 export async function installSketchMcpServer(): Promise<SketchMcpInstallResult[]> {
-	const scriptPath = await ensureBundledServerScript({
-		filename: SKETCH_SERVER_SCRIPT_FILENAME,
-		contents: getSketchServerScript(),
-		logCategory: 'SketchBook',
-	});
 	const spec = {
-		...(await buildMcpServerSpec(
-			{ [SKETCH_SOCKET_ENV_VAR]: getSketchBridgeSocketPath() },
-			scriptPath
-		)),
+		...(await buildSketchServerSpec({ [SKETCH_SOCKET_ENV_VAR]: getSketchBridgeSocketPath() })),
 		autoApproveTools: true,
 	};
 	const results: SketchMcpInstallResult[] = [];
@@ -97,6 +95,36 @@ export async function installSketchMcpServer(): Promise<SketchMcpInstallResult[]
 		}
 	}
 	return results;
+}
+
+/** The bundled script, refreshed when it changed, and the command that launches it. */
+async function buildSketchServerSpec(env: Record<string, string>) {
+	const scriptPath = await ensureBundledServerScript({
+		filename: SKETCH_SERVER_SCRIPT_FILENAME,
+		contents: getSketchServerScript(),
+		logCategory: 'SketchBook',
+	});
+	return buildMcpServerSpec(env, scriptPath);
+}
+
+/**
+ * The `maestro-sketch` server one restricted sketch turn is handed on its own
+ * command line (`sketchRestrictedReadOnlyArgs()`), bound to the owner agent
+ * and this window's bridge socket. The turn sees no other MCP server, so it
+ * cannot rely on the entry in the provider's config.
+ */
+export async function sketchRestrictedMcpServer(
+	agentId: string
+): Promise<SketchRestrictedMcpServer> {
+	const spec = await buildSketchServerSpec({
+		[SKETCH_SOCKET_ENV_VAR]: getSketchBridgeSocketPath(),
+		[SKETCH_AGENT_ID_ENV_VAR]: agentId,
+	});
+	return {
+		name: SKETCH_MCP_SERVER_NAME,
+		...spec,
+		tools: sketchRestrictedToolNames(SKETCH_TOOL_NAMES),
+	};
 }
 
 /** Remove the `maestro-sketch` entry from every provider's MCP config. */

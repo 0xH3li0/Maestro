@@ -166,6 +166,38 @@ describe('ModalTabStrip', () => {
 		expect(scrollIntoView).toHaveBeenCalledTimes(2);
 	});
 
+	it('shares the width between smaller tabs when compact', () => {
+		const { rerender } = render(
+			<ModalTabStrip
+				theme={mockTheme}
+				tabs={TABS}
+				activeTab="general"
+				onChange={vi.fn()}
+				label="Collaborate"
+				idPrefix="side"
+			/>
+		);
+		const regular = screen.getByRole('tab', { name: 'General' });
+		expect(regular).toHaveClass('text-sm');
+		expect(regular).not.toHaveClass('flex-1');
+
+		rerender(
+			<ModalTabStrip
+				theme={mockTheme}
+				tabs={TABS}
+				activeTab="general"
+				onChange={vi.fn()}
+				label="Collaborate"
+				idPrefix="side"
+				density="compact"
+			/>
+		);
+		for (const tab of screen.getAllByRole('tab')) {
+			expect(tab).toHaveClass('flex-1', 'text-xs');
+			expect(tab).not.toHaveClass('text-sm');
+		}
+	});
+
 	it('draws an error dot only on a tab that has an error', () => {
 		renderStrip('general', vi.fn(), [
 			{ id: 'general', label: 'General', hasError: true },

@@ -100,7 +100,7 @@ When an agent runs `share`, `unshare`, `link`, `reset-link`, `revoke-link`, or `
 
 Type `@bot` (or `@` and the agent's name) in the room chat to ask the agent for something. The agent answers in the chat and draws on the board.
 
-You chat from the **Chat** pane beside the canvas. It shows whenever the sketch is shared, and ends in a message box: **Enter** sends, **Shift+Enter** starts a new line. A message that starts with `@bot` asks the agent; anything else goes to the room for everyone to read. On a sketch you have not shared, every message asks the agent.
+You chat from the **Chat** tab of the Collaborate panel. The panel opens on it when the sketch has a room or the agent has posted, and again whenever a guest request or a held reply waits on you; messages that arrive while another tab shows are counted on the **Chat** tab. It ends in a message box: **Enter** sends, **Shift+Enter** starts a new line. A message that starts with `@bot` asks the agent; anything else goes to the room for everyone to read. On a sketch you have not shared, every message asks the agent.
 
 ```bash
 maestro-cli sketch chat <sketchId> --last 10            # read the chat
@@ -115,7 +115,9 @@ When an agent posts with `sketch chat`, Maestro asks you on the desktop first, s
 **Guest requests** are off by default. To allow them, turn on **Let collaborators ask the agent** in the Collaborate panel. Maestro shows what that means before it takes effect: anyone with an edit link can ask, each request is screened and then waits for you, a run uses your model quota, and everything the agent posts is visible to the room. The switch is greyed out, with the reason, while it cannot be safe:
 
 - the safety screen is off (see below), or
-- the agent's provider has no read-only mode that still lets it draw. Claude Code and OpenCode cannot run restricted turns on a sketch; Codex can.
+- the agent's provider cannot run a restricted turn that still lets it draw. Claude Code and Codex can; OpenCode cannot.
+
+A guest request on Claude Code runs with read and search tools in the agent's own folder plus the sketch tools, and nothing else: no shell, no file edits, no other MCP servers, no hooks, and no sketch export. It ignores the agent's custom arguments and Additional Directories. It needs a Claude Code that knows `--restricted` (2.1.312 does); an older one refuses the turn, and the request fails rather than running with more access. An agent whose Path points at `maestro-p` cannot run these turns.
 
 ### The approval chip
 
@@ -174,7 +176,7 @@ The same screening badge shows at the bottom center of the canvas. If your scree
 
 ## Running the room: Kick vs Revoke
 
-Once the sketch is shared, the Collaborate panel splits into three tabs. **Share** makes new links and lists the live ones, each with Copy, Reset, and Revoke. **People** lists who is in the room, with Kick and Unlock. **Safety** holds **Let collaborators ask the agent**, how guest text is screened, the elements the screen flagged (with a one-click delete for each), and **Reset all access**. **Stop sharing** sits at the bottom of the panel.
+Once the sketch is shared, the Collaborate panel has four tabs. **Chat** is the room chat (above). **Share** makes new links and lists the live ones, each with Copy, Reset, and Revoke. **People** lists who is in the room, with Kick and Unlock. **Safety** holds **Let collaborators ask the agent**, how guest text is screened, the elements the screen flagged (with a one-click delete for each), and **Reset all access**. **Stop sharing** sits at the bottom of the panel, on every tab but Chat. Drag the panel's left edge to make it wider or narrower; double-click the edge to restore the default. The width is remembered.
 
 | Action               | What it does                                                                                     | Use it when                                  |
 | -------------------- | ------------------------------------------------------------------------------------------------ | -------------------------------------------- |

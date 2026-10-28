@@ -68,6 +68,13 @@ export interface QueuedPromptOptions {
 	 * Never lifts a tab that is read-only itself.
 	 */
 	readOnlyMode?: boolean;
+	/**
+	 * Mark the turn a Sketch Book restricted turn. Main then runs it with the
+	 * provider's restricted recipe instead of its `readOnlyArgs` where it has
+	 * one (Claude Code). Only with `readOnlyMode`: a lost mark runs plain
+	 * read-only, which does less, never more.
+	 */
+	sketchRestricted?: boolean;
 }
 
 /**
@@ -94,6 +101,7 @@ export function buildQueuedMessageItem({
 	turnSettings,
 	mentionRouting,
 	readOnlyMode,
+	sketchRestricted,
 }: QueuedPromptOptions): QueuedItem {
 	const commandText = slashCommand ? text.trim() : undefined;
 	const firstWhitespace = commandText?.search(/\s/) ?? -1;
@@ -115,6 +123,7 @@ export function buildQueuedMessageItem({
 		tabName: getTabDisplayName(tab, session.agentSessionId),
 		readOnlyMode:
 			readOnlyMode === true || tab.readOnlyMode === true || tab.permissionMode === 'readonly',
+		...(sketchRestricted === true && readOnlyMode === true ? { sketchRestricted: true } : {}),
 		turnSettings: turnSettings ?? captureQueuedTurnSettings(tab, session),
 		...queuedMentionFields(mentionPlan),
 		...(mentionPlan && { crossAgentOnly: mentionPlan.suppressLocal }),
@@ -174,6 +183,8 @@ export function enqueuePromptForTab(options: {
 	mentionRouting?: MentionRouting;
 	/** Run this one turn read-only (see {@link QueuedPromptOptions.readOnlyMode}). */
 	readOnlyMode?: boolean;
+	/** A Sketch Book restricted turn (see {@link QueuedPromptOptions.sketchRestricted}). */
+	sketchRestricted?: boolean;
 }): QueuedItem | null {
 	const {
 		sessionId,
@@ -201,6 +212,7 @@ export function enqueuePromptForTab(options: {
 		mentionRouting,
 		turnSettings: options.turnSettings,
 		readOnlyMode: options.readOnlyMode,
+		sketchRestricted: options.sketchRestricted,
 	});
 	const command = expandCommands && !slashCommand ? matchSlashCommand(session, text, tab) : null;
 	const item: QueuedItem = command
