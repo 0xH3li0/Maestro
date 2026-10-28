@@ -1,4 +1,7 @@
-import { HEADLESS_RUN_TIMEOUT_MS } from '../../../shared/plugins/headless-agent-timeouts';
+import {
+	HEADLESS_RUN_TIMEOUT_MS,
+	HEADLESS_IDLE_PROFILE,
+} from '../../../shared/plugins/headless-agent-timeouts';
 // @vitest-environment node
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
@@ -98,7 +101,10 @@ describe('original audio through the production spawner and supervisor', () => {
 
 	it.each(
 		(['codex', 'claude-code'] as const).flatMap((type) =>
-			(['accepted', 'close', 'revoke', 'timeout'] as const).map((cause) => ({ type, cause }))
+			(['accepted', 'close', 'revoke', 'silence', 'timeout'] as const).map((cause) => ({
+				type,
+				cause,
+			}))
 		)
 	)(
 		'keeps $type files and resource slots until observed termination on $cause',
@@ -189,7 +195,31 @@ describe('original audio through the production spawner and supervisor', () => {
 					allowed = false;
 					await vi.advanceTimersByTimeAsync(250);
 				}
-				if (cause === 'timeout') await vi.advanceTimersByTimeAsync(HEADLESS_RUN_TIMEOUT_MS);
+				if (cause === 'silence' || cause === 'timeout') {
+					// Fresh normalized model work clears startup supervision; replayed
+					// transport output would not keep an actual provider turn alive.
+					const steps = cause === 'timeout' ? HEADLESS_RUN_TIMEOUT_MS / (5 * 60_000) : 1;
+					for (let step = 0; step < steps; step++) {
+						child.stdout?.emit(
+							'data',
+							JSON.stringify(
+								type === 'codex'
+									? {
+											type: 'item.completed',
+											item: { type: 'agent_message', phase: 'commentary', text: `work ${step}` },
+										}
+									: { type: 'result', result: `work ${step}` }
+							) + '\n'
+						);
+						await vi.advanceTimersByTimeAsync(
+							cause === 'timeout' ? 5 * 60_000 : HEADLESS_IDLE_PROFILE.idleMs
+						);
+						if (cause === 'timeout' && step < steps - 1) {
+							expect(child.kill).not.toHaveBeenCalled();
+							expect(settled).toBe(false);
+						}
+					}
+				}
 				await vi.advanceTimersByTimeAsync(10_000);
 				// File deletion is real asynchronous I/O, not a fake-timer microtask.
 				// Let an incorrect early cleanup finish before checking retention.
@@ -211,7 +241,13 @@ describe('original audio through the production spawner and supervisor', () => {
 				await tools.call('p', 'media.close', spare);
 				child.emit('exit', null, 'SIGKILL');
 				const answer = await send;
-				if (cause === 'timeout') expect(answer).toMatchObject({ success: false });
+				if (cause === 'timeout' || cause === 'silence')
+					expect(answer).toMatchObject({
+						success: false,
+						error: expect.stringContaining(
+							cause === 'timeout' ? 'absolute runtime ceiling' : 'semantic inactivity'
+						),
+					});
 				else
 					expect(answer).toMatchObject({
 						code: cause === 'revoke' ? 'MediaDenied' : 'MediaCancelled',

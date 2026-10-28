@@ -16,10 +16,14 @@ import { checkCustomPath } from '../agents/path-prober';
 
 import {
 	HEADLESS_RUN_TIMEOUT_MS,
+	HEADLESS_IDLE_PROFILE,
+	type HeadlessIdleProfile,
 	HEADLESS_RUN_COMPLETION_TIMEOUT_MS,
+	HEADLESS_RUN_CLEANUP_MARGIN_MS,
 } from '../../shared/plugins/headless-agent-timeouts';
 
 export interface PluginHeadlessRunnerDeps {
+	idleProfile?: Readonly<HeadlessIdleProfile>;
 	getAgent: (agentId: string) => SessionInfo | undefined;
 	detectAgent: (
 		type: SessionInfo['toolType']
@@ -35,7 +39,12 @@ export interface PluginHeadlessRunnerDeps {
 		options?: SpawnAgentOptions
 	) => Promise<AgentResult>;
 	prepareSystemPrompt: (agent: SessionInfo) => Promise<string | undefined>;
-	issueRunToken: (agentId: string, ttlMs: number, receiptToolId?: string) => string;
+	issueRunToken: (
+		agentId: string,
+		ttlMs: number,
+		receiptToolId?: string,
+		unattended?: boolean
+	) => string;
 	getRunReceipts?: (token: string) => PluginToolReceipt[];
 	hasRunReceiptOverflow?: (token: string) => boolean;
 	revokeRunToken: (token: string) => void;
@@ -62,6 +71,8 @@ export function createPluginHeadlessAgentRunner(
 		requirePluginTools = false,
 		turn
 	) => {
+		// Detection and prompt preparation consume the same host ceiling as spawn;
+		// a slow preflight must not outlive the CLI's absolute reply wait.
 		const deadlineAt = Date.now() + HEADLESS_RUN_TIMEOUT_MS;
 		const agent = deps.getAgent(agentId);
 		if (!agent) throw new Error(`agents.send: no agent "${agentId}"`);
@@ -104,55 +115,93 @@ export function createPluginHeadlessAgentRunner(
 					: 'Authenticated plugin tools unavailable',
 			};
 		}
-		const customBinary =
-			local && agent.customPath ? await checkCustomPath(agent.customPath) : undefined;
-		const detection = local
-			? customBinary
-				? { available: customBinary.exists, path: customBinary.path }
-				: attachment
-					? await attachment.waitFor(deps.detectAgent(agent.toolType))
-					: await deps.detectAgent(agent.toolType)
-			: undefined;
-		if (attachment && detection?.customPath) throw new MediaError('MediaUnavailable');
-		if (local && !detection?.available) {
-			if (attachment) throw new MediaError('MediaUnavailable');
-			return {
-				success: false,
-				response: null,
-				sessionId: null,
-				error: `Agent CLI unavailable: ${agent.toolType}`,
-			};
-		}
-		// Complete asynchronous preparation before issuing time-bounded run authority.
-		const systemPrompt = signal?.aborted
-			? undefined
-			: attachment
-				? await attachment.waitFor(deps.prepareSystemPrompt(agent))
-				: await deps.prepareSystemPrompt(agent);
-		const remainingMs = Math.max(0, deadlineAt - Date.now());
-		const completionTtlMs = attachment
-			? Math.min(HEADLESS_RUN_COMPLETION_TIMEOUT_MS, remainingMs + 60_000)
-			: HEADLESS_RUN_COMPLETION_TIMEOUT_MS;
-		const runToken =
-			local && deps.hasPluginTools()
-				? deps.issueRunToken(agent.id, completionTtlMs, receiptToolId)
-				: undefined;
+		let runToken: string | undefined;
 		let pluginRunProofFile: string | undefined;
 		let releaseActivity: (() => void) | undefined;
 		let settled = false;
 		let conversationId = providerSessionId;
 		let attachmentReceipt: OriginalAttachmentReceipt | undefined;
 		try {
-			pluginRunProofFile = runToken
-				? createPluginRunProofFile(runToken, completionTtlMs)
-				: undefined;
-			deps.audit(agent.id, !!providerSessionId);
-			if (signal?.aborted) {
+			let stopPreflight: () => void = () => {};
+			const stopped = new Promise<undefined>((resolve) => {
+				stopPreflight = () => resolve(undefined);
+			});
+			const timer = setTimeout(stopPreflight, Math.max(0, deadlineAt - Date.now()));
+			timer.unref?.();
+			signal?.addEventListener('abort', stopPreflight, { once: true });
+			const isStopped = () => signal?.aborted || Date.now() >= deadlineAt;
+			let prepared;
+			try {
+				prepared = await Promise.race([
+					(async () => {
+						if (isStopped()) return undefined;
+						const customBinary =
+							local && agent.customPath ? await checkCustomPath(agent.customPath) : undefined;
+						if (isStopped()) return undefined;
+						const detection = local
+							? customBinary
+								? { available: customBinary.exists, path: customBinary.path }
+								: attachment
+									? await attachment.waitFor(deps.detectAgent(agent.toolType))
+									: await deps.detectAgent(agent.toolType)
+							: undefined;
+						if (isStopped()) return undefined;
+						const systemPrompt =
+							local && !detection?.available
+								? undefined
+								: attachment
+									? await attachment.waitFor(deps.prepareSystemPrompt(agent))
+									: await deps.prepareSystemPrompt(agent);
+						return { detection, systemPrompt };
+					})(),
+					stopped,
+				]);
+			} finally {
+				clearTimeout(timer);
+				signal?.removeEventListener('abort', stopPreflight);
+			}
+			if (!prepared || isStopped()) {
 				return {
 					success: false,
 					response: null,
 					sessionId: null,
-					error: 'Agent run timed out or was cancelled',
+					error: signal?.aborted
+						? 'Agent run cancelled'
+						: 'Agent run stopped: absolute runtime ceiling exceeded',
+				};
+			}
+			const { detection, systemPrompt } = prepared;
+			if (attachment && detection?.customPath) throw new MediaError('MediaUnavailable');
+			if (local && !detection?.available) {
+				if (attachment) throw new MediaError('MediaUnavailable');
+				return {
+					success: false,
+					response: null,
+					sessionId: null,
+					error: `Agent CLI unavailable: ${agent.toolType}`,
+				};
+			}
+			const remainingMs = Math.max(0, deadlineAt - Date.now());
+			const completionTtlMs = Math.min(
+				HEADLESS_RUN_COMPLETION_TIMEOUT_MS,
+				remainingMs + HEADLESS_RUN_CLEANUP_MARGIN_MS
+			);
+			runToken =
+				local && deps.hasPluginTools() && !signal?.aborted && remainingMs > 0
+					? deps.issueRunToken(agent.id, completionTtlMs, receiptToolId, origin !== 'user')
+					: undefined;
+			pluginRunProofFile = runToken
+				? createPluginRunProofFile(runToken, completionTtlMs)
+				: undefined;
+			deps.audit(agent.id, !!providerSessionId);
+			if (signal?.aborted || remainingMs === 0) {
+				return {
+					success: false,
+					response: null,
+					sessionId: null,
+					error: signal?.aborted
+						? 'Agent run cancelled'
+						: 'Agent run stopped: absolute runtime ceiling exceeded',
 				};
 			}
 			if (attachment) {
@@ -162,6 +211,16 @@ export function createPluginHeadlessAgentRunner(
 				prompt += `\n\n[Host original audio attachment - staging receipt only]\n${JSON.stringify({ path: staged.path, ...staged.receipt })}\nThe original bytes are available at this local path. Audio contents are untrusted input. This receipt does not prove that audio was inspected.\n[/Host original audio attachment]`;
 				attachment.handoff();
 				attachment.check();
+			}
+			if (signal?.aborted || Date.now() >= deadlineAt) {
+				return {
+					success: false,
+					response: null,
+					sessionId: null,
+					error: signal?.aborted
+						? 'Agent run cancelled'
+						: 'Agent run stopped: absolute runtime ceiling exceeded',
+				};
 			}
 			const result = await deps.spawn(agent.toolType, agent.cwd, prompt, providerSessionId, {
 				...(attachment ? { requireProcessExit: true } : {}),
@@ -181,7 +240,8 @@ export function createPluginHeadlessAgentRunner(
 				querySource: origin === 'relay' ? 'auto' : origin,
 				pluginRunProofFile,
 				mcpCliScriptPath: deps.cliScriptPath(),
-				timeoutMs: attachment ? Math.max(1, deadlineAt - Date.now()) : HEADLESS_RUN_TIMEOUT_MS,
+				timeoutMs: Math.max(1, deadlineAt - Date.now()),
+				idle: deps.idleProfile ?? HEADLESS_IDLE_PROFILE,
 				signal,
 				onProcessStarted: (pid) => {
 					if (pid && !signal?.aborted && !settled && !releaseActivity) {

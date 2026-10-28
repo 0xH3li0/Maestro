@@ -130,6 +130,7 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	concertoStageFloating: false,
 	concertoStagePosition: null,
 	spellCheck: false,
+	userJourneyEnabled: true,
 	usageRefreshIntervals: {},
 	pianolaAutoWatchNewAgents: false,
 	annotatorPenColor: '#9146FF',

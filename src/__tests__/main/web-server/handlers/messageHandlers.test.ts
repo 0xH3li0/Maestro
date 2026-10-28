@@ -6056,7 +6056,7 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 		}
 	});
 
-	it('runs a local CLI request through the host runner and returns its provider session', async () => {
+	it('host-stamps a local CLI request as automatic and returns its provider session', async () => {
 		const run = vi.fn(async () => ({ success: true, response: 'hello', sessionId: 'provider-1' }));
 		vi.mocked(getHeadlessAgentRunner).mockReturnValue(run);
 		client.cliAuthenticated = true;
@@ -6067,6 +6067,7 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 			type: 'plugins_send_agent',
 			agentId: 'agent-a',
 			prompt: 'hello',
+			querySource: 'user',
 		});
 		await vi.waitFor(() => expect(run).toHaveBeenCalled());
 		expect(run).toHaveBeenCalledWith(
@@ -6074,7 +6075,7 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 			'hello',
 			undefined,
 			expect.any(AbortSignal),
-			'user',
+			'auto',
 			undefined,
 			undefined
 		);
@@ -6153,7 +6154,7 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 			'report',
 			undefined,
 			expect.any(AbortSignal),
-			'user',
+			'auto',
 			undefined,
 			'acme/dostuff'
 		);
