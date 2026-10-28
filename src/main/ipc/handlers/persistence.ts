@@ -20,6 +20,7 @@ import {
 	resolveMediaRuntime,
 	resolveMediaModelDirectory,
 } from '../../plugins/plugin-media-tools';
+import { noteSentryAgentInventory } from '../../utils/sentry';
 import { isWebContentsAvailable } from '../../utils/safe-send';
 import { broadcastBridgeEvent } from '../../web-server/handlers/bridgeHandlers';
 import { forgetAgentActors } from '../../web-server/auth/turn-attribution';
@@ -931,6 +932,9 @@ export function registerPersistenceHandlers(
 					throw err;
 				}
 
+				// Crash-report context (agent count + provider types); no-op unless changed.
+				noteSentryAgentInventory(sessionsToPersist);
+
 				// Tell the other clients (desktop windows + web-desktop) what entered and
 				// left, so an agent created or closed in one of them stops being
 				// invisible to - and resurrectable by - the rest.
@@ -1095,6 +1099,9 @@ export function registerPersistenceHandlers(
 				logger.warn(`Failed to persist sessions: ${code || (err as Error).message}`, 'Sessions');
 				return false;
 			}
+
+			// Crash-report context (agent count + provider types); no-op unless changed.
+			noteSentryAgentInventory(sessionsToPersist);
 
 			// Opening snapshots may add/update observed agents but never infer a
 			// deletion from an omitted id. Explicit removes arrive through setMany.

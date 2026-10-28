@@ -1510,6 +1510,11 @@ async function spawnJsonLineAgent(
 				}
 				capture.handleEvent(event);
 				supervision.observe(event);
+				// A nonfatal provider notice (Codex item-level `error`) goes to stderr,
+				// never into the answer or the error path.
+				if (event.type === 'warning' && event.text) {
+					console.error(event.text);
+				}
 				if (event.type === 'tool_use') {
 					const tool =
 						typeof event.toolName === 'string' &&
