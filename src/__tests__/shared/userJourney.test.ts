@@ -35,8 +35,8 @@ function entry(overrides: Partial<UserJourneyEntry>): UserJourneyEntry {
 
 describe('userJourney constants', () => {
 	it('caps entries and retention', () => {
-		expect(JOURNEY_MAX_ENTRIES_PER_AGENT).toBe(5000);
-		expect(JOURNEY_RETENTION_DAYS).toBe(30);
+		expect(JOURNEY_MAX_ENTRIES_PER_AGENT).toBe(25_000);
+		expect(JOURNEY_RETENTION_DAYS).toBe(90);
 	});
 });
 

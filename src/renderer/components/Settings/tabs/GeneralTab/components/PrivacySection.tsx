@@ -35,7 +35,7 @@ export function PrivacySection({
 					icon={Footprints}
 					sectionLabel="User Journey"
 					title="Record the files and pages you open in Maestro"
-					description="Agents read it with maestro-cli timeline to follow references like the file you just saved. Only names, paths, and page addresses are kept, on this computer, for 30 days. Turning it off stops recording."
+					description="Agents read it with maestro-cli timeline to follow references like the file you just saved. Only names, paths, and page addresses are kept, on this computer, for 90 days. Turning it off stops recording."
 					checked={userJourneyEnabled}
 					onChange={setUserJourneyEnabled}
 					theme={theme}

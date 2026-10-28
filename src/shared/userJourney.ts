@@ -22,11 +22,15 @@ import { stripJsonBom } from './jsonUtils';
 import { toLocalYmd } from './localDay';
 import { isPathAtOrUnderRoot, normalizeWorktreePath } from './worktreePaths';
 
-/** Most entries kept per agent; the store prunes the oldest past this. */
-export const JOURNEY_MAX_ENTRIES_PER_AGENT = 5000;
+/**
+ * Most entries kept per agent; the store prunes the oldest past this. Sized so
+ * a busy user (about 275 actions a day) still keeps the full retention window.
+ * At about 200 bytes an entry, a full file is about 5 MB.
+ */
+export const JOURNEY_MAX_ENTRIES_PER_AGENT = 25_000;
 
 /** Entries older than this many days are pruned. */
-export const JOURNEY_RETENTION_DAYS = 30;
+export const JOURNEY_RETENTION_DAYS = 90;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
