@@ -1,4 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
+import {
+	HEADLESS_RUN_TIMEOUT_MS,
+	HEADLESS_RUN_COMPLETION_TIMEOUT_MS,
+} from '../../../shared/plugins/headless-agent-timeouts';
 import * as fs from 'fs';
 import * as pathProber from '../../../main/agents/path-prober';
 import * as runIdentity from '../../../main/plugins/plugin-tool-run-identity';
@@ -22,6 +26,128 @@ const agent = {
 } as SessionInfo;
 
 describe('plugin headless agent runner', () => {
+	it('refuses ordinary sends after preflight consumes the absolute deadline', async () => {
+		let now = 1_000;
+		const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+		const spawn = vi.fn<PluginHeadlessRunnerDeps['spawn']>(async () => ({
+			success: true,
+			response: 'done',
+		}));
+		const issueRunToken = vi.fn(() => 'fixture-token');
+		const proof = vi
+			.spyOn(runIdentity, 'createPluginRunProofFile')
+			.mockReturnValue('/fixture/proof');
+		const removeProof = vi
+			.spyOn(runIdentity, 'removePluginRunProofFile')
+			.mockImplementation(() => {});
+		try {
+			const run = createPluginHeadlessAgentRunner({
+				getAgent: () => agent,
+				detectAgent: async () => ({ available: true }),
+				hasPluginTools: () => true,
+				spawn,
+				prepareSystemPrompt: async () => {
+					now += HEADLESS_RUN_TIMEOUT_MS + 1;
+					return undefined;
+				},
+				issueRunToken,
+				revokeRunToken: vi.fn(),
+				cliScriptPath: () => '/cli.js',
+				audit: vi.fn(),
+			});
+			await expect(run(agent.id, 'hello')).resolves.toMatchObject({
+				success: false,
+				error: 'Agent run stopped: absolute runtime ceiling exceeded',
+			});
+			expect(spawn).not.toHaveBeenCalled();
+			expect(issueRunToken).not.toHaveBeenCalled();
+			expect(proof).not.toHaveBeenCalled();
+		} finally {
+			clock.mockRestore();
+			proof.mockRestore();
+			removeProof.mockRestore();
+		}
+	});
+	it.each(['delay', 'expire', 'cancel'] as const)(
+		'counts original-audio staging against the absolute deadline on %s',
+		async (cause) => {
+			vi.useFakeTimers();
+			const controller = new AbortController();
+			const spawn = vi.fn<PluginHeadlessRunnerDeps['spawn']>(async () => ({
+				success: true,
+				response: 'done',
+			}));
+			const revokeRunToken = vi.fn();
+			const proof = vi
+				.spyOn(runIdentity, 'createPluginRunProofFile')
+				.mockReturnValue('/fixture/proof');
+			const removeProof = vi
+				.spyOn(runIdentity, 'removePluginRunProofFile')
+				.mockImplementation(() => {});
+			const run = createPluginHeadlessAgentRunner({
+				getAgent: () => agent,
+				detectAgent: async () => ({ available: true }),
+				hasPluginTools: () => true,
+				spawn,
+				prepareSystemPrompt: async () => undefined,
+				issueRunToken: () => 'staging-proof',
+				revokeRunToken,
+				cliScriptPath: () => '/cli.js',
+				audit: vi.fn(),
+			});
+			try {
+				const result = await run(
+					agent.id,
+					'read original',
+					undefined,
+					controller.signal,
+					'relay',
+					undefined,
+					undefined,
+					false,
+					{
+						originalAttachment: {
+							signal: controller.signal,
+							check: () => {},
+							waitFor: async <T>(value: Promise<T>) => value,
+							prepare: async () => {
+								vi.advanceTimersByTime(cause === 'expire' ? HEADLESS_RUN_TIMEOUT_MS + 1 : 90_000);
+								if (cause === 'cancel') controller.abort();
+								return {
+									path: '/fixture/original.ogg',
+									receipt: { filename: 'original.ogg', bytes: 5, sha256: 'a'.repeat(64) },
+								};
+							},
+							handoff: () => {},
+						},
+					}
+				);
+				if (cause === 'delay') {
+					expect(result.success).toBe(true);
+					expect(spawn.mock.calls[0][4]).toMatchObject({
+						timeoutMs: HEADLESS_RUN_TIMEOUT_MS - 90_000,
+						requireProcessExit: true,
+					});
+				} else {
+					expect(result).toMatchObject({
+						success: false,
+						error:
+							cause === 'cancel'
+								? 'Agent run cancelled'
+								: 'Agent run stopped: absolute runtime ceiling exceeded',
+					});
+					expect(spawn).not.toHaveBeenCalled();
+				}
+				expect(revokeRunToken).toHaveBeenCalledWith('staging-proof');
+				expect(removeProof).toHaveBeenCalledWith('/fixture/proof');
+				expect(vi.getTimerCount()).toBe(0);
+			} finally {
+				proof.mockRestore();
+				removeProof.mockRestore();
+				vi.useRealTimers();
+			}
+		}
+	);
 	it.each([true, false])(
 		'validates the selected agent binary before dispatch (valid: %s)',
 		async (valid) => {

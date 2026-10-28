@@ -47,7 +47,25 @@ export function superviseAgentProcess(
 		onStop: (reason: string) => void;
 		onForcedStop: () => void;
 	}
-): { modelActivity: () => void; observe: (event: ParsedEvent) => void; dispose: () => void } {
+): {
+	modelActivity: () => void;
+	observe: (event: ParsedEvent) => void;
+	processExited: Promise<void>;
+	dispose: () => void;
+} {
+	let confirmExit!: () => void;
+	const processExited = new Promise<void>((resolve) => {
+		confirmExit = resolve;
+	});
+	const onClose = (): void => confirmExit();
+	const onError = (): void => {
+		// An error on an already-started child (for example a failed kill) says
+		// nothing about termination. A failed spawn has no process to retain.
+		if (child.pid === undefined) confirmExit();
+	};
+	child.once?.('close', onClose);
+	child.on?.('error', onError);
+	if (child.exitCode != null || child.signalCode != null) confirmExit();
 	let disposed = false;
 	let stopping = false;
 	let termination: StopHandle | undefined;
@@ -261,6 +279,7 @@ export function superviseAgentProcess(
 		});
 	}
 	const onExit = (): void => {
+		confirmExit();
 		if (disposed || stopping) return;
 		exitDrain = createIdleWatchdog({
 			idleMs: HEADLESS_PROCESS_CLOSE_TIMEOUT_MS,
@@ -276,11 +295,15 @@ export function superviseAgentProcess(
 	options.signal?.addEventListener('abort', abort, { once: true });
 	if (options.signal?.aborted) abort();
 	return {
+		processExited,
 		modelActivity: () => {
 			if (!disposed && !stopping) startup?.disarm();
 		},
 		observe,
 		dispose: () => {
+			child.removeListener?.('exit', onExit);
+			child.removeListener?.('close', onClose);
+			child.removeListener?.('error', onError);
 			if (disposed) return;
 			disposed = true;
 			startup?.disarm();
@@ -288,7 +311,6 @@ export function superviseAgentProcess(
 			silence?.disarm();
 			warning?.disarm();
 			exitDrain?.disarm();
-			child.removeListener?.('exit', onExit);
 			if (closeDeadline) clearTimeout(closeDeadline);
 			options.signal?.removeEventListener('abort', abort);
 			termination?.dispose();
