@@ -3,7 +3,7 @@ import {
 	isExpectedBridgeError,
 	WEB_BRIDGE_STATE_EVENT,
 } from '../../../shared/bridgeError';
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useEventListener } from '../utils/useEventListener';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 import type { RightPanelHandle } from '../../components/RightPanel';
@@ -203,14 +203,30 @@ export interface UseFileTreeManagementReturn {
 export function useFileTreeManagement(
 	deps: UseFileTreeManagementDeps
 ): UseFileTreeManagementReturn {
-	const pendingTransportRefreshes = useRef(new Map<string, FileTreeRefreshOptions>());
+	const pendingTransportRefreshes = useRef(
+		new Map<string, FileTreeRefreshOptions & { initialOnly: boolean }>()
+	);
+	const failedInitialLoads = useRef(new Set<string>());
+	const inFlightRefreshes = useRef(new Map<string, number>());
+	const [initialRecoveryGeneration, setInitialRecoveryGeneration] = useState(0);
+	/** Stats and progressive rows do not complete a failed full-tree load. */
+	const needsInitialLoad = useCallback((session: Session) => {
+		return (
+			!session.fileTreeLoading &&
+			!inFlightRefreshes.current.has(session.id) &&
+			session.fileTreeLoadedCap === undefined &&
+			(failedInitialLoads.current.has(session.id) ||
+				(!session.fileTree?.length && session.fileTreeStats === undefined))
+		);
+	}, []);
 	/** Keep the widest queued load; skip stats only when every request permits it. */
 	const queueTransportRefresh = useCallback(
-		(sessionId: string, options?: FileTreeRefreshOptions) => {
+		(sessionId: string, options?: FileTreeRefreshOptions, initialOnly = false) => {
 			const pending = pendingTransportRefreshes.current.get(sessionId);
 			const previousCap = pending?.maxEntriesOverride;
 			const requestedCap = options?.maxEntriesOverride;
 			pendingTransportRefreshes.current.set(sessionId, {
+				initialOnly: pending ? pending.initialOnly && initialOnly : initialOnly,
 				maxEntriesOverride:
 					previousCap === undefined
 						? requestedCap
@@ -334,6 +350,9 @@ export function useFileTreeManagement(
 
 	const cancelFileTreeLoad = useCallback(
 		(sessionId: string) => {
+			failedInitialLoads.current.delete(sessionId);
+			if (pendingTransportRefreshes.current.get(sessionId)?.initialOnly)
+				pendingTransportRefreshes.current.delete(sessionId);
 			const controller = loadAbortMapRef.current.get(sessionId);
 			if (!controller) return;
 			controller.abort();
@@ -498,6 +517,7 @@ export function useFileTreeManagement(
 			// has opted into a larger scan and we shouldn't second-guess them.
 			const maxEntriesForRefresh =
 				options?.maxEntriesOverride ?? resolveMaxEntries(!!sshContext, effectiveMaxEntries);
+			inFlightRefreshes.current.set(sessionId, seq);
 
 			try {
 				// Fire stats independently - update asynchronously without blocking tree refresh.
@@ -548,6 +568,7 @@ export function useFileTreeManagement(
 
 				// Discard if a newer load started for this session while we were awaiting
 				if (isStale(sessionId, seq)) return undefined;
+				failedInitialLoads.current.delete(sessionId);
 
 				const oldTree = session.fileTree || [];
 				const changes = compareFileTrees(oldTree, loadResult.tree);
@@ -615,6 +636,13 @@ export function useFileTreeManagement(
 					)
 				);
 				return undefined;
+			} finally {
+				if (inFlightRefreshes.current.get(sessionId) === seq) {
+					inFlightRefreshes.current.delete(sessionId);
+					// An initial retry may have become due while this read held the gate.
+					if (failedInitialLoads.current.has(sessionId) && isBridgeTransportReady())
+						setInitialRecoveryGeneration((generation) => generation + 1);
+				}
 			}
 		},
 		[
@@ -635,7 +663,17 @@ export function useFileTreeManagement(
 		if (!isBridgeTransportReady()) return;
 		const pending = [...pendingTransportRefreshes.current];
 		pendingTransportRefreshes.current.clear();
-		for (const [sessionId, options] of pending) void refreshFileTree(sessionId, options);
+		for (const [sessionId, { initialOnly, ...options }] of pending) {
+			if (initialOnly) {
+				const session = sessionsRef.current.find((item) => item.id === sessionId);
+				if (sessionId !== activeSessionId || !session || !needsInitialLoad(session)) continue;
+				// Resume through the initial loader so its loading gate, sequence
+				// checks and timed retry remain the single owner of this attempt.
+				setInitialRecoveryGeneration((generation) => generation + 1);
+				continue;
+			}
+			void refreshFileTree(sessionId, options);
+		}
 	});
 
 	/**
@@ -658,6 +696,7 @@ export function useFileTreeManagement(
 
 			// Extract SSH context for remote file/git operations (with ignore patterns)
 			const sshContext = getSshContext(session, sshContextOptions);
+			inFlightRefreshes.current.set(sessionId, seq);
 
 			try {
 				// Fire stats independently - update asynchronously without blocking tree/git refresh.
@@ -734,6 +773,7 @@ export function useFileTreeManagement(
 
 				const treeUnchanged =
 					compareFileTrees(session.fileTree || [], loadResult.tree).totalChanges === 0;
+				failedInitialLoads.current.delete(sessionId);
 				setSessions((prev) =>
 					prev.map((s) =>
 						s.id === sessionId
@@ -764,6 +804,12 @@ export function useFileTreeManagement(
 				logger.error('Git/file state refresh error', 'FileTreeManagement', {
 					error: (error as Error)?.message || 'Unknown error',
 				});
+			} finally {
+				if (inFlightRefreshes.current.get(sessionId) === seq) {
+					inFlightRefreshes.current.delete(sessionId);
+					if (failedInitialLoads.current.has(sessionId) && isBridgeTransportReady())
+						setInitialRecoveryGeneration((generation) => generation + 1);
+				}
 			}
 		},
 		[
@@ -785,30 +831,25 @@ export function useFileTreeManagement(
 
 	/**
 	 * Load file tree when active session changes.
-	 * Only loads if file tree is empty AND not in error backoff period.
+	 * Loads uninitialized trees or retries interrupted full loads after error backoff.
 	 * Passes SSH context for remote sessions to enable remote operations (Phase 2+).
 	 * Shows streaming progress updates during loading (useful for slow SSH connections).
 	 */
 	useEffect(() => {
 		const session = activeSession;
 		if (!session) return;
-		if (!isBridgeTransportReady()) {
-			queueTransportRefresh(session.id);
-			return;
-		}
 
-		// Only load if file tree is empty, not already loading, and hasn't been loaded yet.
-		// fileTreeStats is set after successful load, so we use it to detect "loaded but empty".
+		// Stats distinguish an already loaded empty directory from an uninitialized tree.
+		// An interrupted initial pass remains pending even if stats or partial rows arrived.
 		// We intentionally do NOT gate on a residual `fileTreeError` here: if an old error was
 		// restored from persistence or left over from a previous failed load, the auto-loader
 		// should get a fresh attempt so the current code path can try (and either clear or
 		// update the error). Otherwise a stale error permanently blocks the panel.
-		const hasLoadedOnce = session.fileTreeStats !== undefined;
-		if (
-			(!session.fileTree || session.fileTree.length === 0) &&
-			!session.fileTreeLoading &&
-			!hasLoadedOnce
-		) {
+		if (needsInitialLoad(session)) {
+			if (!isBridgeTransportReady()) {
+				queueTransportRefresh(session.id, undefined, true);
+				return;
+			}
 			// Check if we're in a retry backoff period
 			if (session.fileTreeRetryAt && Date.now() < session.fileTreeRetryAt) {
 				// Schedule retry when backoff expires (if not already scheduled)
@@ -992,6 +1033,7 @@ export function useFileTreeManagement(
 				.then((loadResult) => {
 					// Discard if a newer load started for this session while we were awaiting
 					if (isStale(sessionId, seq)) return;
+					failedInitialLoads.current.delete(sessionId);
 
 					setSessions((prev) =>
 						prev.map((s) =>
@@ -1019,8 +1061,13 @@ export function useFileTreeManagement(
 					// User cancelled - clear loading state but don't surface an error.
 					// cancelFileTreeLoad already cleared loading UI; this just guards against
 					// the race where the load completes before the cancel state-write lands.
-					if (error instanceof FileTreeAbortError || isExpectedBridgeError(error)) {
-						if (isExpectedBridgeError(error)) queueTransportRefresh(sessionId);
+					const expectedBridgeError = isExpectedBridgeError(error);
+					if (error instanceof FileTreeAbortError || expectedBridgeError) {
+						const transportReady = isBridgeTransportReady();
+						if (expectedBridgeError) {
+							failedInitialLoads.current.add(sessionId);
+							if (!transportReady) queueTransportRefresh(sessionId, undefined, true);
+						}
 						setSessions((prev) =>
 							prev.map((s) =>
 								s.id === sessionId
@@ -1028,7 +1075,7 @@ export function useFileTreeManagement(
 											...s,
 											fileTreeLoading: false,
 											fileTreeLoadingProgress: undefined,
-											...(isExpectedBridgeError(error) && isBridgeTransportReady()
+											...(expectedBridgeError && transportReady
 												? { fileTreeRetryAt: Date.now() + FILE_TREE_RETRY_DELAY_MS }
 												: {}),
 										}
@@ -1071,6 +1118,8 @@ export function useFileTreeManagement(
 				});
 		}
 	}, [
+		initialRecoveryGeneration,
+		needsInitialLoad,
 		queueTransportRefresh,
 		activeSession,
 		setSessions,
@@ -1122,7 +1171,7 @@ export function useFileTreeManagement(
 
 	// Re-scan file tree when local ignore patterns or honor-gitignore setting changes
 	// for sessions that have already loaded their tree (the initial-load effect won't re-run
-	// because hasLoadedOnce short-circuits it).
+	// because a completed tree no longer needs an initial load).
 	const prevLocalOptionsRef = useRef(localOptions);
 	useEffect(() => {
 		if (prevLocalOptionsRef.current === localOptions) return;
