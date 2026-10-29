@@ -485,9 +485,10 @@ export function createGitApi() {
 		 * Get the default branch of a repository
 		 */
 		getDefaultBranch: (
-			cwd: string
+			cwd: string,
+			sshRemoteId?: string
 		): Promise<{ success: boolean; branch?: string; error?: string }> =>
-			ipcRenderer.invoke('git:getDefaultBranch', cwd),
+			ipcRenderer.invoke('git:getDefaultBranch', cwd, sshRemoteId),
 
 		/**
 		 * Check if GitHub CLI is installed and authenticated

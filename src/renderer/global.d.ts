@@ -1532,7 +1532,10 @@ interface MaestroAPI {
 			prUrl?: string;
 			error?: string;
 		}>;
-		getDefaultBranch: (cwd: string) => Promise<{
+		getDefaultBranch: (
+			cwd: string,
+			sshRemoteId?: string
+		) => Promise<{
 			success: boolean;
 			branch?: string;
 			error?: string;

@@ -172,6 +172,11 @@ export function CreatePRModal({
 	}, [isOpen, availableBranches, runKey]);
 
 	const checkGhCli = async () => {
+		// A remote PR runs gh on the SSH host, which reports its own errors on create
+		if (sshRemoteId) {
+			setGhCliStatus({ installed: true, authenticated: true });
+			return;
+		}
 		try {
 			const status = await window.maestro.git.checkGhCli();
 			setGhCliStatus(status);

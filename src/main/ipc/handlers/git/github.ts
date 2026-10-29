@@ -48,13 +48,16 @@ export function registerGithubHandlers(): void {
 						return { success: false, error: `Failed to push branch: ${pushResult.stderr}` };
 					}
 
-					// ghPath points at the local binary, so the remote resolves gh from its own PATH
+					// ghPath points at the local binary, so the remote resolves gh from its own PATH.
+					// The body goes through stdin: the SSH command line is logged.
 					const ghRemote = await buildSshCommand(sshRemote, {
 						command: 'gh',
-						args: ['pr', 'create', '--base', baseBranch, '--title', title, '--body', body],
+						args: ['pr', 'create', '--base', baseBranch, '--title', title, '--body-file', '-'],
 						cwd: worktreePath,
 					});
-					const prResult = await execFileNoThrow(ghRemote.command, ghRemote.args);
+					const prResult = await execFileNoThrow(ghRemote.command, ghRemote.args, undefined, {
+						input: body,
+					});
 					if (prResult.exitCode !== 0) {
 						if (prResult.stderr.includes('command not found')) {
 							return {

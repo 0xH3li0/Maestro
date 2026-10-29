@@ -390,7 +390,10 @@ export function useWorktreeManager(): UseWorktreeManagerReturn {
 			try {
 				// Use the user-selected target branch, or fall back to default branch detection
 				if (!baseBranch) {
-					const defaultBranchResult = await window.maestro.git.getDefaultBranch(mainRepoCwd);
+					const defaultBranchResult = await window.maestro.git.getDefaultBranch(
+						mainRepoCwd,
+						worktree.sshRemoteId
+					);
 					baseBranch =
 						defaultBranchResult.success && defaultBranchResult.branch
 							? defaultBranchResult.branch

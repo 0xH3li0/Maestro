@@ -3852,14 +3852,17 @@ export function Component() {
 				});
 				expect(sshCommandBuilder.buildSshCommand).toHaveBeenCalledWith(sshRemote, {
 					command: 'gh',
-					args: ['pr', 'create', '--base', 'main', '--title', 'Title', '--body', 'Body'],
+					args: ['pr', 'create', '--base', 'main', '--title', 'Title', '--body-file', '-'],
 					cwd: '/home/user/worktrees/repo/feature',
 				});
+				// The body goes through stdin so it never lands in the logged SSH command line
 				expect(execFile.execFileNoThrow).toHaveBeenCalledTimes(1);
-				expect(execFile.execFileNoThrow).toHaveBeenCalledWith('ssh', [
-					'devbox.example.com',
-					'gh pr create',
-				]);
+				expect(execFile.execFileNoThrow).toHaveBeenCalledWith(
+					'ssh',
+					['devbox.example.com', 'gh pr create'],
+					undefined,
+					{ input: 'Body' }
+				);
 				expect(result).toEqual({ success: true, prUrl: 'https://github.com/user/repo/pull/7' });
 			});
 
@@ -4202,6 +4205,34 @@ export function Component() {
 	});
 
 	describe('git:getDefaultBranch', () => {
+		it('should detect the default branch on the SSH remote', async () => {
+			mockSettingsStore.get.mockReturnValue([
+				{
+					id: 'ssh-remote-123',
+					name: 'devbox',
+					enabled: true,
+					host: 'devbox.example.com',
+					port: 22,
+				},
+			]);
+			const remoteGit = await import('../../../../main/utils/remote-git');
+			vi.mocked(remoteGit.execGitRemote).mockResolvedValueOnce({
+				stdout: '* remote origin\n  HEAD branch: master\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const handler = handlers.get('git:getDefaultBranch');
+			const result = await handler!({} as any, '/home/dev/repo', 'ssh-remote-123');
+
+			expect(remoteGit.execGitRemote).toHaveBeenCalledWith(['remote', 'show', 'origin'], {
+				sshRemote: expect.objectContaining({ id: 'ssh-remote-123' }),
+				remoteCwd: '/home/dev/repo',
+			});
+			expect(execFile.execFileNoThrow).not.toHaveBeenCalled();
+			expect(result).toEqual({ success: true, branch: 'master' });
+		});
+
 		it('should return branch from remote when HEAD branch is available', async () => {
 			vi.mocked(execFile.execFileNoThrow).mockResolvedValueOnce({
 				// git remote show origin
