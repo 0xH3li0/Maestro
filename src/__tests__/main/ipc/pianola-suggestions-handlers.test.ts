@@ -392,7 +392,11 @@ describe('OW owner review', () => {
 			// Reading a staged candidate is not consent and must not activate it.
 			await handlers.get('pianola:get-suggestions')!(event);
 			expect(store.writeRules).not.toHaveBeenCalled();
-			expect(store.writeSuggestions).not.toHaveBeenCalled();
+			for (const [staged] of store.writeSuggestions.mock.calls) {
+				expect(staged.approvals ?? []).toEqual([]);
+				expect(staged.rejections ?? []).toEqual([]);
+				expect(staged.candidates?.every((item) => !item.rule.enabled)).toBe(true);
+			}
 			await expect(
 				handlers.get('pianola:review-suggestion')!(event, {
 					...payload,

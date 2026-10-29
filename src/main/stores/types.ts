@@ -135,7 +135,7 @@ export interface MaestroSettings {
 	pianolaAutoWatchNewAgents: boolean;
 	/** Minimum independent matching human samples for a proposal; default three. */
 	pianolaLearningMinSamples?: number;
-	/** Explicit owner binding for learning; absent means no confirmed owner samples. */
+	/** Owner binding for learning; absent defaults to verified native desktop ownership. */
 	pianolaLearningIdentity?: {
 		desktopIsOwner?: boolean;
 		ownerWebUserId?: string;
