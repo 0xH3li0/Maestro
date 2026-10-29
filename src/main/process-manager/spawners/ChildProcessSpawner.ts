@@ -46,7 +46,6 @@ import type { ParsedEvent } from '../../parsers/agent-output-parser';
 import {
 	CODEX_STARTUP_TIMEOUT_MS,
 	HEADLESS_IDLE_PROFILE,
-	HEADLESS_RUN_TIMEOUT_MS,
 } from '../../../shared/plugins/headless-agent-timeouts';
 
 // The log line each Windows shell promotion writes (see windowsShellReason).
@@ -639,8 +638,8 @@ export class ChildProcessSpawner {
 			const forced = new Promise<undefined>((resolve) => {
 				forceCompletion = () => resolve(undefined);
 			});
-			// Codex exec is one process per turn. Apply the existing host budgets to
-			// desktop turns too, including auth/MCP stalls after startup. Other
+			// Codex exec is one process per turn. Bound startup and semantic silence
+			// without an absolute ceiling on healthy desktop turns. Other
 			// providers and interactive terminal shells keep their own lifecycle.
 			let supervisionFailed = false;
 			let supervisionFailure: string | undefined;
@@ -648,7 +647,6 @@ export class ChildProcessSpawner {
 				toolType === 'codex' && (isBatchMode || stdinText !== undefined)
 					? superviseAgentProcess(childProcess, {
 							startupMs: CODEX_STARTUP_TIMEOUT_MS,
-							timeoutMs: HEADLESS_RUN_TIMEOUT_MS,
 							idle: HEADLESS_IDLE_PROFILE,
 							onStop: (reason) => {
 								supervisionFailed = true;

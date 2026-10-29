@@ -14,15 +14,13 @@ export function assertHeadlessIdleProfile(
 	timeoutMs?: number
 ): void {
 	if (
-		profile &&
-		(!timeoutMs ||
-			timeoutMs <= 0 ||
-			!Number.isFinite(timeoutMs) ||
-			![profile.warnMs, profile.idleMs, profile.toolMs].every(
+		(timeoutMs !== undefined && (!Number.isFinite(timeoutMs) || timeoutMs <= 0)) ||
+		(profile &&
+			(![profile.warnMs, profile.idleMs, profile.toolMs].every(
 				(value) => Number.isFinite(value) && value > 0
 			) ||
-			profile.warnMs >= profile.idleMs ||
-			profile.toolMs < profile.idleMs)
+				profile.warnMs >= profile.idleMs ||
+				profile.toolMs < profile.idleMs))
 	) {
 		throw new Error('Invalid headless idle profile');
 	}

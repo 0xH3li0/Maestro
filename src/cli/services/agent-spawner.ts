@@ -59,7 +59,6 @@ import {
 import { superviseAgentProcess, assertHeadlessIdleProfile } from './agent-process-supervisor';
 import {
 	CODEX_STARTUP_TIMEOUT_MS,
-	HEADLESS_RUN_TIMEOUT_MS,
 	HEADLESS_IDLE_PROFILE,
 	type HeadlessIdleProfile,
 } from '../../shared/plugins/headless-agent-timeouts';
@@ -1780,10 +1779,10 @@ export async function spawnAgent(
 ): Promise<AgentResult> {
 	// A standalone Codex caller gets the same host-owned inactivity/tool
 	// budgets as agents.send. Startup alone cannot catch a later auth/MCP stall.
+	// Preserve an absolute ceiling only when the caller explicitly supplies one.
 	if (toolType === 'codex')
 		options = {
 			...options,
-			timeoutMs: options?.timeoutMs ?? (options?.idle ? undefined : HEADLESS_RUN_TIMEOUT_MS),
 			idle: options?.idle ?? HEADLESS_IDLE_PROFILE,
 		};
 	assertHeadlessIdleProfile(options?.idle, options?.timeoutMs);
