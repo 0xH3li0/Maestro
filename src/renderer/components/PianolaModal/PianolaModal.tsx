@@ -15,7 +15,6 @@ import { notifyToast } from '../../stores/notificationStore';
 import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
 import { isWebDesktop } from '../../utils/runtimeContext';
-import { ipcErrorMessage } from '../../utils/ipcErrorMessage';
 import { RuleEditor } from './RuleEditor';
 import { DecisionsView } from './DecisionsView';
 import { RulesView } from './RulesView';
@@ -66,7 +65,6 @@ export function PianolaModal({ theme, onClose }: PianolaModalProps) {
 	const [ownerState, setOwnerState] = useState<
 		'loading' | 'available' | 'confirmed' | 'restricted'
 	>('loading');
-	const [confirmingOwner, setConfirmingOwner] = useState(false);
 
 	const load = useCallback(async () => {
 		setLoading(true);
@@ -188,37 +186,6 @@ export function PianolaModal({ theme, onClose }: PianolaModalProps) {
 		},
 		[load]
 	);
-
-	const confirmDesktopOwner = async () => {
-		setConfirmingOwner(true);
-		try {
-			await window.maestro.pianola.confirmDesktopOwner();
-			setOwnerState('confirmed');
-		} catch (error) {
-			logger.error('[Pianola] Failed to confirm desktop owner', undefined, error);
-			let message = 'Could not confirm desktop owner. Try again.';
-			switch (ipcErrorMessage(error)) {
-				case 'DesktopOwnerRestricted':
-					setOwnerState('restricted');
-					message = 'Desktop owner setup is restricted by the existing identity configuration.';
-					break;
-				case 'DesktopOwnerSetupUnavailable':
-					message = 'Desktop owner setup is unavailable in this desktop.';
-					break;
-				case 'HumanSuggestionReviewRequired':
-					message = 'Confirm the desktop owner from the native Maestro window.';
-					break;
-				case 'PianolaDisabled':
-					message = 'Enable Pianola before confirming the desktop owner.';
-					break;
-				default:
-					void captureException(error, { tags: { feature: 'pianola' } });
-			}
-			notifyToast({ color: 'red', title: 'Pianola', message });
-		} finally {
-			setConfirmingOwner(false);
-		}
-	};
 
 	const handleApplyProfile = useCallback(async (text: string) => {
 		try {
@@ -366,21 +333,11 @@ export function PianolaModal({ theme, onClose }: PianolaModalProps) {
 						<>
 							{!isWebDesktop() && ownerState !== 'loading' && (
 								<div className="px-5 py-3 text-sm" style={{ color: theme.colors.textMain }}>
-									{ownerState === 'confirmed' ? (
-										'Desktop owner confirmed.'
-									) : ownerState === 'restricted' ? (
-										'Desktop owner setup is restricted.'
-									) : (
-										<>
-											<p>
-												Confirm that you are the owner of this desktop. Future explicit Pianola
-												decisions may be used as learning evidence for this desktop.
-											</p>
-											<button disabled={confirmingOwner} onClick={() => void confirmDesktopOwner()}>
-												Confirm desktop owner
-											</button>
-										</>
-									)}
+									{ownerState === 'confirmed'
+										? 'Desktop owner confirmed.'
+										: ownerState === 'restricted'
+											? 'Desktop owner setup is restricted.'
+											: 'Explicit decisions in this desktop can be used as owner learning evidence.'}
 								</div>
 							)}
 							<SuggestionsView

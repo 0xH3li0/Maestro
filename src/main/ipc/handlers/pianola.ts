@@ -526,7 +526,7 @@ export function registerPianolaHandlers(deps: PianolaHandlerDependencies): void 
 		if (!isPianolaEnabled(settingsStore)) throw new Error('PianolaDisabled');
 		if (!isNativeOwnerTransport(event)) throw new Error('HumanSuggestionReviewRequired');
 		const identity = readPianolaOwnerIdentity(settingsStore.get('pianolaLearningIdentity'));
-		if (identity.state === 'confirmed') return;
+		if (identity.desktopIsOwner) return;
 		if (identity.state !== 'available') throw new Error('DesktopOwnerRestricted');
 		if (!settingsStore.set) throw new Error('DesktopOwnerSetupUnavailable');
 		settingsStore.set('pianolaLearningIdentity', { desktopIsOwner: true });
@@ -546,8 +546,7 @@ export function registerPianolaHandlers(deps: PianolaHandlerDependencies): void 
 		const bridge = (_event as unknown as { type?: string }).type === 'bridge';
 		const identity = readPianolaOwnerIdentity(settingsStore.get('pianolaLearningIdentity'));
 		const actorId = user?.id ?? (bridge ? 'web-owner' : 'desktop');
-		// Binding is explicit configuration, never a display-name or user-role guess.
-		// Anonymous web-owner and unconfigured desktop answers remain audit-only.
+		// Web binding is explicit; desktop attribution requires a verified native sender.
 		const confirmed =
 			(bridge &&
 				user &&

@@ -14,11 +14,11 @@ export interface PianolaOwnerIdentity {
 /** Interpret settings without rewriting legacy bindings or inferring consent. */
 export function readPianolaOwnerIdentity(raw: unknown): PianolaOwnerIdentity {
 	const restricted: PianolaOwnerIdentity = { state: 'restricted', desktopIsOwner: false };
-	if (raw === undefined) return { state: 'available', desktopIsOwner: false };
+	if (raw === undefined) return { state: 'available', desktopIsOwner: true };
 	if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return restricted;
 	const identity = raw as Record<string, unknown>;
 	const keys = Object.keys(identity);
-	if (keys.length === 0) return { state: 'available', desktopIsOwner: false };
+	if (keys.length === 0) return { state: 'available', desktopIsOwner: true };
 	const allowed = ['desktopIsOwner', 'ownerWebUserId', 'desktopOwnerIsChris', 'chrisWebUserId'];
 	if (keys.some((key) => !allowed.includes(key))) return restricted;
 	const has = (key: string) => Object.prototype.hasOwnProperty.call(identity, key);
