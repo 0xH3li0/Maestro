@@ -304,6 +304,52 @@ describe('Relay archive and restoration', () => {
 			useSessionStore.getState().sessions[0].aiTabs[0].relayConversation?.completedAt
 		).toBeUndefined();
 	});
+	it('keeps continuation and backfill scoped to their tabs across reordered agents', () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(3000);
+		const agents = ['first', 'second', 'unowned'].map((id) =>
+			createMockSession({
+				id,
+				aiTabs: ['continue', 'backfill'].map((name) => ({
+					...tab,
+					id: `${id}-${name}`,
+					hidden: true,
+					logs: [{ id: `${id}-${name}-answer`, source: 'stdout', timestamp: 1000, text: 'done' }],
+					relayConversation: { ...tab.relayConversation!, archivedAt: 1000 },
+				})),
+			})
+		);
+		useSessionStore.setState({ sessions: agents });
+		cleanup = subscribeRelayConversations((id) => id !== 'unowned');
+		useSessionStore.setState({
+			sessions: agents.toReversed().map((agent) => ({
+				...agent,
+				aiTabs: agent.aiTabs.toReversed().map((item) => ({
+					...item,
+					logs: item.id.endsWith('continue')
+						? [
+								...item.logs,
+								{ id: `${item.id}-new`, source: 'user', timestamp: 2000, text: 'continue' },
+							]
+						: [
+								{ id: `${item.id}-old`, source: 'user', timestamp: 500, text: 'earlier' },
+								...item.logs,
+							],
+				})),
+			})),
+		});
+		for (const agent of useSessionStore.getState().sessions) {
+			for (const item of agent.aiTabs) {
+				const continued = agent.id !== 'unowned' && item.id.endsWith('continue');
+				expect(item.hidden).toBe(!continued);
+				expect(item.relayConversation).toMatchObject({
+					completedAt: continued ? undefined : 1000,
+					archivedAt: continued ? undefined : 1000,
+					lastActivityAt: continued ? 3000 : 1000,
+				});
+			}
+		}
+	});
 	it('restarts the archive period after deliberate reveal without losing completion', () => {
 		vi.useFakeTimers();
 		const now = 1000 + 30 * hour;

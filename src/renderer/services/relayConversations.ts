@@ -124,13 +124,16 @@ export function subscribeRelayConversations(
 	owns: (agentId: string) => boolean = () => true
 ): () => void {
 	const unsubscribe = useSessionStore.subscribe((state, previous) => {
+		if (state.sessions === previous.sessions) return;
+		const previousSessions = new Map(previous.sessions.map((session) => [session.id, session]));
 		for (const session of state.sessions) {
 			if (!owns(session.id)) continue;
-			const before = previous.sessions.find((s) => s.id === session.id);
+			const before = previousSessions.get(session.id);
 			if (!before || before.aiTabs === session.aiTabs) continue;
+			const previousTabs = new Map(before.aiTabs.map((tab) => [tab.id, tab]));
 			for (const tab of session.aiTabs) {
 				const relay = tab.relayConversation;
-				const old = before.aiTabs.find((t) => t.id === tab.id);
+				const old = previousTabs.get(tab.id);
 				if (
 					!relay ||
 					!old ||
