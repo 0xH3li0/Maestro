@@ -759,6 +759,7 @@ export class ChildProcessSpawner {
 							managedProcess,
 							{
 								type: 'agent_crashed',
+								source: 'host-supervision',
 								message: supervisionFailure,
 								recoverable: true,
 								agentId: toolType,

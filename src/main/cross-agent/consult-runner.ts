@@ -56,7 +56,7 @@ export function createDesktopConsultRunner(
 				if (sid === sessionId) observer.onSessionId(agentSessionId);
 			};
 			const onError = (sid: string, error: AgentError): void => {
-				if (sid === sessionId) run.error ??= error.message;
+				if (sid === sessionId && error.source === 'host-supervision') run.error ??= error.message;
 			};
 			const onExit = (sid: string, code: number): void => {
 				if (sid !== sessionId) return;
