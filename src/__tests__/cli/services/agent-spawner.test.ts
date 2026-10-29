@@ -205,54 +205,6 @@ describe('agent-spawner', () => {
 		}
 	);
 
-	it('accepts a custom idle profile without a lifetime ceiling', async () => {
-		const pending = spawnAgent('codex', '/project', 'prompt', undefined, {
-			idle: { warnMs: 600_000, idleMs: 1_200_000, toolMs: 3_600_000 },
-		});
-		await new Promise((resolve) => setTimeout(resolve, 0));
-		expect(mockSpawn).toHaveBeenCalledOnce();
-		mockStdout.emit(
-			'data',
-			Buffer.from(
-				'{"type":"item.completed","item":{"type":"agent_message","phase":"final","text":"verified"}}\n'
-			)
-		);
-		mockChild.emit('close', 0);
-		expect(await pending).toMatchObject({ success: true, response: 'verified' });
-	});
-
-	it('keeps standalone Codex defaults alive with progress beyond six hours', async () => {
-		vi.useFakeTimers();
-		try {
-			const pending = spawnAgent('codex', '/project', 'prompt');
-			await vi.advanceTimersByTimeAsync(0);
-			expect(mockSpawn).toHaveBeenCalledOnce();
-			for (let n = 0; n < 74; n++) {
-				mockStdout.emit(
-					'data',
-					Buffer.from(
-						JSON.stringify({
-							type: 'item.completed',
-							item: { type: 'reasoning', text: `work ${n}` },
-						}) + '\n'
-					)
-				);
-				await vi.advanceTimersByTimeAsync(300_000);
-			}
-			expect(mockChild.kill).not.toHaveBeenCalled();
-			mockStdout.emit(
-				'data',
-				Buffer.from(
-					'{"type":"item.completed","item":{"type":"agent_message","phase":"final","text":"verified"}}\n'
-				)
-			);
-			mockChild.emit('close', 0);
-			expect(await pending).toMatchObject({ success: true, response: 'verified' });
-		} finally {
-			vi.useRealTimers();
-		}
-	});
-
 	beforeEach(() => {
 		vi.clearAllMocks();
 		// Reset mock child emitter for each test
@@ -1007,6 +959,54 @@ Some text with [x] in it that's not a checkbox
 
 		beforeEach(() => {
 			mockSpawn.mockReturnValue(mockChild);
+		});
+
+		it('accepts a custom idle profile without a lifetime ceiling', async () => {
+			const pending = spawnAgent('codex', '/project', 'prompt', undefined, {
+				idle: { warnMs: 600_000, idleMs: 1_200_000, toolMs: 3_600_000 },
+			});
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			expect(mockSpawn).toHaveBeenCalledOnce();
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					'{"type":"item.completed","item":{"type":"agent_message","phase":"final","text":"verified"}}\n'
+				)
+			);
+			mockChild.emit('close', 0);
+			expect(await pending).toMatchObject({ success: true, response: 'verified' });
+		});
+
+		it('keeps standalone Codex defaults alive with progress beyond six hours', async () => {
+			vi.useFakeTimers();
+			try {
+				const pending = spawnAgent('codex', '/project', 'prompt');
+				await vi.advanceTimersByTimeAsync(0);
+				expect(mockSpawn).toHaveBeenCalledOnce();
+				for (let n = 0; n < 74; n++) {
+					mockStdout.emit(
+						'data',
+						Buffer.from(
+							JSON.stringify({
+								type: 'item.completed',
+								item: { type: 'reasoning', text: `work ${n}` },
+							}) + '\n'
+						)
+					);
+					await vi.advanceTimersByTimeAsync(300_000);
+				}
+				expect(mockChild.kill).not.toHaveBeenCalled();
+				mockStdout.emit(
+					'data',
+					Buffer.from(
+						'{"type":"item.completed","item":{"type":"agent_message","phase":"final","text":"verified"}}\n'
+					)
+				);
+				mockChild.emit('close', 0);
+				expect(await pending).toMatchObject({ success: true, response: 'verified' });
+			} finally {
+				vi.useRealTimers();
+			}
 		});
 
 		it.each(['claude-code', 'codex'] as const)(

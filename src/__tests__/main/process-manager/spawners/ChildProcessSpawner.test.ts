@@ -23,8 +23,8 @@ let mockChildProcess: any;
 function createMockChildProcess() {
 	return {
 		pid: 12345,
-		stdout: Object.assign(new EventEmitter(), { setEncoding: vi.fn() }),
-		stderr: Object.assign(new EventEmitter(), { setEncoding: vi.fn() }),
+		stdout: Object.assign(new EventEmitter(), { setEncoding: vi.fn(), destroy: vi.fn() }),
+		stderr: Object.assign(new EventEmitter(), { setEncoding: vi.fn(), destroy: vi.fn() }),
 		stdin: { write: vi.fn(), end: vi.fn(), on: vi.fn() },
 		on: vi.fn(),
 		unref: vi.fn(),
