@@ -950,6 +950,130 @@ describe('process IPC handlers', () => {
 			}
 		);
 
+		it.each(['resume', 'process:interrupt', 'process:kill'])(
+			'protects a provider ID restored after an internal writer retry: %s',
+			async (action) => {
+				writerGate.enabled = true;
+				const processId = 'returning-agent-ai-returning-tab';
+				const originalId = 'returning-provider-a';
+				const intermediateId = 'returning-provider-b';
+				const releaseOriginal = await acquireProviderSessionWriter(
+					'codex',
+					'initial-owner',
+					originalId
+				);
+				const releaseIntermediate = await acquireProviderSessionWriter(
+					'codex',
+					'intermediate-owner',
+					intermediateId
+				);
+				let releaseReturning = () => {};
+				let returningWriterHeld = false;
+				const events = new EventEmitter();
+				Object.assign(mockProcessManager, {
+					on: events.on.bind(events),
+					off: events.off.bind(events),
+				});
+				const tab = {
+					id: 'returning-tab',
+					agentSessionId: originalId,
+					relayConversation: { conversationId: 'returning-thread' },
+				};
+				mockSessionsStore.get.mockImplementation((key, fallback) =>
+					key === 'sessions'
+						? [{ id: 'returning-agent', toolType: 'codex', aiTabs: [tab] }]
+						: fallback
+				);
+				mockAgentDetector.getAgent.mockResolvedValue({
+					id: 'codex',
+					path: '/usr/bin/codex',
+					requiresPty: false,
+				});
+				mockProcessManager.spawn.mockReturnValue({ success: true, pid: 123 });
+				let boundary:
+					| { providerId: string; returningWriterHeld: boolean; spawnCalls: number }
+					| undefined;
+				writerGate.afterAcquire = (id) => {
+					if (id !== processId || boundary) return;
+					boundary = {
+						providerId: tab.agentSessionId,
+						returningWriterHeld,
+						spawnCalls: mockProcessManager.spawn.mock.calls.length,
+					};
+					tab.agentSessionId = originalId;
+				};
+				const pending = handlers.get('process:spawn')!(
+					{},
+					{
+						sessionId: processId,
+						agentSessionId: originalId,
+						toolType: 'codex',
+						cwd: '/test',
+						command: 'codex',
+						args: [],
+					}
+				);
+				const outcome = pending.then(
+					(result) => ({ result }),
+					(error: unknown) => ({ error })
+				);
+				try {
+					// Force the real helper to retry A as B before its outer promise fulfills.
+					tab.agentSessionId = intermediateId;
+					releaseOriginal();
+					releaseReturning = await acquireProviderSessionWriter(
+						'codex',
+						'returning-owner',
+						originalId
+					);
+					returningWriterHeld = true;
+					expect(boundary).toBeUndefined();
+					releaseIntermediate();
+					await new Promise(setImmediate);
+					expect(boundary).toEqual({
+						providerId: intermediateId,
+						returningWriterHeld: true,
+						spawnCalls: 0,
+					});
+					expect(tab.agentSessionId).toBe(originalId);
+					expect(
+						mockProcessManager.spawn,
+						'A remains held after the fulfilled lease protected B'
+					).not.toHaveBeenCalled();
+					if (action === 'resume') {
+						returningWriterHeld = false;
+						releaseReturning();
+						await expect(outcome).resolves.toEqual({
+							result: expect.objectContaining({ success: true }),
+						});
+						expect(mockProcessManager.spawn).toHaveBeenCalledExactlyOnceWith(
+							expect.objectContaining({ agentSessionId: originalId })
+						);
+					} else {
+						expect(await handlers.get(action)!({}, processId)).toBe(true);
+						await expect(outcome).resolves.toEqual({ error: expect.any(Error) });
+						expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+						returningWriterHeld = false;
+						releaseReturning();
+						// Both the stale B and cancelled A reservations must be reusable.
+						(await acquireProviderSessionWriter('codex', processId, originalId))();
+						(await acquireProviderSessionWriter('codex', 'next-b-owner', intermediateId))();
+					}
+				} finally {
+					writerGate.afterAcquire = undefined;
+					releaseOriginal();
+					releaseIntermediate();
+					releaseReturning();
+					try {
+						await outcome;
+					} finally {
+						events.emit('exit', processId, 0);
+						await new Promise(setImmediate);
+					}
+				}
+			}
+		);
+
 		it('should spawn PTY process with correct args', async () => {
 			const mockAgent = {
 				id: 'claude-code',

@@ -158,12 +158,14 @@ export async function handleProcessSpawn(
 		if (config.toolType !== 'terminal') {
 			let requestedId = config.agentSessionId;
 			for (;;) {
+				// The helper may retry internally; track the identity it actually reserves.
+				let protectedId = requestedId;
 				release = await acquireProviderSessionWriter(
 					config.toolType,
 					config.sessionId,
 					requestedId,
 					controller.signal,
-					resolveCurrentSessionId
+					resolveCurrentSessionId ? () => (protectedId = resolveCurrentSessionId()) : undefined
 				);
 				let currentId: string | undefined;
 				try {
@@ -173,7 +175,10 @@ export async function handleProcessSpawn(
 					release();
 					throw error;
 				}
-				if (currentId === requestedId) break;
+				if (currentId === protectedId) {
+					requestedId = protectedId;
+					break;
+				}
 				// The ID changed after acquisition resolved. Drop all stale keys before
 				// reacquiring in the canonical order; binding alone does not wait.
 				release();
