@@ -22,7 +22,6 @@ import { notifyToast } from '../../../renderer/stores/notificationStore';
 import { jumpToAgentConversation } from '../../../renderer/utils/jumpToAgentConversation';
 import type { PianolaRule } from '../../../shared/pianola/types';
 import { isWebDesktop } from '../../../renderer/utils/runtimeContext';
-import { captureException } from '../../../renderer/utils/sentry';
 
 vi.mock('../../../renderer/utils/sentry', () => ({ captureException: vi.fn() }));
 
@@ -253,7 +252,7 @@ describe('PianolaModal suggestions tab', () => {
 	});
 });
 
-describe('OW desktop learning owner confirmation', () => {
+describe('default desktop learning owner', () => {
 	const pianola = window.maestro.pianola as typeof window.maestro.pianola & {
 		confirmDesktopOwner: () => Promise<void>;
 	};
@@ -282,110 +281,69 @@ describe('OW desktop learning owner confirmation', () => {
 		vi.mocked(isWebDesktop).mockReturnValue(false);
 	});
 
-	it('offers explicit confirmation with no candidates and writes only on the deliberate action', async () => {
-		render(<PianolaModal theme={theme} onClose={vi.fn()} />);
-		fireEvent.click(await screen.findByText('Suggestions'));
-		expect(await screen.findByText(/No current learning suggestions/)).toBeInTheDocument();
-		expect(
-			screen.getByText(
-				/confirm that you are the owner of this desktop\..*future explicit pianola decisions.*learning evidence for this desktop/i
-			)
-		).toBeInTheDocument();
-		expect(confirmOwner).not.toHaveBeenCalled();
-		expect(window.maestro.settings.set).not.toHaveBeenCalled();
-		fireEvent.click(screen.getByRole('button', { name: /confirm.*desktop.*owner/i }));
-		await waitFor(() => expect(confirmOwner).toHaveBeenCalledTimes(1));
-		expect(confirmOwner).toHaveBeenCalledWith();
-		expect(await screen.findByText(/desktop.*owner.*confirmed/i)).toBeInTheDocument();
-		expect(
-			screen.queryByRole('button', { name: /confirm.*desktop.*owner/i })
-		).not.toBeInTheDocument();
-		expect(window.maestro.settings.set).not.toHaveBeenCalled();
-	});
-
-	it('surfaces a setup failure and permits retry without claiming confirmation', async () => {
-		const error = new Error('write failed');
-		confirmOwner.mockRejectedValueOnce(error);
-		render(<PianolaModal theme={theme} onClose={vi.fn()} />);
-		fireEvent.click(await screen.findByText('Suggestions'));
-		fireEvent.click(await screen.findByRole('button', { name: /confirm.*desktop.*owner/i }));
-		await waitFor(() =>
-			expect(notifyToast).toHaveBeenCalledWith(expect.objectContaining({ color: 'red' }))
-		);
-		expect(screen.queryByText(/desktop.*owner.*confirmed/i)).not.toBeInTheDocument();
-		expect(screen.getByRole('button', { name: /confirm.*desktop.*owner/i })).toBeEnabled();
-		expect(window.maestro.settings.set).not.toHaveBeenCalled();
-		expect(captureException).toHaveBeenCalledWith(error, { tags: { feature: 'pianola' } });
-	});
-
-	it.each([
-		[
-			'DesktopOwnerRestricted',
-			'Desktop owner setup is restricted by the existing identity configuration.',
-		],
-		['DesktopOwnerSetupUnavailable', 'Desktop owner setup is unavailable in this desktop.'],
-		['HumanSuggestionReviewRequired', 'Confirm the desktop owner from the native Maestro window.'],
-		['PianolaDisabled', 'Enable Pianola before confirming the desktop owner.'],
-	])('explains the expected %s denial without reporting a crash', async (sentinel, message) => {
-		confirmOwner.mockRejectedValueOnce(
-			new Error(`Error invoking remote method 'pianola:confirm-desktop-owner': Error: ${sentinel}`)
-		);
-		render(<PianolaModal theme={theme} onClose={vi.fn()} />);
-		fireEvent.click(await screen.findByText('Suggestions'));
-		fireEvent.click(await screen.findByRole('button', { name: /confirm.*desktop.*owner/i }));
-		await waitFor(() =>
-			expect(notifyToast).toHaveBeenCalledWith(expect.objectContaining({ color: 'red', message }))
-		);
-		expect(screen.queryByText(/desktop.*owner.*confirmed/i)).not.toBeInTheDocument();
-		expect(captureException).not.toHaveBeenCalled();
-		expect(window.maestro.settings.set).not.toHaveBeenCalled();
-		if (sentinel === 'DesktopOwnerRestricted') {
+	it.each([undefined, {}])(
+		'makes default native learning available without a setup action %#',
+		async (identity) => {
+			vi.mocked(window.maestro.settings.get).mockResolvedValue(identity);
+			render(<PianolaModal theme={theme} onClose={vi.fn()} />);
+			fireEvent.click(await screen.findByText('Suggestions'));
+			expect(
+				await screen.findByText(
+					/Explicit decisions in this desktop can be used as owner learning evidence/
+				)
+			).toBeInTheDocument();
 			expect(
 				screen.queryByRole('button', { name: /confirm.*desktop.*owner/i })
 			).not.toBeInTheDocument();
-			expect(screen.getByText('Desktop owner setup is restricted.')).toBeInTheDocument();
+			expect(confirmOwner).not.toHaveBeenCalled();
+			expect(window.maestro.settings.set).not.toHaveBeenCalled();
 		}
-	});
+	);
 
-	it('keeps suggestion review available after explicit confirmation', async () => {
-		const candidate = synthesizeSuggestions({
-			pairs: [1, 2, 3].map(createMockNativeDecisionPair),
-			existingRules: [],
-			now: 1,
-		}).candidates[0];
-		vi.mocked(window.maestro.pianola.getSuggestions).mockResolvedValue({
-			generatedAt: 1,
-			pairCount: 3,
-			proposals: [candidate.rule],
-			candidates: [candidate],
-			proposedProfile: '',
-			previousProfile: '',
-		});
-		window.maestro.pianola.reviewSuggestion = vi.fn().mockResolvedValue({
-			rules: [],
-			suggestions: {
+	it.each([undefined, {}])(
+		'requires explicit candidate acceptance on first use without setup %#',
+		async (identity) => {
+			vi.mocked(window.maestro.settings.get).mockResolvedValue(identity);
+			const candidate = synthesizeSuggestions({
+				pairs: [1, 2, 3].map(createMockNativeDecisionPair),
+				existingRules: [],
+				now: 1,
+			}).candidates[0];
+			vi.mocked(window.maestro.pianola.getSuggestions).mockResolvedValue({
 				generatedAt: 1,
 				pairCount: 3,
-				proposals: [],
-				candidates: [],
+				proposals: [candidate.rule],
+				candidates: [candidate],
 				proposedProfile: '',
 				previousProfile: '',
-			},
-		});
-		render(<PianolaModal theme={theme} onClose={vi.fn()} />);
-		fireEvent.click(await screen.findByText('Suggestions (1)'));
-		fireEvent.click(await screen.findByRole('button', { name: /confirm.*desktop.*owner/i }));
-		await screen.findByText(/desktop.*owner.*confirmed/i);
-		fireEvent.click(screen.getByRole('button', { name: 'Accept' }));
-		await waitFor(() =>
-			expect(window.maestro.pianola.reviewSuggestion).toHaveBeenCalledWith({
-				operation: 'accept',
-				candidateId: candidate.id,
-				evidenceFingerprint: candidate.evidenceFingerprint,
-			})
-		);
-		expect(confirmOwner).toHaveBeenCalledTimes(1);
-	});
+			});
+			window.maestro.pianola.reviewSuggestion = vi.fn().mockResolvedValue({
+				rules: [],
+				suggestions: {
+					generatedAt: 1,
+					pairCount: 3,
+					proposals: [],
+					candidates: [],
+					proposedProfile: '',
+					previousProfile: '',
+				},
+			});
+			render(<PianolaModal theme={theme} onClose={vi.fn()} />);
+			fireEvent.click(await screen.findByText('Suggestions (1)'));
+			await screen.findByText(/Explicit decisions in this desktop/);
+			expect(window.maestro.pianola.reviewSuggestion).not.toHaveBeenCalled();
+			expect(window.maestro.settings.set).not.toHaveBeenCalled();
+			fireEvent.click(screen.getByRole('button', { name: 'Accept' }));
+			await waitFor(() =>
+				expect(window.maestro.pianola.reviewSuggestion).toHaveBeenCalledWith({
+					operation: 'accept',
+					candidateId: candidate.id,
+					evidenceFingerprint: candidate.evidenceFingerprint,
+				})
+			);
+			expect(confirmOwner).not.toHaveBeenCalled();
+		}
+	);
 
 	it.each([
 		['confirmed', { desktopOwnerIsChris: true }],

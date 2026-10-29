@@ -6,6 +6,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { runAsActingUser } from '../../../main/web-server/auth/acting-user';
 import { readPianolaOwnerIdentity } from '../../../shared/pianola/owner-identity';
 import type { PianolaRule } from '../../../shared/pianola/types';
 import type { PianolaSuggestionsFile } from '../../../shared/pianola/storage';
@@ -290,18 +291,15 @@ describe('OW owner review', () => {
 		'destroyed contents',
 		'feature window',
 		'webview',
-	])('denies setup and review from %s', async (variant) => {
+	])('denies default native setup, review and attribution from %s', async (variant) => {
 		const window =
 			variant === 'destroyed window'
 				? { ...native.window, isDestroyed: () => true }
 				: native.window;
-		const { payload, set } = fixture(
-			{ desktopOwnerIsChris: true },
-			{
-				windows: variant === 'unregistered' || variant === 'feature window' ? [] : [window],
-				noRegistry: variant === 'missing registry',
-			}
-		);
+		const { payload, set, resolve } = fixture(undefined, {
+			windows: variant === 'unregistered' || variant === 'feature window' ? [] : [window],
+			noRegistry: variant === 'missing registry',
+		});
 		const destroyed = vi
 			.spyOn(native.sender, 'isDestroyed')
 			.mockReturnValue(variant === 'destroyed contents');
@@ -315,6 +313,12 @@ describe('OW owner review', () => {
 			await expect(handlers.get('pianola:review-suggestion')!(event, payload)).rejects.toThrow(
 				'HumanSuggestionReviewRequired'
 			);
+			await handlers.get('pianola:resolve-decision')!(event, {
+				decisionId: 'd',
+				answer: 'Yes',
+				principal: 'owner',
+			});
+			expect(resolve).toHaveBeenCalledWith(expect.anything(), 'desktop', undefined);
 			expect(set).not.toHaveBeenCalled();
 			expect(store.writeRules).not.toHaveBeenCalled();
 			expect(store.writeSuggestions).not.toHaveBeenCalled();
@@ -323,20 +327,19 @@ describe('OW owner review', () => {
 			type.mockRestore();
 		}
 	});
-	it('fails closed when the feature is disabled or the setup write fails', async () => {
-		const disabled = fixture(undefined, { disabled: true });
-		const setup = handlers.get('pianola:confirm-desktop-owner');
-		expect(setup).toBeDefined();
-		await expect(setup!(event)).rejects.toThrow('PianolaDisabled');
-		expect(disabled.set).not.toHaveBeenCalled();
-		const failing = fixture(undefined);
-		failing.set.mockImplementation(() => {
-			throw new Error('write failed');
-		});
-		await expect(handlers.get('pianola:confirm-desktop-owner')!(event)).rejects.toThrow(
-			'write failed'
-		);
-		expect(failing.settings.pianolaLearningIdentity).toBeUndefined();
+	it('fails closed when the feature is disabled even with default identity', async () => {
+		const { payload, set, resolve } = fixture(undefined, { disabled: true });
+		for (const [channel, input] of [
+			['confirm-desktop-owner', undefined],
+			['review-suggestion', payload],
+			['resolve-decision', { decisionId: 'd', answer: 'Yes' }],
+		] as const) {
+			await expect(handlers.get(`pianola:${channel}`)!(event, input)).rejects.toThrow(
+				'PianolaDisabled'
+			);
+		}
+		expect(set).not.toHaveBeenCalled();
+		expect(resolve).not.toHaveBeenCalled();
 		expect(store.writeRules).not.toHaveBeenCalled();
 		expect(store.writeSuggestions).not.toHaveBeenCalled();
 	});
@@ -367,40 +370,27 @@ describe('OW owner review', () => {
 			expect(store.writeSuggestions).not.toHaveBeenCalled();
 		}
 	);
-	it.each(['accept', 'reject', 'edit'])(
-		'denies unconfigured native %s without writes',
-		async (operation) => {
-			const { payload, set } = fixture(undefined);
-			await expect(
-				handlers.get('pianola:review-suggestion')!(event, { ...payload, operation })
-			).rejects.toThrow('HumanSuggestionReviewRequired');
-			expect(set).not.toHaveBeenCalled();
-			expect(store.writeRules).not.toHaveBeenCalled();
-			expect(store.writeSuggestions).not.toHaveBeenCalled();
-		}
-	);
 	it.each([undefined, {}])(
-		'keeps an absent or empty identity unconfirmed until a native click %#',
+		'attributes default native decisions without persisting identity %#',
 		async (identity) => {
 			const { settings, set, resolve } = fixture(identity);
 			await handlers.get('pianola:resolve-decision')!(event, { decisionId: 'd', answer: 'Yes' });
-			expect(resolve).toHaveBeenCalledWith(expect.anything(), 'desktop', undefined);
-			expect(set).not.toHaveBeenCalled();
+			expect(resolve).toHaveBeenCalledWith(expect.anything(), 'desktop', 'owner');
 			await handlers.get('pianola:confirm-desktop-owner')!(event);
-			expect(set).toHaveBeenCalledOnce();
-			expect(settings.pianolaLearningIdentity).toEqual({ desktopIsOwner: true });
+			expect(settings.pianolaLearningIdentity).toEqual(identity);
+			expect(set).not.toHaveBeenCalled();
 		}
 	);
-
-	it.each(['accept', 'reject', 'edit'])(
-		'permits native %s after explicit setup',
-		async (operation) => {
-			const { payload, settings, set, candidate } = fixture(undefined);
-			const setup = handlers.get('pianola:confirm-desktop-owner');
-			expect(setup).toBeDefined();
-			await setup!(event);
-			expect(settings.pianolaLearningIdentity).toEqual({ desktopIsOwner: true });
-			expect(set).toHaveBeenCalledTimes(1);
+	it.each(
+		[undefined, {}].flatMap((identity) =>
+			['accept', 'reject', 'edit'].map((operation) => ({ identity, operation }))
+		)
+	)(
+		'requires an explicit default native $operation without setup ($identity)',
+		async ({ identity, operation }) => {
+			const { payload, settings, set, candidate } = fixture(identity);
+			// Reading a staged candidate is not consent and must not activate it.
+			await handlers.get('pianola:get-suggestions')!(event);
 			expect(store.writeRules).not.toHaveBeenCalled();
 			expect(store.writeSuggestions).not.toHaveBeenCalled();
 			await expect(
@@ -412,8 +402,23 @@ describe('OW owner review', () => {
 						: {}),
 				})
 			).resolves.toHaveProperty('suggestions');
+			expect(store.writeSuggestions).toHaveBeenCalledWith(
+				expect.objectContaining({
+					[operation === 'reject' ? 'rejections' : 'approvals']: [
+						expect.objectContaining({
+							principal: 'owner',
+							actorId: 'desktop',
+							sourceKind: 'native-human-review',
+						}),
+					],
+				})
+			);
+			expect(store.writeRules).toHaveBeenCalledTimes(operation === 'reject' ? 0 : 1);
+			expect(settings.pianolaLearningIdentity).toEqual(identity);
+			expect(set).not.toHaveBeenCalled();
 		}
 	);
+
 	it.each([
 		['legacy', { desktopOwnerIsChris: true }, true],
 		['neutral', { desktopIsOwner: true }, true],
@@ -433,6 +438,13 @@ describe('OW owner review', () => {
 		['malformed legacy', { desktopOwnerIsChris: 'yes', desktopIsOwner: true }, false],
 		['neutral false', { desktopIsOwner: false }, false],
 		['neutral web only', { ownerWebUserId: 'owner' }, false],
+		['legacy false', { desktopOwnerIsChris: false }, false],
+		['legacy web only', { chrisWebUserId: 'owner' }, false],
+		['null', null, false],
+		['array', [], false],
+		['string', 'owner', false],
+		['wrong boolean type', { desktopIsOwner: 'true' }, false],
+		['empty web ID', { desktopIsOwner: true, ownerWebUserId: '' }, false],
 	])(
 		'uses the same %s identity for native resolution and review',
 		async (_label, identity, allowed) => {
@@ -533,18 +545,40 @@ describe('OW owner review', () => {
 		expect(store.writeSuggestions).not.toHaveBeenCalled();
 	});
 	it.each([
+		{},
+		{ type: 'cli', principal: 'owner', actor: { kind: 'human' } },
+		{ type: 'agent', principal: 'owner', actorId: 'desktop' },
 		{ sender: { id: 100 }, senderFrame: native.sender.mainFrame },
 		{ sender: native.sender },
 		{ sender: native.sender, senderFrame: {} },
 		{ type: 'bridge', sender: native.sender, senderFrame: native.sender.mainFrame },
 	])('rejects untrusted transport during setup and review %#', async (untrusted) => {
-		const { payload, set } = fixture({ desktopOwnerIsChris: true });
+		const { payload, set, resolve } = fixture(undefined);
 		const setup = handlers.get('pianola:confirm-desktop-owner');
 		expect(setup).toBeDefined();
 		await expect(setup!(untrusted)).rejects.toThrow();
 		await expect(handlers.get('pianola:review-suggestion')!(untrusted, payload)).rejects.toThrow(
 			'HumanSuggestionReviewRequired'
 		);
+		await handlers.get('pianola:resolve-decision')!(untrusted, {
+			decisionId: 'd',
+			answer: 'Yes',
+			principal: 'owner',
+		});
+		expect(resolve).toHaveBeenCalledWith(expect.anything(), expect.any(String), undefined);
+		expect(set).not.toHaveBeenCalled();
+		expect(store.writeRules).not.toHaveBeenCalled();
+		expect(store.writeSuggestions).not.toHaveBeenCalled();
+	});
+	it('does not treat an authenticated remote context with copied native event fields as native', async () => {
+		const { payload, resolve, set } = fixture(undefined);
+		await runAsActingUser({ id: 'remote', username: 'owner', displayName: 'Owner' }, async () => {
+			await expect(handlers.get('pianola:review-suggestion')!(event, payload)).rejects.toThrow(
+				'HumanSuggestionReviewRequired'
+			);
+			await handlers.get('pianola:resolve-decision')!(event, { decisionId: 'd', answer: 'Yes' });
+		});
+		expect(resolve).toHaveBeenCalledWith(expect.anything(), 'remote', undefined);
 		expect(set).not.toHaveBeenCalled();
 		expect(store.writeRules).not.toHaveBeenCalled();
 		expect(store.writeSuggestions).not.toHaveBeenCalled();
@@ -580,6 +614,55 @@ describe('OW owner review', () => {
 		expect(store.writeSuggestions).not.toHaveBeenCalled();
 	});
 
+	it.each(
+		[undefined, {}].flatMap((identity) =>
+			['web', 'anonymous', 'CLI', 'CLI claiming owner'].map((kind) => ({ identity, kind }))
+		)
+	)(
+		'never grants default owner provenance to actual $kind bridge decisions ($identity)',
+		async ({ identity, kind }) => {
+			const { resolve, set } = fixture(identity);
+			setBridgeGuardContextProvider(() => ({
+				userDataDir: null,
+				encoreFeatures: { pianola: true },
+				platform: 'linux',
+			}));
+			const replies: object[] = [];
+			const user =
+				kind === 'web' || kind === 'CLI claiming owner'
+					? { id: 'fixture-owner', username: 'owner', displayName: 'Owner' }
+					: undefined;
+			await handleBridgeInvoke(
+				{ id: 'fixture-bridge', user, cli: kind.startsWith('CLI') },
+				{
+					type: 'bridge.invoke',
+					channel: 'pianola:resolve-decision',
+					requestId: 1,
+					args: [
+						{
+							decisionId: 'd',
+							answer: 'Yes',
+							principal: 'owner',
+							actorId: 'desktop',
+							actor: { kind: 'human' },
+						},
+					],
+				},
+				(_client, reply) => replies.push(reply)
+			);
+			if (kind.startsWith('CLI')) {
+				expect(replies).toEqual([expect.objectContaining({ ok: false })]);
+				expect(resolve).not.toHaveBeenCalled();
+			} else {
+				expect(replies).toEqual([expect.objectContaining({ ok: true })]);
+				expect(resolve).toHaveBeenCalledWith(expect.anything(), user?.id ?? 'web-owner', undefined);
+			}
+			expect(set).not.toHaveBeenCalled();
+			expect(store.writeRules).not.toHaveBeenCalled();
+			expect(store.writeSuggestions).not.toHaveBeenCalled();
+		}
+	);
+
 	it('does not permit a bridge to invoke native owner setup', async () => {
 		fixture({ chrisWebUserId: 'fixture-owner' });
 		setBridgeGuardContextProvider(() => ({
@@ -612,18 +695,22 @@ describe('OW owner review', () => {
 		expect(store.writeSuggestions).not.toHaveBeenCalled();
 	});
 	it.each(
-		['legacy', 'neutral', 'equal dual'].flatMap((schema) =>
+		['absent', 'empty', 'legacy', 'neutral', 'equal dual'].flatMap((schema) =>
 			['owner', 'nonowner', 'unattributed', 'CLI', 'CLI claiming owner'].flatMap((kind) =>
 				['accept', 'edit', 'reject'].map((operation) => [schema, kind, operation])
 			)
 		)
 	)('actual bridge %s %s %s', async (schema, kind, operation) => {
 		const identity =
-			schema === 'legacy'
-				? { chrisWebUserId: 'fixture-owner' }
-				: schema === 'neutral'
-					? { ownerWebUserId: 'fixture-owner' }
-					: { chrisWebUserId: 'fixture-owner', ownerWebUserId: 'fixture-owner' };
+			schema === 'absent'
+				? undefined
+				: schema === 'empty'
+					? {}
+					: schema === 'legacy'
+						? { chrisWebUserId: 'fixture-owner' }
+						: schema === 'neutral'
+							? { ownerWebUserId: 'fixture-owner' }
+							: { chrisWebUserId: 'fixture-owner', ownerWebUserId: 'fixture-owner' };
 		const { payload, candidate } = fixture(identity);
 		setBridgeGuardContextProvider(() => ({
 			userDataDir: null,
@@ -655,7 +742,7 @@ describe('OW owner review', () => {
 			},
 			(_client, reply) => replies.push(reply)
 		);
-		const allowed = kind === 'owner';
+		const allowed = kind === 'owner' && schema !== 'absent' && schema !== 'empty';
 		expect(replies).toEqual([expect.objectContaining({ ok: allowed })]);
 		if (allowed)
 			expect(store.writeSuggestions).toHaveBeenCalledWith(

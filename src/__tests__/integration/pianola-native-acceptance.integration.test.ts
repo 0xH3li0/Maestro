@@ -863,6 +863,7 @@ describe('Pianola native candidate acceptance (isolated production composition)'
 		expect(mainStore.readSuggestions().pairCount).toBe(0);
 	});
 	it('escalates high-risk full-turn intent to Chris without a rule answer or Mira send', async () => {
+		delete boundary.settings.pianolaLearningIdentity;
 		await fixture.rule({
 			scope: 'global',
 			scopeId: undefined,
@@ -977,10 +978,10 @@ describe('Pianola native candidate acceptance (isolated production composition)'
 		});
 	});
 
-	it('excludes unbound desktop answers and does not count replayed settlements twice', async () => {
+	it('excludes explicitly denied desktop answers and does not count replayed settlements twice', async () => {
 		await fixture.select();
 		await fixture.pump('baseline');
-		delete boundary.settings.pianolaLearningIdentity;
+		boundary.settings.pianolaLearningIdentity = { desktopIsOwner: false };
 		const anonymous = fixture.log(TAB, ASK);
 		await fixture.pump('unbound answer');
 		await fixture.ipc('resolve-decision', {
@@ -1079,6 +1080,7 @@ describe('Pianola native candidate acceptance (isolated production composition)'
 	it.each(['paused', 'busy', 'removed', 'changed-ask'] as const)(
 		'revalidates %s at native admission after worker preparation',
 		async (change) => {
+			delete boundary.settings.pianolaLearningIdentity;
 			await fixture.rule();
 			await fixture.select();
 			await fixture.pump('baseline');
@@ -1329,6 +1331,7 @@ describe('R03 explicit desktop resolution admission', () => {
 	);
 
 	it('RF01 admits at most one concurrent human resolution after a selection edit', async () => {
+		delete boundary.settings.pianolaLearningIdentity;
 		await fixture.select();
 		await fixture.pump('baseline');
 		const ask = fixture.log(TAB, 'Should I deploy to production?');
@@ -1359,6 +1362,7 @@ describe('R03 explicit desktop resolution admission', () => {
 	});
 
 	it('RF01 keeps an uncertain human send blocked after a selection edit', async () => {
+		delete boundary.settings.pianolaLearningIdentity;
 		await fixture.select();
 		await fixture.pump('baseline');
 		const ask = fixture.log(TAB, 'Should I deploy to production?');
@@ -1501,6 +1505,7 @@ describe('R03 explicit desktop resolution admission', () => {
 	);
 
 	it('binds explicit human provenance at native IPC and prevents a duplicate desktop send', async () => {
+		delete boundary.settings.pianolaLearningIdentity;
 		await fixture.select();
 		await fixture.pump('baseline');
 		const ask = fixture.log(TAB, 'Should I deploy to production?');
@@ -1524,78 +1529,71 @@ describe('R03 explicit desktop resolution admission', () => {
 	});
 });
 
-describe('OW owner setup through native lifecycle', () => {
-	it('sets up an unconfigured desktop before learning and preserves review provenance after restart', async () => {
-		delete boundary.settings.pianolaLearningIdentity;
-		await fixture.select();
-		await fixture.pump('unconfigured baseline');
-		const anonymous = fixture.log(TAB, ASK);
-		await fixture.pump('unconfigured human decision');
-		await fixture.ipc('resolve-decision', {
-			decisionId: fixture.decision(anonymous.id).id,
-			answer: ANSWER,
-		});
-		await fixture.continueRecipient(anonymous.id);
-		const auditOnly = structuredClone(fixture.decision(anonymous.id));
-		expect(auditOnly.humanEvidence).toBeUndefined();
-		expect(mainStore.readSuggestions().pairCount).toBe(0);
-		await fixture.ipc('confirm-desktop-owner');
-		expect(boundary.settings.pianolaLearningIdentity).toEqual({ desktopIsOwner: true });
-		expect(mainStore.readRules()).toEqual([]);
-		expect(fixture.decision(anonymous.id)).toEqual(auditOnly);
-		expect(mainStore.readSuggestions().pairCount).toBe(0);
-		for (let index = 0; index < 3; index++) {
-			const ask = fixture.log(TAB, ASK);
-			await fixture.pump(`post-confirmation human sample ${index + 1}`);
-			await fixture.ipc('resolve-decision', {
-				decisionId: fixture.decision(ask.id).id,
-				answer: ANSWER,
+describe('default owner through native lifecycle', () => {
+	it.each([undefined, {}])(
+		'learns only explicit native decisions and requires candidate acceptance without setup %#',
+		async (identity) => {
+			if (identity === undefined) delete boundary.settings.pianolaLearningIdentity;
+			else boundary.settings.pianolaLearningIdentity = identity;
+			await fixture.select();
+			await fixture.pump('default owner baseline');
+			for (let index = 0; index < 3; index++) {
+				const ask = fixture.log(TAB, ASK);
+				await fixture.pump(`default native human sample ${index + 1}`);
+				expect(fixture.decision(ask.id).humanEvidence).toBeUndefined();
+				await fixture.ipc('resolve-decision', {
+					decisionId: fixture.decision(ask.id).id,
+					answer: ANSWER,
+				});
+				await fixture.continueRecipient(ask.id);
+				expect(fixture.decision(ask.id).humanEvidence).toMatchObject({
+					principal: 'owner',
+					actorId: 'desktop',
+					agentId: AGENT,
+					groupId: GROUP,
+					tabId: TAB,
+					questionMessageId: ask.id,
+					question: ASK,
+					answer: ANSWER,
+				});
+			}
+			const candidate = mainStore.readSuggestions().candidates![0];
+			expect(candidate).toMatchObject({
+				sampleCount: 3,
+				conditions: [ASK],
+				rule: {
+					enabled: false,
+					scope: 'agent',
+					scopeId: AGENT,
+					match: { exactQuestion: ASK, groupId: GROUP },
+				},
 			});
-			await fixture.continueRecipient(ask.id);
-			expect(fixture.decision(ask.id).humanEvidence).toMatchObject({
-				principal: 'owner',
-				actorId: 'desktop',
-				agentId: AGENT,
-				groupId: GROUP,
-				tabId: TAB,
-				questionMessageId: ask.id,
-				question: ASK,
-				answer: ANSWER,
+			expect(mainStore.readRules()).toEqual([]);
+			expect(mainStore.readSuggestions().approvals ?? []).toEqual([]);
+			fixture.restart();
+			expect(mainStore.readRules()).toEqual([]);
+			expect(mainStore.readSuggestions().candidates).toContainEqual(candidate);
+			expect(boundary.settings.pianolaLearningIdentity).toEqual(identity);
+			await fixture.ipc('review-suggestion', {
+				operation: 'accept',
+				candidateId: candidate.id,
+				evidenceFingerprint: candidate.evidenceFingerprint,
 			});
+			fixture.restart();
+			expect(mainStore.readRules()).toEqual([
+				expect.objectContaining({ id: candidate.id, enabled: true }),
+			]);
+			expect(mainStore.readSuggestions().approvals).toEqual([
+				expect.objectContaining({
+					candidate,
+					principal: 'owner',
+					actorId: 'desktop',
+					sourceKind: 'native-human-review',
+				}),
+			]);
+			expect(boundary.settings.pianolaLearningIdentity).toEqual(identity);
 		}
-		const candidate = mainStore.readSuggestions().candidates![0];
-		expect(candidate).toMatchObject({
-			sampleCount: 3,
-			conditions: [ASK],
-			rule: {
-				enabled: false,
-				scope: 'agent',
-				scopeId: AGENT,
-				match: { exactQuestion: ASK, groupId: GROUP },
-			},
-		});
-		expect(candidate.evidence.map((evidence) => evidence.questionMessageId)).not.toContain(
-			anonymous.id
-		);
-		await fixture.ipc('review-suggestion', {
-			operation: 'accept',
-			candidateId: candidate.id,
-			evidenceFingerprint: candidate.evidenceFingerprint,
-		});
-		fixture.restart();
-		expect(fixture.decision(anonymous.id)).toEqual(auditOnly);
-		expect(mainStore.readRules()).toEqual([
-			expect.objectContaining({ id: candidate.id, enabled: true }),
-		]);
-		expect(mainStore.readSuggestions().approvals).toEqual([
-			expect.objectContaining({
-				candidate,
-				principal: 'owner',
-				actorId: 'desktop',
-				sourceKind: 'native-human-review',
-			}),
-		]);
-	});
+	);
 });
 
 describe('R08 durable learning through native review and filesystem APIs', () => {
@@ -1738,7 +1736,7 @@ describe('R08 durable learning through native review and filesystem APIs', () =>
 	});
 
 	it.each([
-		'unbound owner',
+		'denied owner',
 		'CLI bridge',
 		'broadened edit',
 		'stale fingerprint',
@@ -1749,7 +1747,8 @@ describe('R08 durable learning through native review and filesystem APIs', () =>
 		await fixture.learnCandidate();
 		const candidate = mainStore.readSuggestions().candidates![0];
 		fixture.lifecycle.relearnScheduler.stop();
-		if (variant === 'unbound owner') boundary.settings.pianolaLearningIdentity = {};
+		if (variant === 'denied owner')
+			boundary.settings.pianolaLearningIdentity = { desktopIsOwner: false };
 		if (['corrected source', 'changed risk', 'changed conditions'].includes(variant)) {
 			const original = mainStore.readDecisions().find((record) => record.humanEvidence)!;
 			const corrected = structuredClone(original);
@@ -1784,7 +1783,7 @@ describe('R08 durable learning through native review and filesystem APIs', () =>
 				payload
 			)
 		).rejects.toThrow(
-			variant === 'CLI bridge' || variant === 'unbound owner'
+			variant === 'CLI bridge' || variant === 'denied owner'
 				? 'HumanSuggestionReviewRequired'
 				: variant === 'broadened edit'
 					? 'BroadenedSuggestionEdit'
