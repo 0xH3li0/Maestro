@@ -61,7 +61,7 @@ const METHODS: Record<string, string> = {
 	parquet: 'close export open query',
 	permission: 'respond',
 	pianola:
-		'apply-suggestion get-decisions get-rules get-suggestions save-rules supervisor-add supervisor-list supervisor-remove supervisor-set-enabled',
+		'apply-suggestion get-decisions get-rules get-suggestions resolve-decision review-suggestion save-rules supervisor-add supervisor-list supervisor-remove supervisor-set-enabled',
 	playbooks: 'create delete deleteAll export import list update',
 	plugins: 'contributions get-activity get-grants get-groupings invoke-command invoke-tool list',
 	process:
@@ -166,7 +166,7 @@ export function isRemoteSettingReadable(key: unknown): key is string {
 export function isRemoteSettingWritable(key: unknown): key is string {
 	return (
 		isRemoteSettingReadable(key) &&
-		!/^(?:webAuth|webInterface|persistentWebLink|encoreFeatures|dataviewJs|installationId|globalShowHotkey|customSyncPath|iCloudSyncEnabled|sshRemotes|leaderboardRegistration)/.test(
+		!/^(?:pianolaLearningIdentity|webAuth|webInterface|persistentWebLink|encoreFeatures|dataviewJs|installationId|globalShowHotkey|customSyncPath|iCloudSyncEnabled|sshRemotes|leaderboardRegistration)/.test(
 			key
 		)
 	);

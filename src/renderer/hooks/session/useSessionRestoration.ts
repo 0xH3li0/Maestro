@@ -41,6 +41,7 @@ import { migrateLegacySnoozedTabs } from '../../utils/snoozeHelpers';
 import { isMediaStreamUrl } from '../../../shared/mediaTypes';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 import { logger } from '../../utils/logger';
+import { captureException } from '../../utils/sentry';
 import {
 	readPersistedActiveSessionId,
 	restoreClientSessionView,
@@ -51,6 +52,7 @@ import type { SessionRuntimeSnapshot } from '../../../shared/sessionTranscript';
 import { useEventListener } from '../utils/useEventListener';
 import {
 	SESSION_PERSISTENCE_BASELINE_EVENT,
+	rebasePendingSessionChanges,
 	type SessionPersistenceBaseline,
 } from '../utils/useDebouncedPersistence';
 import {
@@ -61,6 +63,12 @@ import { mergeSessionPersistenceChanges } from '../../../shared/sessionPersisten
 import { requestWebBridgeReconcile } from '../../services/webBridgeReconcile';
 import { releaseConnectionHeldQueueItems } from '../../utils/executionQueue';
 import { isWebDesktop } from '../../utils/runtimeContext';
+import {
+	BridgeTransportError,
+	isExpectedBridgeError,
+	isBridgeTransportReady,
+	WEB_BRIDGE_STATE_EVENT,
+} from '../../../shared/bridgeError';
 import { interruptConsultHolds } from '../../services/crossAgentConsultHold';
 import { applyAutoRunMirrorSnapshot } from '../batch/useAutoRunStateMirror';
 import { startReopenedTabContentLoader } from '../../services/reopenedTabContent';
@@ -219,6 +227,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 	const retrySessionLoad = useRef<() => void>(() => {});
 	const deferredLoadsInFlight = useRef(new Map<string, Promise<boolean>>());
 	const deferredLoadGeneration = useRef(0);
+	const authoritativeRecoverySignal = useRef<AbortSignal | null>(null);
 	const deferredLoadsFailed = useRef(new Set<string>());
 
 	useEffect(
@@ -251,6 +260,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 					);
 				}
 			} catch (err) {
+				if (isExpectedBridgeError(err)) return;
 				// IPC failures are treated as transient (e.g. main process still
 				// starting). We don't mark the session as 'error' here because the
 				// agent may become available shortly after splash completes.
@@ -346,10 +356,28 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				}
 			}
 		} catch (error) {
-			logger.warn('Failed to refresh owning host runtime after reconnect', 'Sessions', error);
+			if (!isExpectedBridgeError(error)) {
+				logger.warn('Failed to refresh owning host runtime after reconnect', 'Sessions', error);
+				captureException(error, { tags: { operation: 'refreshWebRuntime' } });
+			}
 		}
 	}, []);
-	const loadActiveDeferredContent = useCallback(async (): Promise<boolean> => {
+	const refreshGroupChats = useCallback(async (signal?: AbortSignal) => {
+		if (!isWebDesktop() || !isBridgeTransportReady()) return;
+		const generation = deferredLoadGeneration.current;
+		try {
+			const chats = await window.maestro.groupChat.list();
+			if (!signal?.aborted && generation === deferredLoadGeneration.current) setGroupChats(chats);
+		} catch (error) {
+			if (!signal?.aborted && !isExpectedBridgeError(error)) {
+				logger.warn('Failed to refresh group chats after reconnect', 'Sessions', error);
+				captureException(error, { tags: { operation: 'refreshGroupChats' } });
+			}
+		}
+	}, []);
+	const loadActiveDeferredContent = useCallback(async (recovering = false): Promise<boolean> => {
+		if (!recovering && (authoritativeRecoverySignal.current || !isBridgeTransportReady()))
+			return false;
 		if (!isWebDesktop() || !useSessionStore.getState().sessionsReadOk) return true;
 		if (typeof window.maestro.sessions.getDeferredContent !== 'function') return true;
 		const { sessions, activeSessionId } = useSessionStore.getState();
@@ -397,13 +425,16 @@ export function useSessionRestoration(): SessionRestorationReturn {
 					let tabIds = pending.tabIds;
 					let aiTabs = current.aiTabs;
 					if (tabId && pending.tabIds.includes(tabId) && content.logs) {
+						const logs = content.logs;
 						const tab = current.aiTabs.find((item) => item.id === tabId);
 						if (tab) {
 							aiTabs = current.aiTabs.map((item) =>
 								item.id === tabId
 									? {
 											...item,
-											logs: mergeDeferredItems(content.logs, item.logs, (log) => log.id),
+											logs: recovering
+												? logs
+												: mergeDeferredItems(logs, item.logs, (log) => log.id),
 										}
 									: item
 							);
@@ -421,11 +452,9 @@ export function useSessionRestoration(): SessionRestorationReturn {
 						aiTabs,
 						...(commandsLoaded
 							? {
-									shellLogs: mergeDeferredItems(
-										content.shellLogs,
-										current.shellLogs,
-										(log) => log.id
-									),
+									shellLogs: recovering
+										? content.shellLogs
+										: mergeDeferredItems(content.shellLogs, current.shellLogs, (log) => log.id),
 									agentCommands: mergeDeferredItems(
 										content.agentCommands,
 										current.agentCommands,
@@ -470,23 +499,32 @@ export function useSessionRestoration(): SessionRestorationReturn {
 			.catch((error) => {
 				if (generation !== deferredLoadGeneration.current) return false;
 				deferredLoadsFailed.current.add(key);
-				logger.warn(`Failed to load conversation for agent ${session.id}:`, undefined, error);
+				if (!isExpectedBridgeError(error))
+					logger.warn(`Failed to load conversation for agent ${session.id}:`, undefined, error);
 				return false;
 			})
 			.then(async (loaded) => {
 				if (deferredLoadsInFlight.current.get(key) === work)
 					deferredLoadsInFlight.current.delete(key);
 				if (generation !== deferredLoadGeneration.current) return false;
-				const remainingLoaded = await loadActiveDeferredContent();
+				const remainingLoaded = await loadActiveDeferredContent(recovering);
 				return loaded && remainingLoaded;
 			});
 		deferredLoadsInFlight.current.set(key, work);
 		return work;
 	}, []);
 
+	useEventListener(WEB_BRIDGE_STATE_EVENT, () => {
+		if (!isBridgeTransportReady()) return;
+		// A selection made during the final recovery reads was fenced by the
+		// authoritative signal. Ref cleanup alone does not notify the store.
+		void loadActiveDeferredContent();
+		void refreshGroupChats();
+	});
+
 	useEffect(() => {
 		if (!isWebDesktop()) return;
-		const unsubscribe = useSessionStore.subscribe(loadActiveDeferredContent);
+		const unsubscribe = useSessionStore.subscribe(() => void loadActiveDeferredContent());
 		loadActiveDeferredContent();
 		return unsubscribe;
 	}, [loadActiveDeferredContent]);
@@ -530,6 +568,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 					)
 				);
 			} catch (error) {
+				if (isExpectedBridgeError(error)) return;
 				logger.warn(
 					`[fetchGitInfoInBackground] Failed to fetch git info for session ${sessionId}:`,
 					undefined,
@@ -995,117 +1034,155 @@ export function useSessionRestoration(): SessionRestorationReturn {
 			void (async () => {
 				await reattachLiveAiTurns();
 				await refreshWebRuntime();
-			})();
+			})().catch((error) => {
+				if (!isExpectedBridgeError(error)) {
+					logger.warn('Failed to reconcile host runtime', 'Sessions', error);
+					captureException(error, { tags: { operation: 'reconcileHostRuntime' } });
+				}
+			});
 			return;
 		}
 		detail.waitUntil(
 			(async () => {
 				const { signal } = detail;
-				useSessionStore.setState((state) => ({
-					sessionReconciliationGeneration: state.sessionReconciliationGeneration + 1,
-				}));
-				const [savedSessions, groups, groupChats, autoRuns] = await Promise.all([
-					window.maestro.sessions.getBootstrap(),
-					window.maestro.groups.getAll(),
-					window.maestro.groupChat.list(),
-					window.maestro.web.getAutoRunStates(),
-					loadAllSettings(),
-				]);
-				signal.throwIfAborted();
-				if (savedSessions.some((session) => session.deferredContent?.ownerUnavailable))
-					throw new Error('Host owner snapshot unavailable; current workflow retained');
-				const knownIds = new Set(useSessionStore.getState().sessions.map((session) => session.id));
-				const additions = new Map(
-					(
-						await Promise.all(
-							savedSessions.filter((session) => !knownIds.has(session.id)).map(restoreSession)
-						)
-					).map((session) => [session.id, session])
-				);
-				signal.throwIfAborted();
-				deferredLoadGeneration.current++;
-				deferredLoadsInFlight.current.clear();
-				deferredLoadsFailed.current.clear();
-				useSessionStore.setState((state) => {
-					const existing = new Map(state.sessions.map((session) => [session.id, session]));
-					const sessions = savedSessions.flatMap((host: Session) => {
-						const current = existing.get(host.id) ?? additions.get(host.id);
-						if (!current) return [];
-						const merged = mergeSessionPersistenceChanges(host, current, current, true, false);
-						const tabs = new Map(current.aiTabs.map((tab) => [tab.id, tab]));
-						const hostTabs = new Map(host.aiTabs.map((tab) => [tab.id, tab]));
-						const recoveredTabs = [
-							...merged.aiTabs,
-							...current.aiTabs.filter((tab) => tab.wizardState?.isActive && !hostTabs.has(tab.id)),
-						];
-						const updated = {
-							...merged,
-							// These are live client workflows, not persisted host metadata.
-							wizardState: current.wizardState,
-							filePreviewTabs: current.filePreviewTabs,
-							filePreviewHistory: current.filePreviewHistory,
-							filePreviewHistoryIndex: current.filePreviewHistoryIndex,
-							fileTree: current.fileTree,
-							fileExplorerExpanded: current.fileExplorerExpanded,
-							fileExplorerScrollPos: current.fileExplorerScrollPos,
-							tabGroups: current.tabGroups,
-							unifiedTabOrder: current.unifiedTabOrder,
-							unifiedClosedTabHistory: current.unifiedClosedTabHistory,
-							closedTabHistory: current.closedTabHistory,
-							autoRunSelectedFile: current.autoRunSelectedFile,
-							autoRunContent: current.autoRunContent,
-							autoRunContentVersion: current.autoRunContentVersion,
-							autoRunMode: current.autoRunMode,
-							autoRunEditScrollPos: current.autoRunEditScrollPos,
-							autoRunPreviewScrollPos: current.autoRunPreviewScrollPos,
-							autoRunCursorPosition: current.autoRunCursorPosition,
-							// The snapshot replaces old rows; the bridge queues newer host deltas.
-							shellLogs: host.shellLogs,
-							agentCommands: host.agentCommands,
-							aiCommandHistory: host.aiCommandHistory,
-							aiTabs: recoveredTabs.map((tab) => {
-								const previous = tabs.get(tab.id);
-								return previous
-									? {
-											...tab,
-											logs: hostTabs.get(tab.id)?.logs ?? previous.logs,
-											wizardState: previous.wizardState,
-											scrollTop: previous.scrollTop,
-										}
-									: { ...tab, inputValue: '', stagedImages: [] };
-							}),
-							deferredContent: host.deferredContent,
+				authoritativeRecoverySignal.current = signal;
+				const invalidateDeferredReads = () => {
+					if (authoritativeRecoverySignal.current !== signal) return;
+					deferredLoadGeneration.current++;
+					deferredLoadsInFlight.current.clear();
+					deferredLoadsFailed.current.clear();
+				};
+				invalidateDeferredReads();
+				signal.addEventListener('abort', invalidateDeferredReads, { once: true });
+				try {
+					signal.throwIfAborted();
+					useSessionStore.setState((state) => ({
+						sessionReconciliationGeneration: state.sessionReconciliationGeneration + 1,
+					}));
+					const [savedSessions, groups, autoRuns] = await Promise.all([
+						window.maestro.sessions.getBootstrap(),
+						window.maestro.groups.getAll(),
+						window.maestro.web.getAutoRunStates(),
+						loadAllSettings(),
+					]);
+					signal.throwIfAborted();
+					if (savedSessions.some((session) => session.deferredContent?.ownerUnavailable))
+						throw new BridgeTransportError(
+							'Host owner snapshot unavailable; current workflow retained',
+							'BRIDGE_RECOVERY_PENDING',
+							'read-only',
+							'sessions:getBootstrap'
+						);
+					let recoverySessions = rebasePendingSessionChanges(savedSessions);
+					const knownIds = new Set(
+						useSessionStore.getState().sessions.map((session) => session.id)
+					);
+					const additions = new Map(
+						(
+							await Promise.all(
+								recoverySessions.filter((session) => !knownIds.has(session.id)).map(restoreSession)
+							)
+						).map((session) => [session.id, session])
+					);
+					signal.throwIfAborted();
+					// Restoring new host agents yields; retain edits made during that wait.
+					recoverySessions = rebasePendingSessionChanges(savedSessions);
+					deferredLoadGeneration.current++;
+					deferredLoadsInFlight.current.clear();
+					deferredLoadsFailed.current.clear();
+					useSessionStore.setState((state) => {
+						const existing = new Map(state.sessions.map((session) => [session.id, session]));
+						const sessions = recoverySessions.flatMap((host: Session) => {
+							const current = existing.get(host.id) ?? additions.get(host.id);
+							if (!current) return [];
+							const merged = mergeSessionPersistenceChanges(host, current, current, true, false);
+							const tabs = new Map(current.aiTabs.map((tab) => [tab.id, tab]));
+							const hostTabs = new Map(host.aiTabs.map((tab) => [tab.id, tab]));
+							const recoveredTabs = [
+								...merged.aiTabs,
+								...current.aiTabs.filter(
+									(tab) => tab.wizardState?.isActive && !hostTabs.has(tab.id)
+								),
+							];
+							const updated = {
+								...merged,
+								// These are live client workflows, not persisted host metadata.
+								wizardState: current.wizardState,
+								filePreviewTabs: current.filePreviewTabs,
+								filePreviewHistory: current.filePreviewHistory,
+								filePreviewHistoryIndex: current.filePreviewHistoryIndex,
+								fileTree: current.fileTree,
+								fileExplorerExpanded: current.fileExplorerExpanded,
+								fileExplorerScrollPos: current.fileExplorerScrollPos,
+								tabGroups: current.tabGroups,
+								unifiedTabOrder: current.unifiedTabOrder,
+								unifiedClosedTabHistory: current.unifiedClosedTabHistory,
+								closedTabHistory: current.closedTabHistory,
+								autoRunSelectedFile: current.autoRunSelectedFile,
+								autoRunContent: current.autoRunContent,
+								autoRunContentVersion: current.autoRunContentVersion,
+								autoRunMode: current.autoRunMode,
+								autoRunEditScrollPos: current.autoRunEditScrollPos,
+								autoRunPreviewScrollPos: current.autoRunPreviewScrollPos,
+								autoRunCursorPosition: current.autoRunCursorPosition,
+								// The snapshot replaces old rows; the bridge queues newer host deltas.
+								shellLogs: host.deferredContent?.commands ? current.shellLogs : host.shellLogs,
+								agentCommands: host.agentCommands,
+								aiCommandHistory: host.aiCommandHistory,
+								aiTabs: recoveredTabs.map((tab) => {
+									const previous = tabs.get(tab.id);
+									return previous
+										? {
+												...tab,
+												logs: host.deferredContent?.tabIds.includes(tab.id)
+													? previous.logs
+													: (hostTabs.get(tab.id)?.logs ?? previous.logs),
+												wizardState: previous.wizardState,
+												scrollTop: previous.scrollTop,
+											}
+										: { ...tab, inputValue: '', stagedImages: [] };
+								}),
+								deferredContent: host.deferredContent,
+							};
+							if (!updated.aiTabs.some((tab) => tab.id === updated.activeTabId))
+								updated.activeTabId = updated.aiTabs[0]?.id ?? '';
+							updated.unifiedTabOrder = getRepairedUnifiedTabOrder(updated);
+							return [normalizeTabGroups(updated)];
+						});
+						return {
+							sessions,
+							groups,
+							groupPersistenceBaseline: groups,
+							groupsLoaded: true,
+							sessionsReadOk: true,
+							activeSessionId: sessions.some((session) => session.id === state.activeSessionId)
+								? state.activeSessionId
+								: (sessions[0]?.id ?? ''),
 						};
-						if (!updated.aiTabs.some((tab) => tab.id === updated.activeTabId))
-							updated.activeTabId = updated.aiTabs[0]?.id ?? '';
-						updated.unifiedTabOrder = getRepairedUnifiedTabOrder(updated);
-						return [normalizeTabGroups(updated)];
 					});
-					return {
-						sessions,
-						groups,
-						groupPersistenceBaseline: groups,
-						groupsLoaded: true,
-						sessionsReadOk: true,
-						activeSessionId: sessions.some((session) => session.id === state.activeSessionId)
-							? state.activeSessionId
-							: (sessions[0]?.id ?? ''),
-					};
-				});
-				setGroupChats(groupChats);
-				applyAutoRunMirrorSnapshot(autoRuns);
-				if (!(await loadActiveDeferredContent()))
-					throw new Error('Visible host conversation recovery failed');
-				signal.throwIfAborted();
-				await reattachLiveAiTurns(signal);
-				await refreshWebRuntime();
-				signal.throwIfAborted();
-				// A lost save is resolved by this snapshot, never by re-sending the old diff.
-				window.dispatchEvent(
-					new CustomEvent<SessionPersistenceBaseline>(SESSION_PERSISTENCE_BASELINE_EVENT, {
-						detail: { sessions: savedSessions, recovered: true },
-					})
-				);
+					// Record applied host metadata before deferred reads can fail. Otherwise a
+					// retry mistakes it for an unsent local edit. Transport readiness still
+					// fences writes until conversations and runtime finish recovering.
+					window.dispatchEvent(
+						new CustomEvent<SessionPersistenceBaseline>(SESSION_PERSISTENCE_BASELINE_EVENT, {
+							detail: { sessions: savedSessions, recovered: true },
+						})
+					);
+					// Group-chat inventory is independent of session authority. In the
+					// browser it refreshes on connected, outside the recovery read budget.
+					void refreshGroupChats(signal);
+					applyAutoRunMirrorSnapshot(autoRuns);
+					if (!(await loadActiveDeferredContent(true)))
+						throw new Error('Visible host conversation recovery failed');
+					signal.throwIfAborted();
+					await reattachLiveAiTurns(signal);
+					await refreshWebRuntime();
+					signal.throwIfAborted();
+				} finally {
+					signal.removeEventListener('abort', invalidateDeferredReads);
+					if (authoritativeRecoverySignal.current === signal)
+						authoritativeRecoverySignal.current = null;
+				}
 			})()
 		);
 	});

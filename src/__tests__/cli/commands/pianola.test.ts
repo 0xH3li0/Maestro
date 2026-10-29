@@ -31,7 +31,12 @@ vi.mock('../../../cli/services/maestro-client', () => ({
 }));
 vi.mock('../../../cli/commands/dispatch', () => ({ runDispatch: runDispatchMock }));
 
-import { pianolaRules, pianolaLog, pianolaWatch } from '../../../cli/commands/pianola';
+import {
+	pianolaRules,
+	pianolaLog,
+	pianolaWatch,
+	readPianolaScopeSnapshot,
+} from '../../../cli/commands/pianola';
 import {
 	PIANOLA_WATCH_RETIRED_EXIT_CODE,
 	WATCH_TAB_GONE_GRACE_MS,
@@ -232,5 +237,33 @@ describe('pianola watch', () => {
 		connectMock.mockRejectedValue(new Error('no server'));
 		await expect(pianolaWatch('tab-1', { once: true })).rejects.toThrow('__exit__');
 		expect(exitSpy).toHaveBeenCalledWith(1);
+	});
+});
+
+describe('Pianola native scope discovery', () => {
+	it('reads the native versioned census through the existing CLI transport', async () => {
+		sendCommandMock.mockResolvedValue({
+			success: true,
+			supervisionVersion: 1,
+			complete: true,
+			capturedAt: 100,
+			owners: [
+				{ id: 'tabless', cwd: '/project', parentSessionId: null, isPianola: false, remote: false },
+			],
+			sessions: [],
+		});
+		const snapshot = await readPianolaScopeSnapshot({ sendCommand: sendCommandMock });
+		expect(snapshot).toMatchObject({ capturedAt: 100, owners: [{ id: 'tabless' }], tabs: [] });
+		expect(sendCommandMock).toHaveBeenCalledWith(
+			{ type: 'list_desktop_sessions' },
+			'desktop_sessions_list'
+		);
+	});
+
+	it('rejects a successful old host response instead of treating it as an empty scope', async () => {
+		sendCommandMock.mockResolvedValue({ success: true, sessions: [] });
+		await expect(readPianolaScopeSnapshot({ sendCommand: sendCommandMock })).rejects.toThrow(
+			'census'
+		);
 	});
 });

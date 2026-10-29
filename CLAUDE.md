@@ -105,6 +105,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Reading what a TUI painted from a raw capture:** `replayTerminalScreen(raw)`, `capturedAlternateScreen(raw)` in `src/maestro-p/screen-replay.ts`
 - **Loading a LOCAL file tree:** `walkLocalFileTree()` in `src/main/utils/file-tree-walk.ts`, wrapped by `loadFileTree()` in `src/renderer/utils/fileExplorer.ts`
 - **Telling the Files panel a file appeared or vanished:** `requestFileTreeRefresh(sessionId)` in `src/renderer/utils/fileTreeRefresh.ts` (renderer) and `nudgeFileTreeForPaths(paths)` in `src/cli/services/file-tree-refresh.ts` (CLI)
+- **Whether an absolute path exists, from render code:** `checkPathExists()` in `src/renderer/utils/fileLinks/pathExistence.ts`, `usePathExistence(sshRemoteId?)` in `src/renderer/hooks/utils/usePathExistence.ts` (async-filled cache; `remarkFileLinks` links a spaced absolute path only once it exists)
 - **Delete the file the user is previewing:** `requestFileDeletion()` in `src/renderer/services/fileDeletion.ts`
 
 #### Main process: stores, persistence, platform
@@ -205,6 +206,8 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 
 #### Agents (renderer state and navigation)
 
+- **Bridge transport errors and readiness:** `BridgeTransportError`, `isBridgeTransportError()`, `isExpectedBridgeError()`, `isBridgeTransportReady()`, `WEB_BRIDGE_STATE_EVENT` in `src/shared/bridgeError.ts`
+- **Rebasing unsaved session changes during recovery:** `rebasePendingSessionChanges()`, `SESSION_PERSISTENCE_BASELINE_EVENT`, `SessionPersistenceBaseline` in `src/renderer/hooks/utils/useDebouncedPersistence.ts`
 - **The record a new agent starts as:** `buildNewAgentRecord(input)`, `newAgentClaudeInteractive(toolType)` in `src/shared/newAgentRecord.ts`
 - **What a duplicated agent inherits:** `buildDuplicateAgentInput(source, overrides?)`, `defaultDuplicateAgentName()`, `duplicateAgentBlocker()` in `src/shared/newAgentRecord.ts`
 - **Session lookup:** `selectActiveSession()`, `selectSessionById()` in `src/renderer/stores/sessionStore.ts`; `useActiveSession()` hook in `src/renderer/hooks/session/useActiveSession.ts`
@@ -308,6 +311,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Whether a data dir can run Cue unattended:** `checkCueReadiness()`, `formatCueReadiness()` in `src/main/cue/cue-readiness.ts` (behind `cue engine check`, `--require-ready`, and `/readyz`)
 - **Redacting credentials from text that leaves the machine:** `redactCredentialTokens()`, `containsCredentialToken()` in `src/shared/agent-run/redact.ts`
 - **Auto model choice:** `isAutoModel()`, `AUTO_MODEL`, `AUTO_MODEL_LABEL` in `src/shared/autoModel.ts`
+- **Settling a Pianola decision:** `resolvePianolaDecision()` in `src/main/pianola/pianola-decisions.ts`; lifecycle transitions in `src/shared/pianola/pianola-decision-lifecycle.ts`
 - **Model tier / effort level (`'low' | 'medium' | 'high'`):** `resolveTierModel()`, `resolveEffortLevel()`, `cheapTurnSettings()`, `cheapResumeTurnSettings()` in `src/shared/modelTiers.ts`; `findActiveModelHint()` in `src/shared/autorunModelHints.ts`; `resolveTurnSettings()` in `src/shared/autorunTurnSettings.ts`
 - **A provider refusing an effort level:** `parseEffortRejection()`, `noteEffortRejection()` in `src/shared/effortRejection.ts`; `rejectedEffortForLevel()` in `src/shared/modelTiers.ts`; `armEffortFallback()` in `src/renderer/services/effortRejection.ts`
 - **A synopsis turn (the cheap summary resumed on a finished session):** the model rule is `cheapResumeTurnSettings()` in `src/shared/modelTiers.ts`; the CLI turn is `requestCliSynopsis()` in `src/cli/services/synopsis.ts`

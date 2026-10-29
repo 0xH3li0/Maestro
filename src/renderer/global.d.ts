@@ -4920,7 +4920,14 @@ interface MaestroAPI {
 		getRules: () => Promise<RulesLoadResult>;
 		saveRules: (rules: PianolaRule[]) => Promise<PianolaRule[]>;
 		getDecisions: (limit?: number) => Promise<PianolaDecisionRecord[]>;
+		resolveDecision: (
+			resolution: import('../shared/pianola/pianola-decision-lifecycle').PianolaDecisionResolution
+		) => Promise<import('../shared/pianola/pianola-scope-cycle').PianolaScopeDeliveryResult>;
 		getSuggestions: () => Promise<PianolaSuggestionsFile>;
+		confirmDesktopOwner: () => Promise<void>;
+		reviewSuggestion: (
+			review: import('../shared/pianola/storage').PianolaSuggestionReview
+		) => Promise<{ rules: PianolaRule[]; suggestions: PianolaSuggestionsFile }>;
 		applySuggestion: (payload: {
 			rule?: PianolaRule;
 			profile?: { text: string; projectPath?: string };
