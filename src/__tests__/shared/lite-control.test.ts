@@ -4,7 +4,6 @@
  * the same directory through `resolveUserDataDir()`, the one shared resolver.
  * Linux defaults to lowercase, while an existing capitalized directory that
  * holds desktop state remains discoverable through the canonical resolver.
- * Explicit data directory overrides remain authoritative.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
