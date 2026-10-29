@@ -13,6 +13,8 @@ import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { notifyToast } from '../../stores/notificationStore';
 import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
+import { isWebDesktop } from '../../utils/runtimeContext';
+import { ipcErrorMessage } from '../../utils/ipcErrorMessage';
 import { RuleEditor } from './RuleEditor';
 import { DecisionsView } from './DecisionsView';
 import { RulesView } from './RulesView';
@@ -60,15 +62,40 @@ export function PianolaModal({ theme, onClose }: PianolaModalProps) {
 	// a corrupt hand-edited file is not silently overwritten with an empty list.
 	const [rulesMalformed, setRulesMalformed] = useState(false);
 	const [suggestions, setSuggestions] = useState<PianolaSuggestionsFile | null>(null);
+	const [ownerState, setOwnerState] = useState<
+		'loading' | 'available' | 'confirmed' | 'restricted'
+	>('loading');
+	const [confirmingOwner, setConfirmingOwner] = useState(false);
 
 	const load = useCallback(async () => {
 		setLoading(true);
 		try {
-			const [rulesResult, loadedDecisions, loadedSuggestions] = await Promise.all([
+			const [rulesResult, loadedDecisions, loadedSuggestions, identity] = await Promise.all([
 				window.maestro.pianola.getRules(),
 				window.maestro.pianola.getDecisions(500),
 				window.maestro.pianola.getSuggestions(),
+				isWebDesktop()
+					? Promise.resolve(null)
+					: window.maestro.settings.get('pianolaLearningIdentity'),
 			]);
+			if (!isWebDesktop()) {
+				if (
+					identity === undefined ||
+					(identity !== null &&
+						typeof identity === 'object' &&
+						!Array.isArray(identity) &&
+						Object.keys(identity).length === 0)
+				)
+					setOwnerState('available');
+				else if (
+					identity !== null &&
+					typeof identity === 'object' &&
+					'desktopOwnerIsChris' in identity &&
+					identity.desktopOwnerIsChris === true
+				)
+					setOwnerState('confirmed');
+				else setOwnerState('restricted');
+			}
 			setRules(rulesResult.rules);
 			setRulesMalformed(rulesResult.malformed);
 			setDecisions(loadedDecisions);
@@ -82,6 +109,7 @@ export function PianolaModal({ theme, onClose }: PianolaModalProps) {
 				});
 			}
 		} catch (error) {
+			setOwnerState('loading');
 			logger.error('[Pianola] Failed to load', undefined, error);
 			if (!isExpectedError(error)) void captureException(error, { tags: { feature: 'pianola' } });
 			notifyToast({
@@ -174,6 +202,37 @@ export function PianolaModal({ theme, onClose }: PianolaModalProps) {
 		},
 		[load]
 	);
+
+	const confirmDesktopOwner = async () => {
+		setConfirmingOwner(true);
+		try {
+			await window.maestro.pianola.confirmDesktopOwner();
+			setOwnerState('confirmed');
+		} catch (error) {
+			logger.error('[Pianola] Failed to confirm desktop owner', undefined, error);
+			let message = 'Could not confirm desktop owner. Try again.';
+			switch (ipcErrorMessage(error)) {
+				case 'DesktopOwnerRestricted':
+					setOwnerState('restricted');
+					message = 'Desktop owner setup is restricted by the existing identity configuration.';
+					break;
+				case 'DesktopOwnerSetupUnavailable':
+					message = 'Desktop owner setup is unavailable in this desktop.';
+					break;
+				case 'HumanSuggestionReviewRequired':
+					message = 'Confirm the desktop owner from the native Maestro window.';
+					break;
+				case 'PianolaDisabled':
+					message = 'Enable Pianola before confirming the desktop owner.';
+					break;
+				default:
+					void captureException(error, { tags: { feature: 'pianola' } });
+			}
+			notifyToast({ color: 'red', title: 'Pianola', message });
+		} finally {
+			setConfirmingOwner(false);
+		}
+	};
 
 	const handleApplyProfile = useCallback(async (text: string) => {
 		try {
@@ -318,15 +377,36 @@ export function PianolaModal({ theme, onClose }: PianolaModalProps) {
 						/>
 					)}
 					{tab === 'suggestions' && (
-						<SuggestionsView
-							theme={theme}
-							suggestions={suggestions}
-							loading={loading}
-							rules={rules}
-							onReview={handleReviewSuggestion}
-							onClose={onClose}
-							onApplyProfile={handleApplyProfile}
-						/>
+						<>
+							{!isWebDesktop() && ownerState !== 'loading' && (
+								<div className="px-5 py-3 text-sm" style={{ color: theme.colors.textMain }}>
+									{ownerState === 'confirmed' ? (
+										'Desktop owner confirmed.'
+									) : ownerState === 'restricted' ? (
+										'Desktop owner setup is restricted.'
+									) : (
+										<>
+											<p>
+												Confirm that this desktop is Chris. Future explicit Pianola decisions may be
+												used as Chris's learning evidence.
+											</p>
+											<button disabled={confirmingOwner} onClick={() => void confirmDesktopOwner()}>
+												Confirm desktop owner
+											</button>
+										</>
+									)}
+								</div>
+							)}
+							<SuggestionsView
+								theme={theme}
+								suggestions={suggestions}
+								loading={loading}
+								rules={rules}
+								onReview={handleReviewSuggestion}
+								onClose={onClose}
+								onApplyProfile={handleApplyProfile}
+							/>
+						</>
 					)}
 				</div>
 

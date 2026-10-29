@@ -232,6 +232,13 @@ class AcceptanceFixture {
 	receipt: 'accepted' | 'unknown' | 'rejected' = 'accepted';
 	beforeAdmission?: () => void;
 	sequence = 0;
+	readonly nativeSender = {
+		id: 1,
+		mainFrame: {},
+		isDestroyed: () => false,
+		getType: () => 'window',
+	};
+	readonly nativeWindow = { webContents: this.nativeSender, isDestroyed: () => false };
 	settingsStore = {
 		get: <T = unknown>(key: string, fallback?: T): T => (boundary.settings[key] ?? fallback) as T,
 		set: (key: string, value: unknown) => {
@@ -334,6 +341,7 @@ class AcceptanceFixture {
 		registerPianolaHandlers({
 			settingsStore: this.settingsStore,
 			supervisor: this.lifecycle.supervisor,
+			getAppWindows: () => [this.nativeWindow],
 			// Transport adapter mirrors WebServer's single forwarding method. Real
 			// IPC binds the human actor; real resolution performs all admission.
 			getWebServer: () =>
@@ -341,7 +349,7 @@ class AcceptanceFixture {
 					resolvePianolaHumanDecision: (payload: unknown, actorId: string, principal?: 'chris') =>
 						resolvePianolaDecision(this.callbacks, payload, { kind: 'human', actorId, principal }),
 				}) as WebServer,
-		});
+		} as unknown as Parameters<typeof registerPianolaHandlers>[0]);
 		this.lifecycle.supervisor.start();
 		this.lifecycle.relearnScheduler.start();
 	}
@@ -425,7 +433,10 @@ class AcceptanceFixture {
 	async ipc<T = unknown>(name: string, ...args: unknown[]): Promise<T> {
 		const handler = boundary.handlers.get(`pianola:${name}`);
 		expect(handler, `production IPC ${name} must exist`).toBeDefined();
-		return (await handler!({ sender: { id: 1 } }, ...args)) as T;
+		return (await handler!(
+			{ sender: this.nativeSender, senderFrame: this.nativeSender.mainFrame },
+			...args
+		)) as T;
 	}
 	agent(id = AGENT, groupId: string | undefined = GROUP, parentSessionId?: string) {
 		const session = createMockSession({
@@ -1513,6 +1524,80 @@ describe('R03 explicit desktop resolution admission', () => {
 	});
 });
 
+describe('OW owner setup through native lifecycle', () => {
+	it('sets up an unconfigured desktop before learning and preserves review provenance after restart', async () => {
+		delete boundary.settings.pianolaLearningIdentity;
+		await fixture.select();
+		await fixture.pump('unconfigured baseline');
+		const anonymous = fixture.log(TAB, ASK);
+		await fixture.pump('unconfigured human decision');
+		await fixture.ipc('resolve-decision', {
+			decisionId: fixture.decision(anonymous.id).id,
+			answer: ANSWER,
+		});
+		await fixture.continueRecipient(anonymous.id);
+		const auditOnly = structuredClone(fixture.decision(anonymous.id));
+		expect(auditOnly.humanEvidence).toBeUndefined();
+		expect(mainStore.readSuggestions().pairCount).toBe(0);
+		await fixture.ipc('confirm-desktop-owner');
+		expect(boundary.settings.pianolaLearningIdentity).toEqual({ desktopOwnerIsChris: true });
+		expect(mainStore.readRules()).toEqual([]);
+		expect(fixture.decision(anonymous.id)).toEqual(auditOnly);
+		expect(mainStore.readSuggestions().pairCount).toBe(0);
+		for (let index = 0; index < 3; index++) {
+			const ask = fixture.log(TAB, ASK);
+			await fixture.pump(`post-confirmation human sample ${index + 1}`);
+			await fixture.ipc('resolve-decision', {
+				decisionId: fixture.decision(ask.id).id,
+				answer: ANSWER,
+			});
+			await fixture.continueRecipient(ask.id);
+			expect(fixture.decision(ask.id).humanEvidence).toMatchObject({
+				principal: 'chris',
+				actorId: 'desktop',
+				agentId: AGENT,
+				groupId: GROUP,
+				tabId: TAB,
+				questionMessageId: ask.id,
+				question: ASK,
+				answer: ANSWER,
+			});
+		}
+		const candidate = mainStore.readSuggestions().candidates![0];
+		expect(candidate).toMatchObject({
+			sampleCount: 3,
+			conditions: [ASK],
+			rule: {
+				enabled: false,
+				scope: 'agent',
+				scopeId: AGENT,
+				match: { exactQuestion: ASK, groupId: GROUP },
+			},
+		});
+		expect(candidate.evidence.map((evidence) => evidence.questionMessageId)).not.toContain(
+			anonymous.id
+		);
+		await fixture.ipc('review-suggestion', {
+			operation: 'accept',
+			candidateId: candidate.id,
+			evidenceFingerprint: candidate.evidenceFingerprint,
+		});
+		fixture.restart();
+		expect(fixture.decision(anonymous.id)).toEqual(auditOnly);
+		expect(mainStore.readRules()).toEqual([
+			expect.objectContaining({ id: candidate.id, enabled: true }),
+		]);
+		expect(mainStore.readSuggestions().approvals).toEqual([
+			expect.objectContaining({
+				candidate,
+				principal: 'chris',
+				actorId: 'desktop',
+				sourceKind: 'native-human-review',
+			}),
+		]);
+	});
+});
+
 describe('R08 durable learning through native review and filesystem APIs', () => {
 	it('records consent before activation but never activates a failed rule write on restart', async () => {
 		await fixture.learnCandidate();
@@ -1689,7 +1774,15 @@ describe('R08 durable learning through native review and filesystem APIs', () =>
 		};
 		const handler = boundary.handlers.get('pianola:review-suggestion')!;
 		await expect(
-			handler(variant === 'CLI bridge' ? { type: 'bridge' } : { sender: { id: 1 } }, payload)
+			handler(
+				variant === 'CLI bridge'
+					? { type: 'bridge' }
+					: {
+							sender: fixture.nativeSender,
+							senderFrame: fixture.nativeSender.mainFrame,
+						},
+				payload
+			)
 		).rejects.toThrow(
 			variant === 'CLI bridge' || variant === 'unbound owner'
 				? 'HumanSuggestionReviewRequired'

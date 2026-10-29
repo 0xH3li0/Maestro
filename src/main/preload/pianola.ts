@@ -51,6 +51,8 @@ export function createPianolaApi() {
 		getSuggestions: (): Promise<PianolaSuggestionsFile> =>
 			ipcRenderer.invoke('pianola:get-suggestions'),
 
+		confirmDesktopOwner: (): Promise<void> => ipcRenderer.invoke('pianola:confirm-desktop-owner'),
+
 		/** Explicit owner accept/edit/reject with optimistic source-evidence validation. */
 		reviewSuggestion: (
 			review: PianolaSuggestionReview

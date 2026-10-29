@@ -14,7 +14,7 @@
  * IPC failure.
  */
 
-import { ipcMain } from 'electron';
+import { ipcMain, type BrowserWindow } from 'electron';
 import { withIpcErrorLogging, type CreateHandlerOptions } from '../../utils/ipcHandler';
 import {
 	readRulesResult,
@@ -85,7 +85,9 @@ const handlerOpts = (operation: string): Pick<CreateHandlerOptions, 'context' | 
 export interface PianolaHandlerDependencies {
 	settingsStore: {
 		get: (key: string) => unknown;
+		set?: (key: string, value: unknown) => void;
 	};
+	getAppWindows?: () => BrowserWindow[];
 	/** The desktop supervised daemon; supervisor channels drive its reconcile. */
 	supervisor: PianolaSupervisor;
 	getWebServer?: () => WebServer | null;
@@ -105,6 +107,17 @@ function isPianolaEnabled(settingsStore: { get: (key: string) => unknown }): boo
  */
 export function registerPianolaHandlers(deps: PianolaHandlerDependencies): void {
 	const { settingsStore, supervisor } = deps;
+	const isNativeOwnerTransport = (event: unknown): boolean => {
+		if (!isRecord(event) || event.type === 'bridge' || getActingUser()) return false;
+		return (deps.getAppWindows?.() ?? []).some((win) => {
+			if (win.isDestroyed() || win.webContents.isDestroyed()) return false;
+			return (
+				win.webContents.getType() === 'window' &&
+				event.sender === win.webContents &&
+				event.senderFrame === win.webContents.mainFrame
+			);
+		});
+	};
 
 	/** Current persisted targets + live health, returned by every supervisor channel. */
 	const snapshot = (): PianolaSupervisorSnapshot => {
@@ -308,15 +321,12 @@ export function registerPianolaHandlers(deps: PianolaHandlerDependencies): void 
 		const identity = settingsStore.get('pianolaLearningIdentity');
 		const confirmed =
 			isRecord(identity) &&
-			((user &&
+			((bridge &&
+				user &&
 				typeof identity.chrisWebUserId === 'string' &&
 				!!identity.chrisWebUserId &&
 				user.id === identity.chrisWebUserId) ||
-				(!user &&
-					!bridge &&
-					isRecord(event) &&
-					!!event.sender &&
-					identity.desktopOwnerIsChris === true));
+				(isNativeOwnerTransport(event) && identity.desktopOwnerIsChris === true));
 		if (!confirmed) throw new Error('HumanSuggestionReviewRequired');
 		const actorId = user?.id ?? 'desktop';
 		const now = Date.now();
@@ -513,6 +523,16 @@ export function registerPianolaHandlers(deps: PianolaHandlerDependencies): void 
 		if (!isPianolaEnabled(settingsStore)) throw new Error('PianolaDisabled');
 		return wrappedGetSuggestions(event);
 	});
+	ipcMain.handle('pianola:confirm-desktop-owner', async (event) => {
+		if (!isPianolaEnabled(settingsStore)) throw new Error('PianolaDisabled');
+		if (!isNativeOwnerTransport(event)) throw new Error('HumanSuggestionReviewRequired');
+		const identity = settingsStore.get('pianolaLearningIdentity');
+		if (isRecord(identity) && identity.desktopOwnerIsChris === true) return;
+		if (identity !== undefined && (!isRecord(identity) || Object.keys(identity).length !== 0))
+			throw new Error('DesktopOwnerRestricted');
+		if (!settingsStore.set) throw new Error('DesktopOwnerSetupUnavailable');
+		settingsStore.set('pianolaLearningIdentity', { desktopOwnerIsChris: true });
+	});
 	ipcMain.handle('pianola:review-suggestion', async (event, payload: unknown) => {
 		if (!isPianolaEnabled(settingsStore)) throw new Error('PianolaDisabled');
 		return wrappedReviewSuggestion(event, event, payload);
@@ -532,11 +552,12 @@ export function registerPianolaHandlers(deps: PianolaHandlerDependencies): void 
 		// Anonymous web-owner and unconfigured desktop answers remain audit-only.
 		const confirmed =
 			isRecord(identity) &&
-			((user &&
+			((bridge &&
+				user &&
 				typeof identity.chrisWebUserId === 'string' &&
 				!!identity.chrisWebUserId &&
 				user.id === identity.chrisWebUserId) ||
-				(!user && !bridge && !!_event.sender && identity.desktopOwnerIsChris === true));
+				(isNativeOwnerTransport(_event) && identity.desktopOwnerIsChris === true));
 		return server.resolvePianolaHumanDecision(payload, actorId, confirmed ? 'chris' : undefined);
 	});
 

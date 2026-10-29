@@ -4923,6 +4923,7 @@ interface MaestroAPI {
 			resolution: import('../shared/pianola/pianola-decision-lifecycle').PianolaDecisionResolution
 		) => Promise<import('../shared/pianola/pianola-scope-cycle').PianolaScopeDeliveryResult>;
 		getSuggestions: () => Promise<PianolaSuggestionsFile>;
+		confirmDesktopOwner: () => Promise<void>;
 		reviewSuggestion: (
 			review: import('../shared/pianola/storage').PianolaSuggestionReview
 		) => Promise<{ rules: PianolaRule[]; suggestions: PianolaSuggestionsFile }>;
