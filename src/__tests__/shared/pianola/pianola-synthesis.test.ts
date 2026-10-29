@@ -4,6 +4,15 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
+import { canonicalJson } from '../../../shared/canonicalJson';
+import { createPianolaFsStore } from '../../../shared/pianola/fs-store';
+import {
+	validatePianolaSuggestionsFile,
+	isValidHumanDecisionEvidence,
+} from '../../../shared/pianola/storage';
 import { createMockNativeDecisionPair } from '../../helpers/pianola';
 import {
 	synthesizeSuggestions,
@@ -12,7 +21,10 @@ import {
 } from '../../../shared/pianola/pianola-synthesis';
 import type { DecisionPair, ReplyPolarity } from '../../../shared/pianola/transcript-mining';
 import type { PianolaSuggestionsFile } from '../../../shared/pianola/storage';
-import { validatePianolaRule } from '../../../shared/pianola/storage';
+import {
+	validatePianolaRule,
+	pianolaCandidateEvidenceFingerprint,
+} from '../../../shared/pianola/storage';
 import type { PianolaRisk, PianolaSignalKind, PianolaRule } from '../../../shared/pianola/types';
 
 function pair(
@@ -312,9 +324,233 @@ describe('R08 independent human evidence and durable conflict projection', () =>
 				reason: variant.startsWith('source') ? 'source_corrected' : 'contradictory_decision',
 			});
 			expect(result.conflicts![0].evidence).toEqual([snapshots.at(-1)!.evidence]);
-			expect(result.conflicts![0].nextAction).toContain('Chris');
+			expect(result.conflicts![0].nextAction).toContain('Owner');
 		}
 		expect(live).toEqual(before);
 		expect(result.approvals).toEqual(file.approvals);
 	});
+});
+
+describe('owner compatibility provenance', () => {
+	it('preserves the legacy fingerprint when only generated description changes', () => {
+		const pairs = manyPairs('question', 'low', 3, 3);
+		const candidate = synthesizeSuggestions({ pairs, existingRules: [], now: 1 }).candidates[0];
+		const copy = structuredClone(candidate);
+		copy.rule.description = 'Neutral generated description';
+		expect(pianolaCandidateEvidenceFingerprint(copy)).toBe(candidate.evidenceFingerprint);
+		expect(candidate.evidenceFingerprint).toBe(
+			canonicalJson({
+				id: candidate.id,
+				scope: candidate.rule.scope,
+				scopeId: candidate.rule.scopeId,
+				match: candidate.rule.match,
+				action: candidate.action,
+				conditions: candidate.conditions,
+				exclusions: candidate.exclusions,
+				answer: candidate.rule.answer,
+				evidence: candidate.evidence.map((source) => canonicalJson(source)).sort(),
+			})
+		);
+		expect(synthesizeSuggestions({ pairs, existingRules: [], now: 2 }).candidates[0].id).toBe(
+			candidate.id
+		);
+	});
+
+	it.each(['chris', 'owner'])('accepts %s evidence without changing its spelling', (principal) => {
+		const pairs = manyPairs('question', 'low', 3, 3);
+		for (const value of pairs) Object.assign(value.evidence!, { principal });
+		const candidate = synthesizeSuggestions({ pairs, existingRules: [] }).candidates[0];
+		expect(candidate.evidence.map((source) => source.principal)).toEqual([
+			principal,
+			principal,
+			principal,
+		]);
+		expect(candidate.evidenceFingerprint).toBe(pianolaCandidateEvidenceFingerprint(candidate));
+	});
+
+	it('treats a principal change for the same ask as conflicting source evidence', () => {
+		const pairs = manyPairs('question', 'low', 3, 3);
+		const changed = structuredClone(pairs[0]);
+		Object.assign(changed.evidence!, { principal: 'owner' });
+		expect(
+			synthesizeSuggestions({ pairs: [...pairs, changed], existingRules: [] }).candidates
+		).toEqual([]);
+	});
+});
+
+describe('durable legacy review compatibility', () => {
+	it('preserves legacy receipts and rejects attribution replacement at the actual store seam', () => {
+		const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'owner-review-'));
+		try {
+			const store = createPianolaFsStore({
+				resolveDir: () => directory,
+				indent: 2,
+				trailingNewline: true,
+			});
+			const candidate = synthesizeSuggestions({
+				pairs: manyPairs('question', 'low', 3, 3),
+				existingRules: [],
+				now: 1,
+			}).candidates[0];
+			const rejection = {
+				sourceKind: 'native-human-review' as const,
+				principal: 'chris' as const,
+				actorId: 'desktop',
+				candidateId: candidate.id,
+				evidenceFingerprint: candidate.evidenceFingerprint,
+				candidate,
+				rejectedAt: 2,
+			};
+			const file: PianolaSuggestionsFile = {
+				generatedAt: 1,
+				pairCount: 3,
+				proposals: [candidate.rule],
+				candidates: [candidate],
+				proposedProfile: '',
+				previousProfile: '',
+				rejections: [rejection],
+			};
+			store.writeSuggestions(file);
+			const restarted = createPianolaFsStore({
+				resolveDir: () => directory,
+				indent: 2,
+				trailingNewline: true,
+			});
+			expect(restarted.readSuggestions().rejections).toEqual([rejection]);
+			expect(restarted.writeSuggestions({ ...file, rejections: [] }).candidates).toEqual([]);
+			const forged = { ...rejection, actorId: 'another-actor' };
+			try {
+				restarted.writeSuggestions({ ...file, rejections: [forged] });
+			} catch {
+				/* rejection is also fail closed */
+			}
+			expect(restarted.readSuggestions().rejections).toEqual([rejection]);
+		} finally {
+			fs.rmSync(directory, { recursive: true, force: true });
+		}
+	});
+
+	it.each(['chris', 'owner'])('retains %s review and raw source provenance', (principal) => {
+		const candidate = synthesizeSuggestions({
+			pairs: manyPairs('question', 'low', 3, 3),
+			existingRules: [],
+			now: 1,
+		}).candidates[0];
+		const approval = {
+			sourceKind: 'native-human-review',
+			principal,
+			actorId: 'desktop',
+			candidate,
+			rule: { ...candidate.rule, enabled: true, answer: 'Edited answer' },
+			approvedAt: 2,
+			edited: true,
+		};
+		const rejection = {
+			sourceKind: 'native-human-review',
+			principal,
+			actorId: 'desktop',
+			candidateId: candidate.id,
+			evidenceFingerprint: candidate.evidenceFingerprint,
+			candidate,
+			rejectedAt: 3,
+		};
+		const conflict = {
+			ruleId: candidate.id,
+			evidenceFingerprint: candidate.evidenceFingerprint,
+			approvedAt: 2,
+			detectedAt: 4,
+			reason: 'source_corrected',
+			status: 'needs_review',
+			nextActor: 'human',
+			nextAction: 'Review',
+			evidence: [candidate.evidence[0]],
+		};
+		const result = validatePianolaSuggestionsFile({
+			approvals: [approval],
+			rejections: [rejection],
+			conflicts: [conflict],
+		});
+		expect(result.approvals).toEqual([approval]);
+		expect(result.rejections).toEqual([rejection]);
+		expect(result.conflicts).toEqual([conflict]);
+	});
+
+	it('rejects arbitrary evidence principals', () => {
+		const evidence = { ...createMockNativeDecisionPair().evidence!, principal: 'someone' };
+		expect(isValidHumanDecisionEvidence(evidence)).toBe(false);
+	});
+
+	it('does not replace an approval principal on the same durable key', () => {
+		const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'owner-approval-'));
+		try {
+			const store = createPianolaFsStore({
+				resolveDir: () => directory,
+				indent: 2,
+				trailingNewline: true,
+			});
+			const candidate = synthesizeSuggestions({
+				pairs: manyPairs('question', 'low', 3, 3),
+				existingRules: [],
+				now: 1,
+			}).candidates[0];
+			const approval = {
+				sourceKind: 'native-human-review' as const,
+				principal: 'chris' as const,
+				actorId: 'desktop',
+				candidate,
+				rule: { ...candidate.rule, enabled: true },
+				approvedAt: 2,
+				edited: false,
+			};
+			const file: PianolaSuggestionsFile = {
+				generatedAt: 1,
+				pairCount: 3,
+				proposals: [],
+				proposedProfile: '',
+				previousProfile: '',
+				approvals: [approval],
+			};
+			store.writeSuggestions(file);
+			const altered = structuredClone(file) as unknown as {
+				approvals: Array<Record<string, unknown>>;
+			};
+			altered.approvals[0].principal = 'owner';
+			try {
+				store.writeSuggestions(altered as unknown as PianolaSuggestionsFile);
+			} catch {
+				/* rejection is fail closed */
+			}
+			expect(store.readSuggestions().approvals).toEqual([approval]);
+		} finally {
+			fs.rmSync(directory, { recursive: true, force: true });
+		}
+	});
+
+	it.each(['approvals', 'rejections'] as const)(
+		'rejects unknown principals in otherwise valid %s',
+		(kind) => {
+			const candidate = synthesizeSuggestions({
+				pairs: manyPairs('question', 'low', 3, 3),
+				existingRules: [],
+				now: 1,
+			}).candidates[0];
+			const receipt = {
+				sourceKind: 'native-human-review',
+				principal: 'owner',
+				actorId: 'desktop',
+				candidate,
+				...(kind === 'approvals'
+					? { rule: { ...candidate.rule, enabled: true }, approvedAt: 2, edited: false }
+					: {
+							candidateId: candidate.id,
+							evidenceFingerprint: candidate.evidenceFingerprint,
+							rejectedAt: 2,
+						}),
+			};
+			expect(validatePianolaSuggestionsFile({ [kind]: [receipt] })[kind]).toHaveLength(1);
+			expect(() =>
+				validatePianolaSuggestionsFile({ [kind]: [{ ...receipt, principal: 'someone' }] })
+			).toThrow(kind === 'approvals' ? 'InvalidSuggestionApproval' : 'InvalidSuggestionRejection');
+		}
+	);
 });

@@ -1,12 +1,13 @@
 /** Persisted scope decisions. Audit records are the authority across worker and desktop writers. */
 import type { PianolaDecisionRecord, PianolaDecisionLifecycle } from './storage';
 import type { PianolaMessage } from './types';
+import type { PianolaOwnerPrincipal } from './owner-identity';
 import type { PianolaScopeDeliveryGuard, PianolaScopeSnapshotTab } from './pianola-scope-cycle';
 import { canonicalJson } from '../canonicalJson';
 
 export type PianolaDecisionActor =
 	| { kind: 'manager'; agentId: string; tabId: string }
-	| { kind: 'human'; actorId: string; principal?: 'chris' };
+	| { kind: 'human'; actorId: string; principal?: PianolaOwnerPrincipal };
 
 export interface PianolaDecisionResolution {
 	decisionId: string;

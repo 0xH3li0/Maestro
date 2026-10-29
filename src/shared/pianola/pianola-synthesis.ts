@@ -170,7 +170,7 @@ export function synthesizeSuggestions(input: SynthesisInput): SynthesisResult {
 			priority: 100,
 			createdAt: now,
 			updatedAt: now,
-			description: `${cluster.length} independent Chris decisions for this exact action and condition; explicit acceptance required.`,
+			description: `${cluster.length} independent owner decisions for this exact action and condition; explicit acceptance required.`,
 		};
 		const candidate = {
 			id: rule.id,
@@ -304,7 +304,7 @@ export function reconcileSuggestionEvidence(
 					status: 'needs_review',
 					nextActor: 'human',
 					nextAction:
-						'Chris: review the accepted examples and later evidence, then explicitly edit or disable the rule in Rules. Live policy remains unchanged.',
+						'Owner: review the accepted examples and later evidence, then explicitly edit or disable the rule in Rules. Live policy remains unchanged.',
 					evidence: [],
 				};
 				conflicts.push(conflict);

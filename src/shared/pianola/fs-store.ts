@@ -238,21 +238,38 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 		// Re-read at the atomic write boundary: asynchronous mining must never
 		// overwrite a review that was committed while it was in flight.
 		if (current.rejections || validated.rejections) {
-			const rejections = new Map(
-				[...(current.rejections ?? []), ...(validated.rejections ?? [])].map((item) => [
-					canonicalJson([item.candidateId, item.evidenceFingerprint]),
-					item,
-				])
-			);
+			const rejections = new Map<
+				string,
+				NonNullable<PianolaSuggestionsFile['rejections']>[number]
+			>();
+			for (const item of [...(current.rejections ?? []), ...(validated.rejections ?? [])]) {
+				const key = canonicalJson([item.candidateId, item.evidenceFingerprint]);
+				const previous = rejections.get(key);
+				if (
+					previous &&
+					(previous.principal !== item.principal || previous.actorId !== item.actorId)
+				)
+					throw new Error('ConflictingSuggestionReview');
+				rejections.set(key, item);
+			}
 			validated.rejections = [...rejections.values()];
 		}
 		if (current.approvals || validated.approvals) {
-			const approvals = new Map(
-				[...(current.approvals ?? []), ...(validated.approvals ?? [])].map((item) => [
-					canonicalJson([item.candidate.id, item.candidate.evidenceFingerprint, item.approvedAt]),
-					item,
-				])
-			);
+			const approvals = new Map<string, NonNullable<PianolaSuggestionsFile['approvals']>[number]>();
+			for (const item of [...(current.approvals ?? []), ...(validated.approvals ?? [])]) {
+				const key = canonicalJson([
+					item.candidate.id,
+					item.candidate.evidenceFingerprint,
+					item.approvedAt,
+				]);
+				const previous = approvals.get(key);
+				if (
+					previous &&
+					(previous.principal !== item.principal || previous.actorId !== item.actorId)
+				)
+					throw new Error('ConflictingSuggestionReview');
+				approvals.set(key, item);
+			}
 			validated.approvals = [...approvals.values()];
 		}
 		// Conflicts are durable review requests. Empty/legacy/stale writers cannot

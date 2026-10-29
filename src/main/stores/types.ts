@@ -133,10 +133,16 @@ export interface MaestroSettings {
 	usageRefreshIntervals: Record<string, number>;
 	/** Add a supervised Pianola watch for each newly created top-level agent. */
 	pianolaAutoWatchNewAgents: boolean;
-	/** Explicit owner identity binding for learning; absent means no Chris samples. */
 	/** Minimum independent matching human samples for a proposal; default three. */
 	pianolaLearningMinSamples?: number;
-	pianolaLearningIdentity?: { desktopOwnerIsChris?: boolean; chrisWebUserId?: string };
+	/** Explicit owner binding for learning; absent means no confirmed owner samples. */
+	pianolaLearningIdentity?: {
+		desktopIsOwner?: boolean;
+		ownerWebUserId?: string;
+		/** Legacy fields are read without migration. */
+		desktopOwnerIsChris?: boolean;
+		chrisWebUserId?: string;
+	};
 	// System-wide hotkey to summon the Maestro window (key array, e.g. ['Meta','Shift','M']).
 	// Empty array disables it. Stored in the same format as `shortcuts` so the UI can reuse
 	// the existing capture helpers; converted to an Electron Accelerator at registration time.

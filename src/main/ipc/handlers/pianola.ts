@@ -54,6 +54,7 @@ import { synthesizeSuggestions } from '../../../shared/pianola/pianola-synthesis
 import { settledDecisionPairs } from '../../../shared/pianola/transcript-mining';
 import { canonicalJson } from '../../../shared/canonicalJson';
 import { captureException } from '../../utils/sentry';
+import { readPianolaOwnerIdentity } from '../../../shared/pianola/owner-identity';
 
 const LOG_CONTEXT = '[Pianola]';
 
@@ -318,15 +319,13 @@ export function registerPianolaHandlers(deps: PianolaHandlerDependencies): void 
 		// The caller cannot supply its own human role or reviewer identity.
 		const user = getActingUser();
 		const bridge = isRecord(event) && event.type === 'bridge';
-		const identity = settingsStore.get('pianolaLearningIdentity');
+		const identity = readPianolaOwnerIdentity(settingsStore.get('pianolaLearningIdentity'));
 		const confirmed =
-			isRecord(identity) &&
-			((bridge &&
+			(bridge &&
 				user &&
-				typeof identity.chrisWebUserId === 'string' &&
-				!!identity.chrisWebUserId &&
-				user.id === identity.chrisWebUserId) ||
-				(isNativeOwnerTransport(event) && identity.desktopOwnerIsChris === true));
+				identity.ownerWebUserId !== undefined &&
+				user.id === identity.ownerWebUserId) ||
+			(isNativeOwnerTransport(event) && identity.desktopIsOwner);
 		if (!confirmed) throw new Error('HumanSuggestionReviewRequired');
 		const actorId = user?.id ?? 'desktop';
 		const now = Date.now();
@@ -340,7 +339,7 @@ export function registerPianolaHandlers(deps: PianolaHandlerDependencies): void 
 					...(staged.rejections ?? []),
 					{
 						sourceKind: 'native-human-review',
-						principal: 'chris',
+						principal: 'owner',
 						candidateId: candidate.id,
 						evidenceFingerprint: candidate.evidenceFingerprint,
 						candidate,
@@ -379,7 +378,7 @@ export function registerPianolaHandlers(deps: PianolaHandlerDependencies): void 
 				...(staged.approvals ?? []),
 				{
 					sourceKind: 'native-human-review',
-					principal: 'chris',
+					principal: 'owner',
 					candidate,
 					rule: approvedRule,
 					approvedAt: now,
@@ -526,12 +525,11 @@ export function registerPianolaHandlers(deps: PianolaHandlerDependencies): void 
 	ipcMain.handle('pianola:confirm-desktop-owner', async (event) => {
 		if (!isPianolaEnabled(settingsStore)) throw new Error('PianolaDisabled');
 		if (!isNativeOwnerTransport(event)) throw new Error('HumanSuggestionReviewRequired');
-		const identity = settingsStore.get('pianolaLearningIdentity');
-		if (isRecord(identity) && identity.desktopOwnerIsChris === true) return;
-		if (identity !== undefined && (!isRecord(identity) || Object.keys(identity).length !== 0))
-			throw new Error('DesktopOwnerRestricted');
+		const identity = readPianolaOwnerIdentity(settingsStore.get('pianolaLearningIdentity'));
+		if (identity.state === 'confirmed') return;
+		if (identity.state !== 'available') throw new Error('DesktopOwnerRestricted');
 		if (!settingsStore.set) throw new Error('DesktopOwnerSetupUnavailable');
-		settingsStore.set('pianolaLearningIdentity', { desktopOwnerIsChris: true });
+		settingsStore.set('pianolaLearningIdentity', { desktopIsOwner: true });
 	});
 	ipcMain.handle('pianola:review-suggestion', async (event, payload: unknown) => {
 		if (!isPianolaEnabled(settingsStore)) throw new Error('PianolaDisabled');
@@ -546,19 +544,17 @@ export function registerPianolaHandlers(deps: PianolaHandlerDependencies): void 
 		if (!server) throw new Error('Native decision transport unavailable');
 		const user = getActingUser();
 		const bridge = (_event as unknown as { type?: string }).type === 'bridge';
-		const identity = settingsStore.get('pianolaLearningIdentity');
+		const identity = readPianolaOwnerIdentity(settingsStore.get('pianolaLearningIdentity'));
 		const actorId = user?.id ?? (bridge ? 'web-owner' : 'desktop');
 		// Binding is explicit configuration, never a display-name or user-role guess.
 		// Anonymous web-owner and unconfigured desktop answers remain audit-only.
 		const confirmed =
-			isRecord(identity) &&
-			((bridge &&
+			(bridge &&
 				user &&
-				typeof identity.chrisWebUserId === 'string' &&
-				!!identity.chrisWebUserId &&
-				user.id === identity.chrisWebUserId) ||
-				(isNativeOwnerTransport(_event) && identity.desktopOwnerIsChris === true));
-		return server.resolvePianolaHumanDecision(payload, actorId, confirmed ? 'chris' : undefined);
+				identity.ownerWebUserId !== undefined &&
+				user.id === identity.ownerWebUserId) ||
+			(isNativeOwnerTransport(_event) && identity.desktopIsOwner);
+		return server.resolvePianolaHumanDecision(payload, actorId, confirmed ? 'owner' : undefined);
 	});
 
 	ipcMain.handle(

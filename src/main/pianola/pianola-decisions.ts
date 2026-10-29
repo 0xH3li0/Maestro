@@ -294,7 +294,7 @@ export async function resolvePianolaDecision(
 	const owner = snapshot.owners.find((candidate) => candidate.id === record.agentId);
 	const humanEvidence =
 		actor.kind === 'human' &&
-		actor.principal === 'chris' &&
+		actor.principal === 'owner' &&
 		question &&
 		question.content.trim() &&
 		question.content.length <= 8000 &&
@@ -303,7 +303,7 @@ export async function resolvePianolaDecision(
 			? {
 					version: 1 as const,
 					sourceKind: 'native-human-resolution' as const,
-					principal: 'chris' as const,
+					principal: 'owner' as const,
 					actorId: actor.actorId,
 					agentId: record.agentId,
 					groupId: owner.groupId,

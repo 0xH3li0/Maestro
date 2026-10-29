@@ -389,6 +389,18 @@ describe('OW desktop learning owner confirmation', () => {
 
 	it.each([
 		['confirmed', { desktopOwnerIsChris: true }],
+		['confirmed', { desktopIsOwner: true }],
+		['confirmed', { desktopOwnerIsChris: true, desktopIsOwner: true }],
+		['conflicting', { desktopOwnerIsChris: false, desktopIsOwner: true }],
+		['partial dual', { desktopOwnerIsChris: true, desktopIsOwner: true, ownerWebUserId: 'owner' }],
+		[
+			'different IDs',
+			{ desktopOwnerIsChris: true, desktopIsOwner: true, chrisWebUserId: 'a', ownerWebUserId: 'b' },
+		],
+		['unknown', { desktopIsOwner: true, unknown: true }],
+		['malformed', { desktopOwnerIsChris: 'yes', desktopIsOwner: true }],
+		['neutral denied', { desktopIsOwner: false }],
+		['neutral web-only', { ownerWebUserId: 'owner' }],
 		['denied', { desktopOwnerIsChris: false }],
 		['web-only', { chrisWebUserId: 'owner' }],
 	] as const)(

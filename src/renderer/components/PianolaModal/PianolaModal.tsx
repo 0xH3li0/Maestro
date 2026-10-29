@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { X, Music, RefreshCw } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { PianolaRule } from '../../../shared/pianola/types';
+import { readPianolaOwnerIdentity } from '../../../shared/pianola/owner-identity';
 import type {
 	PianolaDecisionRecord,
 	PianolaSuggestionsFile,
@@ -79,22 +80,7 @@ export function PianolaModal({ theme, onClose }: PianolaModalProps) {
 					: window.maestro.settings.get('pianolaLearningIdentity'),
 			]);
 			if (!isWebDesktop()) {
-				if (
-					identity === undefined ||
-					(identity !== null &&
-						typeof identity === 'object' &&
-						!Array.isArray(identity) &&
-						Object.keys(identity).length === 0)
-				)
-					setOwnerState('available');
-				else if (
-					identity !== null &&
-					typeof identity === 'object' &&
-					'desktopOwnerIsChris' in identity &&
-					identity.desktopOwnerIsChris === true
-				)
-					setOwnerState('confirmed');
-				else setOwnerState('restricted');
+				setOwnerState(readPianolaOwnerIdentity(identity).state);
 			}
 			setRules(rulesResult.rules);
 			setRulesMalformed(rulesResult.malformed);

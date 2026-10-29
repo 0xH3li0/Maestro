@@ -583,7 +583,7 @@ export class WebServer {
 	}
 
 	/** Explicit renderer action, sharing native admission with manager answers. */
-	resolvePianolaHumanDecision(payload: unknown, actorId: string, principal?: 'chris') {
+	resolvePianolaHumanDecision(payload: unknown, actorId: string, principal?: 'owner') {
 		return resolvePianolaDecision(this.callbackRegistry, payload, {
 			kind: 'human',
 			actorId,

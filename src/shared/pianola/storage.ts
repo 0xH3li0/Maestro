@@ -19,6 +19,7 @@ import { RULE_SCOPES, ACTION_KINDS, RISKS, SIGNAL_KINDS } from './types';
 import { validatePlan, type PianolaPlan, type PianolaTask } from './pianola-tasks';
 import { learnableDecisionAction, matchHasNarrowingPredicate } from './pianola-policy';
 import { canonicalJson } from '../canonicalJson';
+import { isPianolaOwnerPrincipal, type PianolaOwnerPrincipal } from './owner-identity';
 import {
 	isPianolaScopeId,
 	validatePianolaScopeSelection,
@@ -160,7 +161,7 @@ export interface PianolaDecisionRecord {
 export interface PianolaHumanDecisionEvidence {
 	version: 1;
 	sourceKind: 'native-human-resolution';
-	principal: 'chris';
+	principal: PianolaOwnerPrincipal;
 	actorId: string;
 	agentId: string;
 	/** Group membership at decision time; undefined metadata excludes the sample. */
@@ -378,7 +379,7 @@ export function isValidHumanDecisionEvidence(raw: unknown): raw is PianolaHumanD
 	return (
 		raw.version === 1 &&
 		raw.sourceKind === 'native-human-resolution' &&
-		raw.principal === 'chris' &&
+		isPianolaOwnerPrincipal(raw.principal) &&
 		[
 			'actorId',
 			'agentId',
@@ -674,7 +675,7 @@ export interface PianolaSuggestionCandidate {
 
 export interface PianolaSuggestionRejection {
 	sourceKind: 'native-human-review';
-	principal: 'chris';
+	principal: PianolaOwnerPrincipal;
 	candidateId: string;
 	evidenceFingerprint: string;
 	/** Retain the rejected proposal and its source links for audit/review. */
@@ -687,7 +688,7 @@ export interface PianolaSuggestionRejection {
 /** Human approval receipt. Live activation is determined from the rules file. */
 export interface PianolaSuggestionApproval {
 	sourceKind: 'native-human-review';
-	principal: 'chris';
+	principal: PianolaOwnerPrincipal;
 	candidate: PianolaSuggestionCandidate;
 	rule: PianolaRule;
 	approvedAt: number;
@@ -861,7 +862,7 @@ export function validatePianolaSuggestionsFile(raw: unknown): PianolaSuggestions
 			if (
 				!isRecord(item) ||
 				item.sourceKind !== 'native-human-review' ||
-				item.principal !== 'chris' ||
+				!isPianolaOwnerPrincipal(item.principal) ||
 				typeof item.candidateId !== 'string' ||
 				!item.candidateId ||
 				typeof item.evidenceFingerprint !== 'string' ||
@@ -882,7 +883,7 @@ export function validatePianolaSuggestionsFile(raw: unknown): PianolaSuggestions
 				throw new Error('InvalidSuggestionRejection');
 			return {
 				sourceKind: 'native-human-review',
-				principal: 'chris',
+				principal: item.principal,
 				candidateId: item.candidateId,
 				evidenceFingerprint: item.evidenceFingerprint,
 				candidate,
@@ -898,7 +899,7 @@ export function validatePianolaSuggestionsFile(raw: unknown): PianolaSuggestions
 			if (
 				!isRecord(item) ||
 				item.sourceKind !== 'native-human-review' ||
-				item.principal !== 'chris'
+				!isPianolaOwnerPrincipal(item.principal)
 			)
 				throw new Error('InvalidSuggestionApproval');
 			const candidate = validateSuggestionCandidate(item.candidate);
@@ -928,7 +929,7 @@ export function validatePianolaSuggestionsFile(raw: unknown): PianolaSuggestions
 				throw new Error('InvalidSuggestionApproval');
 			return {
 				sourceKind: 'native-human-review',
-				principal: 'chris',
+				principal: item.principal,
 				candidate,
 				rule,
 				approvedAt: item.approvedAt,

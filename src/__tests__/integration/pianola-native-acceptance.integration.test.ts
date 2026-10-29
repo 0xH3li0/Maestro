@@ -346,7 +346,7 @@ class AcceptanceFixture {
 			// IPC binds the human actor; real resolution performs all admission.
 			getWebServer: () =>
 				({
-					resolvePianolaHumanDecision: (payload: unknown, actorId: string, principal?: 'chris') =>
+					resolvePianolaHumanDecision: (payload: unknown, actorId: string, principal?: 'owner') =>
 						resolvePianolaDecision(this.callbacks, payload, { kind: 'human', actorId, principal }),
 				}) as WebServer,
 		} as unknown as Parameters<typeof registerPianolaHandlers>[0]);
@@ -542,7 +542,7 @@ class AcceptanceFixture {
 			).toMatchObject({ status: 'accepted' });
 			await this.continueRecipient(ask.id);
 			expect(this.decision(ask.id).humanEvidence).toMatchObject({
-				principal: 'chris',
+				principal: 'owner',
 				actorId: 'desktop',
 				agentId: AGENT,
 				groupId: GROUP,
@@ -1540,7 +1540,7 @@ describe('OW owner setup through native lifecycle', () => {
 		expect(auditOnly.humanEvidence).toBeUndefined();
 		expect(mainStore.readSuggestions().pairCount).toBe(0);
 		await fixture.ipc('confirm-desktop-owner');
-		expect(boundary.settings.pianolaLearningIdentity).toEqual({ desktopOwnerIsChris: true });
+		expect(boundary.settings.pianolaLearningIdentity).toEqual({ desktopIsOwner: true });
 		expect(mainStore.readRules()).toEqual([]);
 		expect(fixture.decision(anonymous.id)).toEqual(auditOnly);
 		expect(mainStore.readSuggestions().pairCount).toBe(0);
@@ -1553,7 +1553,7 @@ describe('OW owner setup through native lifecycle', () => {
 			});
 			await fixture.continueRecipient(ask.id);
 			expect(fixture.decision(ask.id).humanEvidence).toMatchObject({
-				principal: 'chris',
+				principal: 'owner',
 				actorId: 'desktop',
 				agentId: AGENT,
 				groupId: GROUP,
@@ -1590,7 +1590,7 @@ describe('OW owner setup through native lifecycle', () => {
 		expect(mainStore.readSuggestions().approvals).toEqual([
 			expect.objectContaining({
 				candidate,
-				principal: 'chris',
+				principal: 'owner',
 				actorId: 'desktop',
 				sourceKind: 'native-human-review',
 			}),
@@ -1609,7 +1609,7 @@ describe('R08 durable learning through native review and filesystem APIs', () =>
 		};
 		const failWrite = vi.spyOn(mainStore, 'writeRules').mockImplementationOnce(() => {
 			expect(mainStore.readSuggestions().approvals).toEqual([
-				expect.objectContaining({ candidate, principal: 'chris', actorId: 'desktop' }),
+				expect.objectContaining({ candidate, principal: 'owner', actorId: 'desktop' }),
 			]);
 			throw new Error('Fixture activation write failed');
 		});
@@ -1687,7 +1687,7 @@ describe('R08 durable learning through native review and filesystem APIs', () =>
 						evidenceFingerprint: candidate.evidenceFingerprint,
 						candidate,
 						actorId: 'desktop',
-						principal: 'chris',
+						principal: 'owner',
 						sourceKind: 'native-human-review',
 						reason: 'Keep this manual',
 					}),
@@ -1700,7 +1700,7 @@ describe('R08 durable learning through native review and filesystem APIs', () =>
 				expect(reloaded.approvals![0]).toMatchObject({
 					candidate,
 					actorId: 'desktop',
-					principal: 'chris',
+					principal: 'owner',
 					sourceKind: 'native-human-review',
 					edited: operation === 'edit',
 					rule: { enabled: true, answer: operation === 'edit' ? edited.answer : ANSWER },
@@ -1855,7 +1855,7 @@ describe('R08 durable learning through native review and filesystem APIs', () =>
 				}),
 			]);
 			const conflict = saved.conflicts![0];
-			expect(conflict.nextAction).toContain('Chris');
+			expect(conflict.nextAction).toContain('Owner');
 			const reopened = createPianolaFsStore({
 				resolveDir: () => boundary.root,
 				indent: 2,
