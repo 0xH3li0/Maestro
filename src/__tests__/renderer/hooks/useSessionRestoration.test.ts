@@ -190,6 +190,37 @@ afterEach(() => {
 // ============================================================================
 
 describe('restoreSession - Migration logic', () => {
+	it.each([
+		[false, 'running'],
+		[false, 'queued'],
+		[true, 'running'],
+		[true, 'queued'],
+	] as const)(
+		'restores Relay runtime for web=%s and persisted %s without inventing native liveness',
+		async (web, status) => {
+			runtime.web = web;
+			const session = createMockSession();
+			const relay = {
+				conversationId: 'thread',
+				messageId: 'message',
+				status,
+				lastActivityAt: 1000,
+			};
+			session.aiTabs[0].relayConversation = relay;
+			session.aiTabs[0].thinkingStartTime = 999;
+			const { result } = renderHook(() => useSessionRestoration());
+			let restored: Session;
+			await act(async () => {
+				restored = await result.current.restoreSession(session);
+			});
+			expect(restored!.aiTabs[0].state).toBe(web ? 'busy' : 'idle');
+			expect(restored!.aiTabs[0].thinkingStartTime).toBe(
+				web && status === 'running' ? 1000 : undefined
+			);
+			expect(restored!.aiTabs[0].relayConversation).toEqual(relay);
+		}
+	);
+
 	it('sets projectRoot to cwd when missing', async () => {
 		const session = createMockSession({ projectRoot: undefined, cwd: '/my/path' });
 		const { result } = renderHook(() => useSessionRestoration());

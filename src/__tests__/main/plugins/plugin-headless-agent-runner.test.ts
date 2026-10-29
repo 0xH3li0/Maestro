@@ -1,3 +1,4 @@
+import { acquireProviderSessionWriter } from '../../../main/utils/provider-session-writer';
 import { describe, expect, it, vi } from 'vitest';
 import {
 	HEADLESS_RUN_TIMEOUT_MS,
@@ -68,6 +69,87 @@ describe('plugin headless agent runner', () => {
 			removeProof.mockRestore();
 		}
 	});
+	it('serializes CLI and legacy plugin resumes behind a Relay provider writer', async () => {
+		const spawn = vi.fn(async () => ({
+			success: true,
+			response: 'done',
+			agentSessionId: 'relay-provider',
+		}));
+		const run = createPluginHeadlessAgentRunner({
+			getAgent: () => agent,
+			detectAgent: async () => ({ available: true, path: '/usr/bin/codex' }),
+			hasPluginTools: () => false,
+			spawn,
+			prepareSystemPrompt: async () => undefined,
+			issueRunToken: vi.fn(),
+			revokeRunToken: vi.fn(),
+			cliScriptPath: () => '/cli.js',
+			audit: vi.fn(),
+		});
+		const release = await acquireProviderSessionWriter(
+			'codex',
+			'relay-tab-process',
+			'relay-provider'
+		);
+		const cli = run('agent-a', 'cli followup', 'relay-provider');
+		const legacy = run('agent-a', 'legacy followup', 'relay-provider');
+		await new Promise(setImmediate);
+		expect(spawn).not.toHaveBeenCalled();
+		release();
+		await Promise.all([cli, legacy]);
+		expect(spawn).toHaveBeenCalledTimes(2);
+	});
+
+	it.each(['before', 'during'] as const)(
+		'returns a no-start cancellation when stopped %s the resumed writer wait',
+		async (when) => {
+			const controller = new AbortController();
+			const spawn = vi.fn(async () => ({ success: true, response: 'done' }));
+			const detectAgent = vi.fn(async () => ({ available: true }));
+			const run = createPluginHeadlessAgentRunner({
+				getAgent: () => agent,
+				detectAgent,
+				hasPluginTools: () => false,
+				spawn,
+				prepareSystemPrompt: async () => undefined,
+				issueRunToken: vi.fn(),
+				revokeRunToken: vi.fn(),
+				cliScriptPath: () => '/cli.js',
+				audit: vi.fn(),
+			});
+			const release = await acquireProviderSessionWriter(
+				'codex',
+				'desktop-writer',
+				'cancelled-provider'
+			);
+			try {
+				if (when === 'before') controller.abort();
+				const pending = run(agent.id, 'cancel me', 'cancelled-provider', controller.signal);
+				const cancelled = expect(pending).resolves.toEqual({
+					success: false,
+					executionStarted: false,
+					response: null,
+					sessionId: null,
+					error: 'Agent run cancelled',
+				});
+				if (when === 'during') {
+					await new Promise(setImmediate);
+					controller.abort();
+				}
+				await cancelled;
+				expect(detectAgent).not.toHaveBeenCalled();
+				expect(spawn).not.toHaveBeenCalled();
+				release();
+				await expect(run(agent.id, 'followup', 'cancelled-provider')).resolves.toMatchObject({
+					success: true,
+				});
+				expect(spawn).toHaveBeenCalledOnce();
+			} finally {
+				release();
+			}
+		}
+	);
+
 	it.each(['delay', 'expire', 'cancel'] as const)(
 		'counts original-audio staging against the absolute deadline on %s',
 		async (cause) => {
@@ -105,6 +187,7 @@ describe('plugin headless agent runner', () => {
 					undefined,
 					undefined,
 					false,
+					undefined,
 					{
 						originalAttachment: {
 							signal: controller.signal,
@@ -131,6 +214,7 @@ describe('plugin headless agent runner', () => {
 				} else {
 					expect(result).toMatchObject({
 						success: false,
+						executionStarted: false,
 						error:
 							cause === 'cancel'
 								? 'Agent run cancelled'
@@ -182,7 +266,11 @@ describe('plugin headless agent runner', () => {
 						expect.objectContaining({ agentCommand: '/resolved/codex' })
 					);
 				} else {
-					expect(result).toMatchObject({ success: false, error: 'Agent CLI unavailable: codex' });
+					expect(result).toMatchObject({
+						success: false,
+						executionStarted: false,
+						error: 'Agent CLI unavailable: codex',
+					});
 					expect(spawn).not.toHaveBeenCalled();
 					expect(issueRunToken).not.toHaveBeenCalled();
 				}
@@ -903,6 +991,7 @@ it.each(['success', 'error', 'throw', 'cancel-before-spawn'] as const)(
 					response: null,
 					sessionId: null,
 					error: 'Agent run cancelled',
+					executionStarted: false,
 				});
 				expect(spawn).not.toHaveBeenCalled();
 			} else {
@@ -993,6 +1082,7 @@ it.each([
 		]);
 		expect(result).toMatchObject({
 			success: false,
+			executionStarted: false,
 			error:
 				stop === 'cancel'
 					? 'Agent run cancelled'
