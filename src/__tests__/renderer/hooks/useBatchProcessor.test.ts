@@ -1842,6 +1842,7 @@ describe('useBatchProcessor hook', () => {
 				'develop',
 				expect.any(String),
 				expect.any(String),
+				undefined,
 				undefined
 			);
 		});
@@ -4391,6 +4392,7 @@ describe('useBatchProcessor hook', () => {
 				'develop',
 				expect.any(String),
 				expect.any(String),
+				undefined,
 				undefined
 			);
 		});
@@ -5066,6 +5068,7 @@ describe('useBatchProcessor hook', () => {
 				'develop', // The detected default branch
 				expect.any(String),
 				expect.any(String),
+				undefined,
 				undefined
 			);
 		});
@@ -5126,6 +5129,7 @@ describe('useBatchProcessor hook', () => {
 				'main', // Fallback
 				expect.any(String),
 				expect.any(String),
+				undefined,
 				undefined
 			);
 		});
@@ -5553,7 +5557,8 @@ describe('useBatchProcessor hook', () => {
 				'main',
 				expect.any(String),
 				expect.any(String),
-				'/usr/local/bin/gh'
+				'/usr/local/bin/gh',
+				undefined
 			);
 		});
 	});
@@ -5928,7 +5933,8 @@ describe('useBatchProcessor hook', () => {
 				'main', // prTargetBranch
 				expect.any(String), // PR title
 				expect.any(String), // PR body
-				undefined // ghPath
+				undefined, // ghPath
+				undefined // sshRemoteId
 			);
 
 			// Verify onPRResult callback was called

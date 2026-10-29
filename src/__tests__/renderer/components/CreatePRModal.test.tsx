@@ -69,7 +69,14 @@ describe('CreatePRModal', () => {
 		renderModal();
 		await clickCreatePR();
 
-		expect(createPR).toHaveBeenCalledWith(WORKTREE, 'main', 'visual polish', '');
+		expect(createPR).toHaveBeenCalledWith(
+			WORKTREE,
+			'main',
+			'visual polish',
+			'',
+			undefined,
+			undefined
+		);
 		expect(usePRCreationStore.getState().runs[KEY]?.status).toBe('running');
 	});
 

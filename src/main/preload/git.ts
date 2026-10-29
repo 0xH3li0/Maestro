@@ -464,12 +464,22 @@ export function createGitApi() {
 			baseBranch: string,
 			title: string,
 			body: string,
-			ghPath?: string
+			ghPath?: string,
+			sshRemoteId?: string
 		): Promise<{
 			success: boolean;
 			prUrl?: string;
 			error?: string;
-		}> => ipcRenderer.invoke('git:createPR', worktreePath, baseBranch, title, body, ghPath),
+		}> =>
+			ipcRenderer.invoke(
+				'git:createPR',
+				worktreePath,
+				baseBranch,
+				title,
+				body,
+				ghPath,
+				sshRemoteId
+			),
 
 		/**
 		 * Get the default branch of a repository

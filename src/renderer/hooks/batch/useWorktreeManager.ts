@@ -400,7 +400,11 @@ export function useWorktreeManager(): UseWorktreeManagerReturn {
 				// Fetch recent commit log from the worktree for the PR body
 				let commitSubjects: string[] = [];
 				try {
-					const logResult = await window.maestro.git.log(worktreePath, { limit: 50 });
+					const logResult = await window.maestro.git.log(
+						worktreePath,
+						{ limit: 50 },
+						worktree.sshRemoteId
+					);
 					if (logResult.entries && logResult.entries.length > 0) {
 						commitSubjects = logResult.entries.map((e) => e.subject);
 					}
@@ -419,7 +423,8 @@ export function useWorktreeManager(): UseWorktreeManagerReturn {
 					baseBranch,
 					prTitle,
 					prBody,
-					worktree.ghPath
+					worktree.ghPath,
+					worktree.sshRemoteId
 				);
 
 				if (prResult.success) {

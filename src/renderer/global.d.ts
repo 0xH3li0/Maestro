@@ -1525,7 +1525,8 @@ interface MaestroAPI {
 			baseBranch: string,
 			title: string,
 			body: string,
-			ghPath?: string
+			ghPath?: string,
+			sshRemoteId?: string
 		) => Promise<{
 			success: boolean;
 			prUrl?: string;
