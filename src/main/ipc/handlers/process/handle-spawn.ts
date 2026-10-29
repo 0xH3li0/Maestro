@@ -143,31 +143,43 @@ export async function handleProcessSpawn(
 				: undefined;
 		// The existing queue decides order. Reserve every desktop writer before any
 		// awaits, including an unmarked conversation that Relay may adopt mid-turn.
-		const release =
-			config.toolType === 'terminal'
-				? () => {}
-				: await acquireProviderSessionWriter(
-						config.toolType,
-						config.sessionId,
-						config.agentSessionId,
-						controller.signal,
-						relayTab
-							? () => {
-									const owner = records().find((agent) => agent.id === relayTab.agentId);
-									if (!owner || (owner.toolType && owner.toolType !== config.toolType))
-										throw new Error('Relay provider changed while waiting');
-									return (
-										owner.aiTabs?.find((tab) => tab.id === relayTab.tab.id)?.agentSessionId ??
-										config.agentSessionId
-									);
-								}
-							: undefined
+		const resolveCurrentSessionId = relayTab
+			? () => {
+					const owner = records().find((agent) => agent.id === relayTab.agentId);
+					if (!owner || (owner.toolType && owner.toolType !== config.toolType))
+						throw new Error('Relay provider changed while waiting');
+					return (
+						owner.aiTabs?.find((tab) => tab.id === relayTab.tab.id)?.agentSessionId ??
+						config.agentSessionId
 					);
-		if (relayTab) {
-			const current = records()
-				.find((agent) => agent.id === relayTab.agentId)
-				?.aiTabs?.find((tab) => tab.id === relayTab.tab.id);
-			if (current?.agentSessionId) config = { ...config, agentSessionId: current.agentSessionId };
+				}
+			: undefined;
+		let release = () => {};
+		if (config.toolType !== 'terminal') {
+			let requestedId = config.agentSessionId;
+			for (;;) {
+				release = await acquireProviderSessionWriter(
+					config.toolType,
+					config.sessionId,
+					requestedId,
+					controller.signal,
+					resolveCurrentSessionId
+				);
+				let currentId: string | undefined;
+				try {
+					if (controller.signal.aborted) throw new Error('Provider writer wait cancelled');
+					currentId = resolveCurrentSessionId?.() ?? requestedId;
+				} catch (error) {
+					release();
+					throw error;
+				}
+				if (currentId === requestedId) break;
+				// The ID changed after acquisition resolved. Drop all stale keys before
+				// reacquiring in the canonical order; binding alone does not wait.
+				release();
+				requestedId = currentId;
+			}
+			if (relayTab && requestedId) config = { ...config, agentSessionId: requestedId };
 		}
 		const onSessionId = (id: string, providerId: string) => {
 			if (id === config.sessionId) bindProviderSessionWriter(id, providerId);

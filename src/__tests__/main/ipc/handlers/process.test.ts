@@ -7,7 +7,10 @@ import fs from 'node:fs';
 import { EventEmitter } from 'node:events';
 import { createInteractiveReplayController } from '../../../../main/agents/claude-interactive-replay';
 import type { ProcessConfig } from '../../../../main/process-manager/types';
-const writerGate = vi.hoisted(() => ({ enabled: false }));
+const writerGate = vi.hoisted(() => ({
+	enabled: false,
+	afterAcquire: undefined as ((processId: string) => void) | undefined,
+}));
 vi.mock('../../../../main/utils/provider-session-writer', async (importOriginal) => {
 	const actual =
 		await importOriginal<typeof import('../../../../main/utils/provider-session-writer')>();
@@ -15,8 +18,20 @@ vi.mock('../../../../main/utils/provider-session-writer', async (importOriginal)
 		...actual,
 		acquireProviderSessionWriter: (
 			...args: Parameters<typeof actual.acquireProviderSessionWriter>
-		) =>
-			writerGate.enabled ? actual.acquireProviderSessionWriter(...args) : Promise.resolve(() => {}),
+		) => {
+			if (!writerGate.enabled) return Promise.resolve(() => {});
+			const acquired = actual.acquireProviderSessionWriter(...args);
+			const afterAcquire = writerGate.afterAcquire;
+			if (afterAcquire) {
+				// Observe the real, fulfilled lease before the caller's await reaction.
+				// Return that same promise: no wrapper await or artificial scheduling gap.
+				void acquired.then(
+					() => afterAcquire(args[1]),
+					() => {}
+				);
+			}
+			return acquired;
+		},
 	};
 });
 
@@ -370,6 +385,7 @@ describe('process IPC handlers', () => {
 
 	beforeEach(() => {
 		writerGate.enabled = false;
+		writerGate.afterAcquire = undefined;
 		// Clear mocks
 		vi.clearAllMocks();
 		vi.mocked(checkCustomPath).mockImplementation(async (customPath) => ({
@@ -819,6 +835,120 @@ describe('process IPC handlers', () => {
 			await next;
 			expect(nextStarted).toBe(true);
 		});
+
+		it.each([undefined, 'post-lease-old-provider'])(
+			'waits for the new provider writer after lease resolution before spawn continuation: %s',
+			async (initialProviderId) => {
+				writerGate.enabled = true;
+				const processId = 'post-lease-agent-ai-post-lease-tab';
+				const newProviderId = 'post-lease-new-provider';
+				const releaseNewWriter = await acquireProviderSessionWriter(
+					'codex',
+					'new-provider-owner',
+					newProviderId
+				);
+				const events = new EventEmitter();
+				const order: string[] = [];
+				const tab = {
+					id: 'post-lease-tab',
+					agentSessionId: initialProviderId,
+					relayConversation: { conversationId: 'post-lease-thread' },
+				};
+				let injected = false;
+				let boundary:
+					| {
+							providerId: string | undefined;
+							sessionIdListeners: number;
+							spawnCalls: number;
+							announcementDelivered: boolean;
+					  }
+					| undefined;
+				Object.assign(mockProcessManager, {
+					on: events.on.bind(events),
+					off: events.off.bind(events),
+				});
+				events.on('newListener', (event) => {
+					if (event === 'session-id') order.push('listener-installed');
+				});
+				mockSessionsStore.get.mockImplementation((key, fallback) => {
+					if (key !== 'sessions') return fallback;
+					order.push(`store-read:${tab.agentSessionId ?? 'absent'}`);
+					return [{ id: 'post-lease-agent', toolType: 'codex', aiTabs: [tab] }];
+				});
+				mockAgentDetector.getAgent.mockResolvedValue({
+					id: 'codex',
+					path: '/usr/bin/codex',
+					requiresPty: false,
+				});
+				mockProcessManager.spawn.mockImplementation(() => {
+					order.push('spawn');
+					return { success: true, pid: 123 };
+				});
+				writerGate.afterAcquire = (id) => {
+					if (id !== processId || injected) return;
+					order.push('lease-resolved');
+					boundary = {
+						providerId: tab.agentSessionId,
+						sessionIdListeners: events.listenerCount('session-id'),
+						spawnCalls: mockProcessManager.spawn.mock.calls.length,
+						announcementDelivered: false,
+					};
+					tab.agentSessionId = newProviderId;
+					injected = true;
+					order.push('provider-id-changed');
+					boundary.announcementDelivered = events.emit('session-id', processId, newProviderId);
+				};
+				const pending = handlers.get('process:spawn')!(
+					{},
+					{
+						sessionId: processId,
+						agentSessionId: initialProviderId,
+						toolType: 'codex',
+						cwd: '/test',
+						command: 'codex',
+						args: [],
+					}
+				);
+				try {
+					// Drain the real queue and resolved preflight microtasks, without a timed sleep.
+					await new Promise(setImmediate);
+					expect(boundary).toEqual({
+						providerId: initialProviderId,
+						sessionIdListeners: 0,
+						spawnCalls: 0,
+						announcementDelivered: false,
+					});
+					const resolvedAt = order.indexOf('lease-resolved');
+					expect(order[resolvedAt - 1]).toBe(`store-read:${initialProviderId ?? 'absent'}`);
+					expect(order.slice(resolvedAt, resolvedAt + 3)).toEqual([
+						'lease-resolved',
+						'provider-id-changed',
+						`store-read:${newProviderId}`,
+					]);
+					expect(
+						mockProcessManager.spawn,
+						`New provider writer is still held; boundary=${JSON.stringify(boundary)}; order=${JSON.stringify(order)}`
+					).not.toHaveBeenCalled();
+					order.push('new-writer-released');
+					releaseNewWriter();
+					await expect(pending).resolves.toEqual(expect.objectContaining({ success: true }));
+					expect(mockProcessManager.spawn).toHaveBeenCalledExactlyOnceWith(
+						expect.objectContaining({ agentSessionId: newProviderId })
+					);
+					expect(order.indexOf('listener-installed')).toBeGreaterThan(resolvedAt);
+					expect(order.indexOf('spawn')).toBeGreaterThan(order.indexOf('new-writer-released'));
+				} finally {
+					writerGate.afterAcquire = undefined;
+					releaseNewWriter();
+					try {
+						await pending;
+					} finally {
+						events.emit('exit', processId, 0);
+						await new Promise(setImmediate);
+					}
+				}
+			}
+		);
 
 		it('should spawn PTY process with correct args', async () => {
 			const mockAgent = {

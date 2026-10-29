@@ -385,27 +385,36 @@ export class RelayConversations {
 						{ id: `${receiptKey}:user`, timestamp: this.now(), source: 'user', text: prompt }
 					);
 					await this.flushMapping(mapping, generation);
-					release = await acquireProviderSessionWriter(
-						agent.toolType,
-						processId,
-						mapping.providerSessionId,
-						controller.signal,
-						() => {
-							const latest = this.deps.getAgent(agentId);
-							if (!latest || latest.toolType !== agent.toolType)
-								throw new Error('Relay provider changed while waiting');
-							return (
-								(latest.aiTabs as RelayTab[] | undefined)?.find((tab) => tab.id === mapping.tabId)
-									?.agentSessionId ?? mapping.providerSessionId
-							);
+					const resolveCurrentSessionId = () => {
+						const latest = this.deps.getAgent(agentId);
+						if (!latest || latest.toolType !== agent.toolType)
+							throw new Error('Relay provider changed while waiting');
+						return (
+							(latest.aiTabs as RelayTab[] | undefined)?.find((tab) => tab.id === mapping.tabId)
+								?.agentSessionId ?? mapping.providerSessionId
+						);
+					};
+					let requestedId = mapping.providerSessionId;
+					for (;;) {
+						let protectedId = requestedId;
+						release = await acquireProviderSessionWriter(
+							agent.toolType,
+							processId,
+							requestedId,
+							controller.signal,
+							() => (protectedId = resolveCurrentSessionId())
+						);
+						authorize();
+						if (controller.signal.aborted) throw new Error('Relay send cancelled');
+						const currentId = resolveCurrentSessionId();
+						if ((currentId ?? undefined) === (protectedId ?? undefined)) {
+							mapping.providerSessionId = protectedId;
+							break;
 						}
-					);
-					authorize();
-					if (controller.signal.aborted) throw new Error('Relay send cancelled');
-					const current = (this.deps.getAgent(agentId)?.aiTabs as RelayTab[] | undefined)?.find(
-						(t) => t.id === mapping.tabId
-					);
-					mapping.providerSessionId = current?.agentSessionId ?? mapping.providerSessionId;
+						// Release all stale keys before reacquiring in the writer's canonical order.
+						release();
+						requestedId = currentId;
+					}
 					mapping.interrupted = true;
 					await this.write(conversationKey, mapping);
 					await this.patch(mapping, {}, { status: 'running' });

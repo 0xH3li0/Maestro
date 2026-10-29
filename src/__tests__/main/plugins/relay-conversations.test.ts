@@ -13,6 +13,32 @@ import { acquireProviderSessionWriter } from '../../../main/utils/provider-sessi
 import { createMockSession } from '../../helpers/mockSession';
 import type { StoredSession } from '../../../main/stores/types';
 
+const writerGate = vi.hoisted(() => ({
+	afterAcquire: undefined as ((processId: string) => void) | undefined,
+}));
+vi.mock('../../../main/utils/provider-session-writer', async (importOriginal) => {
+	const actual =
+		await importOriginal<typeof import('../../../main/utils/provider-session-writer')>();
+	return {
+		...actual,
+		acquireProviderSessionWriter: vi.fn(
+			(...args: Parameters<typeof actual.acquireProviderSessionWriter>) => {
+				const acquired = actual.acquireProviderSessionWriter(...args);
+				const afterAcquire = writerGate.afterAcquire;
+				if (afterAcquire) {
+					// Observe fulfillment before the caller's await reaction, returning the
+					// exact real promise without a wrapper await or scheduling delay.
+					void acquired.then(
+						() => afterAcquire(args[1]),
+						() => {}
+					);
+				}
+				return acquired;
+			}
+		),
+	};
+});
+
 describe('durable Relay conversations', () => {
 	let baseDir: string;
 	let agent: StoredSession;
@@ -29,6 +55,8 @@ describe('durable Relay conversations', () => {
 			() => {}
 		);
 	beforeEach(() => {
+		writerGate.afterAcquire = undefined;
+		vi.mocked(acquireProviderSessionWriter).mockClear();
 		const root = path.join(process.cwd(), '.maestro', 'scratch');
 		fs.mkdirSync(root, { recursive: true });
 		baseDir = fs.mkdtempSync(path.join(root, 'relay-continuity-'));
@@ -334,6 +362,120 @@ describe('durable Relay conversations', () => {
 			false,
 			true
 		);
+	});
+	it('waits for the new provider writer after lease resolution before Relay continuation', async () => {
+		const first = await send();
+		const processId = `agent-ai-${first.tabId}`;
+		const initialProviderId = first.sessionId;
+		expect(initialProviderId).toBe('provider:hello');
+		expect(agent.aiTabs).toHaveLength(1);
+		const newProviderId = 'relay-post-lease-new-provider';
+		const releaseNewWriter = await acquireProviderSessionWriter(
+			'claude-code',
+			'relay-post-lease-independent-writer',
+			newProviderId
+		);
+		let newWriterHeld = true;
+		let injected = false;
+		let boundary:
+			| {
+					providerId: string | undefined;
+					runnerCalls: number;
+					newWriterHeld: boolean;
+			  }
+			| undefined;
+		const order: string[] = [];
+		const getAgent = deps.getAgent;
+		deps.getAgent = (id) => {
+			const current = getAgent(id);
+			const tab = current?.aiTabs[0];
+			order.push(`store-read:${tab?.agentSessionId ?? 'absent'}`);
+			return current;
+		};
+		const run = vi.mocked(deps.run).getMockImplementation()!;
+		vi.mocked(deps.run)
+			.mockClear()
+			.mockImplementation((...args) => {
+				order.push(`runner:${args[2]}`);
+				return run(...args);
+			});
+		writerGate.afterAcquire = (id) => {
+			if (id !== processId || injected) return;
+			order.push('lease-resolved');
+			const tab = agent.aiTabs[0];
+			boundary = {
+				providerId: tab.agentSessionId,
+				runnerCalls: vi.mocked(deps.run).mock.calls.length,
+				newWriterHeld,
+			};
+			tab.agentSessionId = newProviderId;
+			injected = true;
+			order.push('provider-id-changed');
+		};
+		const pending = send('relay post-lease followup', { messageId: 'message-2' });
+		// Attach a rejection handler immediately so a failed preflight is reported by
+		// the awaited outcome rather than an unhandled rejection during observation.
+		const outcome = pending.then(
+			(result) => ({ result }),
+			(error: unknown) => ({ error })
+		);
+		try {
+			await vi.waitFor(() => expect(boundary).toBeDefined());
+			expect(boundary).toEqual({
+				providerId: initialProviderId,
+				runnerCalls: 0,
+				newWriterHeld: true,
+			});
+			const resolvedAt = order.indexOf('lease-resolved');
+			expect(order[resolvedAt - 1]).toBe(`store-read:${initialProviderId}`);
+			expect(order.slice(resolvedAt, resolvedAt + 3)).toEqual([
+				'lease-resolved',
+				'provider-id-changed',
+				`store-read:${newProviderId}`,
+			]);
+			// Real durable writes follow the caller continuation. Observe either a
+			// request for B's actual lease or execution; one event-loop drain alone
+			// could falsely pass before those writes finish on the broken caller.
+			await vi.waitFor(() =>
+				expect(
+					vi
+						.mocked(acquireProviderSessionWriter)
+						.mock.calls.some(
+							([, id, providerId]) => id === processId && providerId === newProviderId
+						) || vi.mocked(deps.run).mock.calls.length > 0
+				).toBe(true)
+			);
+			expect(newWriterHeld).toBe(true);
+			expect(
+				deps.run,
+				`New provider writer is still held; boundary=${JSON.stringify(boundary)}; order=${JSON.stringify(order)}`
+			).not.toHaveBeenCalled();
+			order.push('new-writer-released');
+			newWriterHeld = false;
+			releaseNewWriter();
+			await expect(outcome).resolves.toEqual({
+				result: expect.objectContaining({ success: true, sessionId: newProviderId }),
+			});
+			expect(deps.run).toHaveBeenCalledExactlyOnceWith(
+				'agent',
+				'relay post-lease followup',
+				newProviderId,
+				expect.any(AbortSignal),
+				'relay',
+				undefined,
+				undefined,
+				false,
+				true
+			);
+			expect(order.indexOf(`runner:${newProviderId}`)).toBeGreaterThan(
+				order.indexOf('new-writer-released')
+			);
+		} finally {
+			writerGate.afterAcquire = undefined;
+			newWriterHeld = false;
+			releaseNewWriter();
+			await outcome;
+		}
 	});
 	it('cancels while reacquiring a changed provider without executing or leaking a reservation', async () => {
 		const first = await send();
