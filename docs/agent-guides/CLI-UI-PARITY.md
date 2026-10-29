@@ -563,6 +563,13 @@ entry needs a stated reason, the same way a Covered row needs a verb.
   `CODEX_HOME=<dir> codex login` / `CLAUDE_CONFIG_DIR=<dir> claude` then
   `/login`. Verifying the login afterwards is the Open gaps entry **Read
   provider quota snapshots**.
+- **Pianola desktop-owner confirmation and learned suggestion review** (accept,
+  edit, or reject). Desktop-owner setup requires an explicit action in the
+  native Maestro window; learned suggestion reviews require an authorized human
+  reviewer in the native window or configured web identity. CLI and agent calls
+  cannot confirm the owner or review suggestions, since they cannot supply that
+  human consent. Existing serialized identity keys and principal values remain
+  supported; these UI actions do not migrate or reinterpret prior evidence.
 - **Host LAN and Tailscale access controls** (enable, disable, select a LAN
   interface, and inspect access state in Connect another device / Manage access).
   These remain in the protected native host window as a deliberate human-consent

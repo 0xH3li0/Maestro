@@ -286,7 +286,11 @@ describe('OW desktop learning owner confirmation', () => {
 		render(<PianolaModal theme={theme} onClose={vi.fn()} />);
 		fireEvent.click(await screen.findByText('Suggestions'));
 		expect(await screen.findByText(/No current learning suggestions/)).toBeInTheDocument();
-		expect(screen.getByText(/future.*decisions.*learning evidence/i)).toBeInTheDocument();
+		expect(
+			screen.getByText(
+				/confirm that you are the owner of this desktop\..*future explicit pianola decisions.*learning evidence for this desktop/i
+			)
+		).toBeInTheDocument();
 		expect(confirmOwner).not.toHaveBeenCalled();
 		expect(window.maestro.settings.set).not.toHaveBeenCalled();
 		fireEvent.click(screen.getByRole('button', { name: /confirm.*desktop.*owner/i }));

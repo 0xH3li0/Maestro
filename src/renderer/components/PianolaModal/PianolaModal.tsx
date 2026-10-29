@@ -387,8 +387,8 @@ export function PianolaModal({ theme, onClose }: PianolaModalProps) {
 									) : (
 										<>
 											<p>
-												Confirm that this desktop is Chris. Future explicit Pianola decisions may be
-												used as Chris's learning evidence.
+												Confirm that you are the owner of this desktop. Future explicit Pianola
+												decisions may be used as learning evidence for this desktop.
 											</p>
 											<button disabled={confirmingOwner} onClick={() => void confirmDesktopOwner()}>
 												Confirm desktop owner
